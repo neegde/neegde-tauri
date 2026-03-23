@@ -1,18 +1,16 @@
-# Один релиз на GitHub с артефактами Windows + macOS.
-# Запуск: создай тег и отправь его:
-#   git tag v0.1.0 && git push origin v0.1.0
-name: Release
+# Сборка Windows + macOS и один общий релиз при каждом пуше в main (без ручных тегов).
+# Релиз с тегом latest-main обновляется на каждый пуш (prerelease).
+name: Desktop release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: desktop-release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -61,23 +59,37 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download all bundles
+      - name: Download bundles
         uses: actions/download-artifact@v4
         with:
           path: release
           pattern: tauri-*
           merge-multiple: true
 
-      - name: List files for release
+      - name: List files
         run: find release -type f
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
-          files: |
-            release/**/*
+      - name: Publish rolling release (latest-main)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG=latest-main
+          REPO="${{ github.repository }}"
+
+          gh release delete "$TAG" --repo "$REPO" --yes 2>/dev/null || true
+          gh api --method DELETE -H "Accept: application/vnd.github+json" \
+            "/repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || true
+
+          mapfile -t FILES < <(find release -type f)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No files under release/"; exit 1
+          fi
+
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --target "${{ github.sha }}" \
+            --title "нигде. · сборка с main" \
+            --notes "Автоматическая сборка с ветки \`main\`.\n\n**Коммит:** \`${{ github.sha }}\`" \
+            --prerelease \
+            "${FILES[@]}"
