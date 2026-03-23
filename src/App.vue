@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { isAudio, basename } from "./utils.js";
 import { MOCK_RESULTS, MOCK_FILES_MAP, MOCK_FILES_DEFAULT } from "./mockData.js";
+import { restoreSession } from "./rutracker/auth.js";
 
 import SearchBar    from "./components/SearchBar.vue";
 import Results      from "./components/Results.vue";
@@ -14,8 +15,13 @@ import AppAuthPanel from "./components/AppAuthPanel.vue";
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
 
-onMounted(() => {
+onMounted(async () => {
   document.documentElement.setAttribute("data-theme", theme.value);
+  // Restore Rutracker session from disk (validates live with a single GET).
+  try {
+    const s = await restoreSession();
+    if (s.logged_in) handleLogin(s.username, s.avatar_url);
+  } catch (_) { /* offline or no saved session — stay logged out */ }
 });
 
 function handleThemeChange(newTheme) {
@@ -25,8 +31,10 @@ function handleThemeChange(newTheme) {
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-const rtLoggedIn = ref(false);
-const appUser    = ref(null);
+const rtLoggedIn  = ref(false);
+const rtUsername  = ref(null);
+const rtAvatarUrl = ref(null);
+const appUser     = ref(null);
 const authPanelOpen = ref(false);
 
 // ── View ──────────────────────────────────────────────────────────────────────
@@ -62,15 +70,19 @@ watch(
 );
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
-function handleLogin(_u, _p) {
-  rtLoggedIn.value = true;
+function handleLogin(username, avatarUrl) {
+  rtLoggedIn.value  = true;
+  rtUsername.value  = username || null;
+  rtAvatarUrl.value = avatarUrl || null;
 }
 
 function handleLogout() {
-  rtLoggedIn.value = false;
-  results.value    = [];
-  selected.value   = null;
-  queue.value      = [];
+  rtLoggedIn.value  = false;
+  rtUsername.value  = null;
+  rtAvatarUrl.value = null;
+  results.value     = [];
+  selected.value    = null;
+  queue.value       = [];
 }
 
 function handleAppLogin(username) {
@@ -300,6 +312,8 @@ function handleBack() {
         <SettingsView
           v-else-if="view === 'settings'"
           :rt-logged-in="rtLoggedIn"
+          :rt-username="rtUsername"
+          :rt-avatar-url="rtAvatarUrl"
           :app-user="appUser"
           :theme="theme"
           @login="handleLogin"
