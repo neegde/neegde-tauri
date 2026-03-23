@@ -15,6 +15,9 @@ pub fn run() {
             rutracker::rutracker_logout,
             rutracker::rutracker_restore_session,
             rutracker::rutracker_status,
+            rutracker::rutracker_search,
+            rutracker::rutracker_get_cover,
+            rutracker::rutracker_get_torrent_details,
         ])
         .on_window_event(|_window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

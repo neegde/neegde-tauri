@@ -7,6 +7,7 @@ const props = defineProps({
   files: Array,
   loading: Boolean,
   magnet: String,
+  cover: { type: String, default: null },
   nowPlayingIdx: { default: null },
   likes: Object,
 });
@@ -91,8 +92,8 @@ function trackOffset(idx) {
     <!-- Header -->
     <div class="album-header">
       <div class="album-cover">
-        <!-- No backend: always show fallback emoji -->
-        <span>🎵</span>
+        <img v-if="cover" :src="cover" alt="Обложка" class="cover-img" />
+        <span v-else>🎵</span>
       </div>
       <div class="album-info">
         <div class="album-type">
@@ -158,7 +159,7 @@ function trackOffset(idx) {
         <div class="track-info">
           <div class="track-name" :title="basename(f.path)">{{ basename(f.path) }}</div>
         </div>
-        <div class="track-size">{{ f.size || "" }}</div>
+        <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
         <div class="track-actions">
           <button
             :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
@@ -219,7 +220,7 @@ function trackOffset(idx) {
           <div class="track-info">
             <div class="track-name" :title="basename(f.path)">{{ basename(f.path) }}</div>
           </div>
-          <div class="track-size">{{ f.size || "" }}</div>
+          <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
           <div class="track-actions">
             <button
               :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
@@ -235,3 +236,13 @@ function trackOffset(idx) {
 
   </div>
 </template>
+
+<style scoped>
+.cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}
+</style>

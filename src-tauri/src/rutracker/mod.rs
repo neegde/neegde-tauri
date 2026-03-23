@@ -1,3 +1,6 @@
+pub mod search;
+pub mod topic;
+
 use base64::Engine as _;
 use encoding_rs::WINDOWS_1251;
 use reqwest::{header, Client, ClientBuilder};
@@ -7,6 +10,38 @@ use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
+
+// ── Shared data types ─────────────────────────────────────────────────────────
+
+/// One row from Rutracker search results.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchResult {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub size: u64,
+    pub seeders: u64,
+    pub leechers: u64,
+    pub added: String, // Raw date string from Rutracker, e.g. "15-Jun-17"
+    pub source: String,
+}
+
+/// A single file inside a torrent, with path split into components.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TorrentFile {
+    /// Path components: ["Torrent Root", "Album", "01 Track.flac"]
+    pub path: Vec<String>,
+    pub size: u64,
+}
+
+/// Full details for a topic: cover image, magnet link, and file list.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TorrentDetails {
+    pub id: String,
+    pub cover_data_url: Option<String>,
+    pub magnet: Option<String>,
+    pub files: Vec<TorrentFile>,
+}
 
 // ── Session file helpers ──────────────────────────────────────────────────────
 
@@ -142,14 +177,10 @@ fn extract_user_id(html: &str) -> Option<String> {
             let end = after.find(|c: char| !c.is_ascii_digit()).unwrap_or(after.len());
             let uid = &after[..end];
             if !uid.is_empty() {
-                #[cfg(debug_assertions)]
-                eprintln!("[rutracker] found uid={}", uid);
                 return Some(uid.to_string());
             }
         }
     }
-    #[cfg(debug_assertions)]
-    eprintln!("[rutracker] uid not found in HTML (len={})", html.len());
     None
 }
 
@@ -178,8 +209,6 @@ fn extract_avatar_from_profile(html: &str, base: &str) -> Option<String> {
             }
         }
     }
-    #[cfg(debug_assertions)]
-    eprintln!("[rutracker] avatar-img not found in profile HTML (len={})", html.len());
     None
 }
 
@@ -278,9 +307,6 @@ pub async fn rutracker_login(
     let status = resp.status();
     let bytes = resp.bytes().await.unwrap_or_default();
     let (decoded, _, _) = WINDOWS_1251.decode(&bytes);
-
-    #[cfg(debug_assertions)]
-    eprintln!("[rutracker] login → status={}, url={}", status, final_url);
 
     let redirected_away    = !final_url.contains("/login.php");
     let body_says_logged_in = decoded.contains("logout.php") || decoded.contains("profile.php");
@@ -393,4 +419,57 @@ pub fn rutracker_status(
         username:  inner.username.clone(),
         avatar_url: inner.avatar_url.clone(),
     })
+}
+
+/// Search Rutracker music sections by query string.
+/// Requires an active authenticated session.
+#[tauri::command]
+pub async fn rutracker_search(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+    query: String,
+) -> Result<Vec<SearchResult>, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Err("Необходимо войти в Rutracker".into());
+        }
+    }
+    let base = mirror.trim_end_matches('/').to_string();
+    search::search_music(&state.client, &base, &query).await
+}
+
+/// First-post cover as a base64 data URL (lightweight — no .torrent download).
+#[tauri::command]
+pub async fn rutracker_get_cover(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+    topic_id: String,
+) -> Result<Option<String>, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Err("Необходимо войти в Rutracker".into());
+        }
+    }
+    let base = mirror.trim_end_matches('/').to_string();
+    topic::get_cover_data_url(&state.client, &base, &topic_id).await
+}
+
+/// Fetch full torrent details for a topic: file list from the .torrent file
+/// and cover image from the first post, returned as a base64 data URL.
+#[tauri::command]
+pub async fn rutracker_get_torrent_details(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+    topic_id: String,
+) -> Result<TorrentDetails, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Err("Необходимо войти в Rutracker".into());
+        }
+    }
+    let base = mirror.trim_end_matches('/').to_string();
+    topic::get_torrent_details(&state.client, &base, &topic_id).await
 }

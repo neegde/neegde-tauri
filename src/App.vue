@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from "vue";
 import { isAudio, basename } from "./utils.js";
-import { MOCK_RESULTS, MOCK_FILES_MAP, MOCK_FILES_DEFAULT } from "./mockData.js";
 import { restoreSession } from "./rutracker/auth.js";
+import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 
 import SearchBar    from "./components/SearchBar.vue";
 import Results      from "./components/Results.vue";
@@ -15,6 +15,8 @@ import AppAuthPanel from "./components/AppAuthPanel.vue";
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
 
+const restoringSession = ref(true);
+
 onMounted(async () => {
   document.documentElement.setAttribute("data-theme", theme.value);
   // Restore Rutracker session from disk (validates live with a single GET).
@@ -22,6 +24,7 @@ onMounted(async () => {
     const s = await restoreSession();
     if (s.logged_in) handleLogin(s.username, s.avatar_url);
   } catch (_) { /* offline or no saved session — stay logged out */ }
+  finally { restoringSession.value = false; }
 });
 
 function handleThemeChange(newTheme) {
@@ -49,6 +52,7 @@ const error   = ref(null);
 // ── Torrent ───────────────────────────────────────────────────────────────────
 const selected      = ref(null);
 const torrentMagnet = ref("");
+const torrentCover  = ref(null);   // base64 data URL or null
 const files         = ref([]);
 const loadingFiles  = ref(false);
 
@@ -77,12 +81,15 @@ function handleLogin(username, avatarUrl) {
 }
 
 function handleLogout() {
-  rtLoggedIn.value  = false;
-  rtUsername.value  = null;
-  rtAvatarUrl.value = null;
-  results.value     = [];
-  selected.value    = null;
-  queue.value       = [];
+  rtLoggedIn.value   = false;
+  rtUsername.value   = null;
+  rtAvatarUrl.value  = null;
+  results.value      = [];
+  selected.value     = null;
+  files.value        = [];
+  torrentMagnet.value = "";
+  torrentCover.value  = null;
+  queue.value        = [];
 }
 
 function handleAppLogin(username) {
@@ -97,31 +104,52 @@ function handleAppLogout() {
   likes.value   = {};
 }
 
-async function handleSearch(_query, _cat) {
-  loading.value  = true;
-  error.value    = null;
-  results.value  = [];
-  selected.value = null;
-  files.value    = [];
-  view.value     = "search";
-  await new Promise((r) => setTimeout(r, 700));
-  loading.value = false;
-  results.value = MOCK_RESULTS;
+async function handleSearch(query) {
+  if (!query?.trim()) return;
+  loading.value      = true;
+  error.value        = null;
+  results.value      = [];
+  selected.value     = null;
+  files.value        = [];
+  torrentCover.value = null;
+  view.value         = "search";
+  try {
+    results.value = await searchMusic(query.trim());
+    if (!results.value.length) error.value = "Ничего не найдено.";
+  } catch (e) {
+    error.value = e?.toString?.() ?? "Ошибка поиска";
+  } finally {
+    loading.value = false;
+  }
 }
 
-function handleSelect(torrent) {
+async function handleSelect(torrent) {
   if (selected.value?.id === torrent.id) {
-    selected.value = null; files.value = []; torrentMagnet.value = "";
+    selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
     return;
   }
   selected.value      = torrent;
   files.value         = [];
-  torrentMagnet.value = "mock-magnet";
+  torrentMagnet.value = "";
+  torrentCover.value  = null;
   loadingFiles.value  = true;
-  setTimeout(() => {
+  try {
+    const details = await getTorrentDetails(torrent.id);
+    torrentMagnet.value = details.magnet ?? "";
+    torrentCover.value  = details.cover_data_url ?? null;
+    files.value = details.files.map((f, i) => ({
+      name:     f.path[f.path.length - 1] ?? "",
+      path:     f.path.join("/"),
+      size:     f.size,
+      idx:      i,
+      origIdx:  i,
+    }));
+  } catch (e) {
+    console.error("handleSelect:", e);
+    // Leave files empty — TorrentView shows "Аудиофайлы не найдены."
+  } finally {
     loadingFiles.value = false;
-    files.value = MOCK_FILES_MAP[torrent.id] ?? MOCK_FILES_DEFAULT;
-  }, 500);
+  }
 }
 
 function makeQueueItem(f, torrent, magnet) {
@@ -166,7 +194,7 @@ function handleToggleLike(like) {
   likes.value = next;
 }
 
-function handleOpenTorrentFromLike(like) {
+async function handleOpenTorrentFromLike(like) {
   const m = like.torrentName?.match(/^(.+?)\s+[-–—]\s+/);
   const torrent = {
     id: like.torrentId,
@@ -177,14 +205,35 @@ function handleOpenTorrentFromLike(like) {
   returnView.value    = "likes";
   view.value          = "search";
   selected.value      = torrent;
-  torrentMagnet.value = like.magnet ?? "mock-magnet";
+  torrentCover.value  = null;
+
+  // If the like already carries the file list (saved album like), use it directly
   if (like.type === "album" && like.audioFiles?.length) {
+    torrentMagnet.value = like.magnet ?? "";
     files.value        = like.coverFile ? [...like.audioFiles, like.coverFile] : like.audioFiles;
     loadingFiles.value = false;
     return;
   }
-  files.value        = MOCK_FILES_MAP[like.torrentId] ?? MOCK_FILES_DEFAULT;
-  loadingFiles.value = false;
+
+  // Otherwise fetch from Rutracker
+  loadingFiles.value  = true;
+  torrentMagnet.value = like.magnet ?? "";
+  try {
+    const details = await getTorrentDetails(like.torrentId);
+    torrentMagnet.value = details.magnet ?? like.magnet ?? "";
+    torrentCover.value  = details.cover_data_url ?? null;
+    files.value = details.files.map((f, i) => ({
+      name: f.path[f.path.length - 1] ?? "",
+      path: f.path.join("/"),
+      size: f.size,
+      idx: i,
+      origIdx: i,
+    }));
+  } catch (e) {
+    console.error("handleOpenTorrentFromLike:", e);
+  } finally {
+    loadingFiles.value = false;
+  }
 }
 
 function handlePlayFromLike(like) {
@@ -214,15 +263,16 @@ function handleNext() {
 function handlePrev() { queuePos.value = Math.max(0, queuePos.value - 1); }
 
 function navToSearch() {
-  view.value     = "search";
-  selected.value = null;
-  files.value    = [];
+  view.value          = "search";
+  selected.value      = null;
+  files.value         = [];
   torrentMagnet.value = "";
-  error.value    = null;
+  torrentCover.value  = null;
+  error.value         = null;
 }
 
 function handleBack() {
-  selected.value = null; files.value = []; torrentMagnet.value = "";
+  selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
   if (returnView.value === "likes") { view.value = "likes"; returnView.value = "search"; }
 }
 </script>
@@ -251,7 +301,7 @@ function handleBack() {
             </svg>
           </span>
           Поиск
-          <span :class="['rt-dot', rtLoggedIn ? 'rt-dot-on' : 'rt-dot-off']" />
+          <span :class="['rt-dot', restoringSession ? 'rt-dot-loading' : rtLoggedIn ? 'rt-dot-on' : 'rt-dot-off']" />
         </button>
 
         <!-- Library -->
@@ -314,6 +364,7 @@ function handleBack() {
           :rt-logged-in="rtLoggedIn"
           :rt-username="rtUsername"
           :rt-avatar-url="rtAvatarUrl"
+          :restoring-session="restoringSession"
           :app-user="appUser"
           :theme="theme"
           @login="handleLogin"
@@ -329,8 +380,17 @@ function handleBack() {
 
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
+          <!-- Session restore loading -->
+          <div v-if="restoringSession && !rtLoggedIn" class="session-restore-loading">
+            <span class="spinner" />
+            <div>
+              <div class="session-restore-text">Подключаемся к Rutracker…</div>
+              <div class="session-restore-sub">Поиск будет доступен через секунду</div>
+            </div>
+          </div>
+
           <!-- Onboarding: nudge to settings if not connected -->
-          <div v-if="!rtLoggedIn && !appUser && !results.length && !selected && !loading" class="onboarding">
+          <div v-if="!restoringSession && !rtLoggedIn && !appUser && !results.length && !selected && !loading" class="onboarding">
             <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
               <div class="onboarding-icon">🔗</div>
               <div class="onboarding-body">
@@ -364,6 +424,7 @@ function handleBack() {
             :files="files"
             :loading="loadingFiles"
             :magnet="torrentMagnet"
+            :cover="torrentCover"
             :now-playing-idx="nowPlaying?.fileIdx ?? null"
             :likes="likes"
             @play="handlePlay"

@@ -1,6 +1,7 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, watch, onMounted, onUnmounted } from "vue";
 import { fmtSize } from "../utils.js";
+import { getRutrackerCoverDataUrl } from "../rutracker/search.js";
 
 const props = defineProps({
   torrent: Object,
@@ -27,7 +28,54 @@ function seedsLabel(n) {
 }
 
 const cardRef = ref(null);
-// No backend: cover images won't load
+const coverUrl = ref(null);
+const coverErr = ref(false);
+let observer = null;
+let fetchGen = 0;
+
+function resetCover() {
+  fetchGen += 1;
+  coverUrl.value = null;
+  coverErr.value = false;
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
+}
+
+function setupCoverObserver() {
+  resetCover();
+  if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
+
+  const topicId = String(props.torrent.id);
+  const gen = fetchGen;
+
+  observer = new IntersectionObserver(
+    ([entry]) => {
+      if (!entry?.isIntersecting) return;
+      observer?.disconnect();
+      observer = null;
+      getRutrackerCoverDataUrl(topicId)
+        .then((u) => {
+          if (gen !== fetchGen) return;
+          if (u) coverUrl.value = u;
+        })
+        .catch(() => {});
+    },
+    { rootMargin: "200px" }
+  );
+
+  const el = cardRef.value;
+  if (el) observer.observe(el);
+}
+
+onMounted(setupCoverObserver);
+onUnmounted(resetCover);
+
+watch(
+  () => [props.torrent?.id, props.torrent?.source],
+  () => setupCoverObserver()
+);
 </script>
 
 <template>
@@ -38,7 +86,14 @@ const cardRef = ref(null);
     @click="emit('select', torrent)"
   >
     <div class="album-art">
-      <span>{{ emoji }}</span>
+      <img
+        v-if="coverUrl && !coverErr"
+        :src="coverUrl"
+        class="album-art-img"
+        alt=""
+        @error="coverErr = true"
+      />
+      <span v-else>{{ emoji }}</span>
       <button
         class="album-art-play"
         title="Открыть"

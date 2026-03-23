@@ -4,11 +4,12 @@ import { login, logout } from "../rutracker/auth.js";
 import { getMirror, setMirror, resetMirror, hasCustomMirror, DEFAULT_MIRROR } from "../rutracker/config.js";
 
 const props = defineProps({
-  rtLoggedIn:  Boolean,
-  rtUsername:  { type: String, default: null },
-  rtAvatarUrl: { type: String, default: null },
-  appUser: Object,
-  theme: { type: String, default: "dark" },
+  rtLoggedIn:       Boolean,
+  rtUsername:       { type: String, default: null },
+  rtAvatarUrl:      { type: String, default: null },
+  restoringSession: { type: Boolean, default: false },
+  appUser:          Object,
+  theme:            { type: String, default: "dark" },
 });
 
 // avatar image error fallback
@@ -109,6 +110,20 @@ function doResetMirror() {
             </button>
           </template>
 
+          <!-- ── Restoring session: loading skeleton ── -->
+          <template v-else-if="restoringSession">
+            <div class="settings-card-icon rt-loading-icon">
+              <span class="spinner" style="width:20px;height:20px;" />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Rutracker</div>
+              <div class="settings-card-status">
+                <span class="settings-status-dot status-loading" />
+                Проверяем сессию…
+              </div>
+            </div>
+          </template>
+
           <!-- ── Not logged in: generic icon ── -->
           <template v-else>
             <div class="settings-card-icon">🔗</div>
@@ -123,7 +138,7 @@ function doResetMirror() {
 
         </div>
 
-        <div v-if="!rtLoggedIn" class="settings-card-body">
+        <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
           <p class="settings-card-desc">
             Введите данные аккаунта Rutracker, чтобы искать и слушать музыку.
           </p>
