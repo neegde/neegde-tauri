@@ -1,4 +1,6 @@
+mod cover_art;
 mod rutracker;
+mod torrent_image;
 mod torrent_stream;
 
 use tauri::{Manager, RunEvent};
@@ -24,13 +26,25 @@ fn kill_vite_dev_server() {
     }
 }
 
+/// Fetch album cover art via MusicBrainz search + Cover Art Archive.
+/// Does not require Rutracker auth — uses the shared reqwest client.
+#[tauri::command]
+async fn fetch_album_cover(
+    state: tauri::State<'_, rutracker::RutrackerState>,
+    artist: String,
+    album: String,
+) -> Result<Option<String>, String> {
+    let client = state.client.clone();
+    Ok(cover_art::fetch_album_cover(&client, &artist, &album).await)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            // RutrackerState needs the AppHandle to locate the app data dir.
             app.manage(rutracker::RutrackerState::new(app.handle()));
             app.manage(torrent_stream::TorrentStreamState::new(app.handle().clone()));
+            app.manage(torrent_image::TorrentImageState::new(app.handle()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -43,6 +57,8 @@ pub fn run() {
             rutracker::rutracker_get_torrent_details,
             torrent_stream::torrent_prepare_stream,
             torrent_stream::torrent_dispose_preview,
+            torrent_image::torrent_fetch_image,
+            fetch_album_cover,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

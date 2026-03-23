@@ -589,6 +589,128 @@ body {
 }
 .btn-dl-album:hover { border-color: var(--text); color: var(--text); transform: scale(1.04); }
 
+/* ── View-mode toggle ─────────────────────────────────────────────────── */
+.view-toggle {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 3px;
+}
+.view-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.view-toggle-btn:hover { color: var(--text); background: rgba(255,255,255,0.07); }
+.view-toggle-btn.active { background: rgba(255,255,255,0.12); color: var(--text); }
+
+/* ── Gallery view ─────────────────────────────────────────────────────── */
+.album-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 20px;
+  padding: 24px 0 8px;
+}
+.gallery-card {
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px;
+  padding: 12px;
+  transition: background 0.15s;
+}
+.gallery-card:hover { background: rgba(255,255,255,0.06); }
+.gallery-card--active { background: rgba(255,255,255,0.09); }
+.gallery-card-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #3a3a5c, #1a1a2e);
+  margin-bottom: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.gallery-card-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 10px;
+  opacity: 0;
+  transition: opacity 0.18s;
+}
+.gallery-card:hover .gallery-card-overlay { opacity: 1; }
+.gallery-card--active .gallery-card-overlay { opacity: 1; }
+.gallery-play-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 50%;
+  color: #000;
+  font-size: 15px;
+  font-weight: 700;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s, background 0.15s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.gallery-play-btn:hover { transform: scale(1.1); background: var(--accent-h); }
+.gallery-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+.gallery-card-count { font-size: 11px; color: var(--muted); }
+
+/* Expanded tracklist panel in gallery mode */
+.gallery-expanded {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  animation: gallery-expand 0.18s ease;
+}
+@keyframes gallery-expand {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.gallery-expanded-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px 14px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.gallery-close-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  margin-left: 4px;
+}
+.gallery-close-btn:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+
 /* ── Album / Track-list View ──────────────────────────────────────────── */
 .album-header {
   display: flex;
