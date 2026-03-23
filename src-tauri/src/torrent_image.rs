@@ -2,7 +2,7 @@
 /// Uses a **separate** librqbit session so it never races with the audio streaming session.
 use base64::Engine as _;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
@@ -11,10 +11,15 @@ use tokio::sync::Mutex;
 
 const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024; // 3 MB hard cap
 const FETCH_TIMEOUT_SECS: u64 = 15;
+/// In-memory cache for successful data URLs (avoids repeat BT work and IPC payload).
+const CACHE_MAX_ENTRIES: usize = 128;
 
 pub struct TorrentImageState {
     session: Arc<Mutex<Option<Arc<Session>>>>,
     base_dir: Option<std::path::PathBuf>,
+    /// Serialize `fetch` per magnet so concurrent `update_only_files` calls cannot fight.
+    magnet_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    data_url_cache: Arc<Mutex<HashMap<(String, usize), String>>>,
 }
 
 impl TorrentImageState {
@@ -27,7 +32,25 @@ impl TorrentImageState {
         Self {
             session: Arc::new(Mutex::new(None)),
             base_dir,
+            magnet_locks: Arc::new(Mutex::new(HashMap::new())),
+            data_url_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    async fn lock_for_magnet(&self, magnet: &str) -> Arc<Mutex<()>> {
+        let mut map = self.magnet_locks.lock().await;
+        map.entry(magnet.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    fn cache_put(cache: &mut HashMap<(String, usize), String>, key: (String, usize), value: String) {
+        if cache.len() >= CACHE_MAX_ENTRIES && !cache.contains_key(&key) {
+            if let Some(k) = cache.keys().next().cloned() {
+                cache.remove(&k);
+            }
+        }
+        cache.insert(key, value);
     }
 
     async fn ensure_session(&self) -> Result<Arc<Session>, String> {
@@ -47,6 +70,33 @@ impl TorrentImageState {
     }
 
     pub async fn fetch(&self, magnet: String, file_idx: usize) -> Result<Option<String>, String> {
+        let key = (magnet.clone(), file_idx);
+        {
+            let cache = self.data_url_cache.lock().await;
+            if let Some(url) = cache.get(&key) {
+                return Ok(Some(url.clone()));
+            }
+        }
+
+        let mlock = self.lock_for_magnet(&magnet).await;
+        let _per_magnet = mlock.lock().await;
+
+        {
+            let cache = self.data_url_cache.lock().await;
+            if let Some(url) = cache.get(&key) {
+                return Ok(Some(url.clone()));
+            }
+        }
+
+        let out = self.fetch_uncached(magnet, file_idx).await?;
+        if let Some(ref url) = out {
+            let mut cache = self.data_url_cache.lock().await;
+            Self::cache_put(&mut cache, key, url.clone());
+        }
+        Ok(out)
+    }
+
+    async fn fetch_uncached(&self, magnet: String, file_idx: usize) -> Result<Option<String>, String> {
         let session = self.ensure_session().await?;
 
         let opts = AddTorrentOptions {

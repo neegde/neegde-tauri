@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { isImage, basename } from "../utils.js";
 
@@ -13,12 +13,36 @@ const props = defineProps({
 
 const MAX_COVER_BYTES = 3 * 1024 * 1024;
 
+const rootRef = ref(null);
 const resolvedCover = ref(null);
 const imgLoaded     = ref(false);
 const imgFailed     = ref(false);
 const fetching      = ref(false);
 
+let loadGen = 0;
+let observer = null;
+
+function disconnectObserver() {
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
+}
+
+/** Torrent file fetch is expensive — only when this is true do we defer to IntersectionObserver. */
+const needsTorrentFetch = computed(() => {
+  const f = props.coverFile;
+  return !!(
+    f &&
+    props.magnet &&
+    isImage(f.path) &&
+    f.size > 0 &&
+    f.size <= MAX_COVER_BYTES
+  );
+});
+
 async function loadCover() {
+  const gen = loadGen;
   resolvedCover.value = null;
   imgLoaded.value     = false;
   imgFailed.value     = false;
@@ -34,6 +58,7 @@ async function loadCover() {
         magnet:  props.magnet,
         fileIdx: f.origIdx,
       });
+      if (gen !== loadGen) return;
       if (url) {
         resolvedCover.value = url;
         return;
@@ -41,19 +66,53 @@ async function loadCover() {
     } catch (_) {
       // torrent unavailable / timeout — fall through
     } finally {
-      fetching.value = false;
+      if (gen === loadGen) fetching.value = false;
     }
   }
 
+  if (gen !== loadGen) return;
   // Fallback: cover from Rutracker post (already loaded as data: URL, no extra request)
   resolvedCover.value = props.cover ?? null;
 }
 
-onMounted(loadCover);
+function scheduleCoverLoad() {
+  disconnectObserver();
+  loadGen += 1;
+  resolvedCover.value = null;
+  imgLoaded.value = false;
+  imgFailed.value = false;
+  fetching.value = false;
+
+  if (needsTorrentFetch.value) {
+    nextTick(() => {
+      const el = rootRef.value;
+      if (!el) return;
+      observer = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry?.isIntersecting) return;
+          disconnectObserver();
+          loadCover();
+        },
+        { rootMargin: "280px" }
+      );
+      observer.observe(el);
+    });
+  } else {
+    loadCover();
+  }
+}
+
+onMounted(() => {
+  scheduleCoverLoad();
+});
+
+onUnmounted(() => {
+  disconnectObserver();
+});
 
 watch(
-  () => [props.magnet, props.coverFile?.origIdx],
-  loadCover,
+  () => [props.magnet, props.coverFile?.origIdx, props.cover],
+  scheduleCoverLoad,
 );
 
 const showImg   = computed(() => !!resolvedCover.value && !imgFailed.value);
@@ -78,7 +137,7 @@ const initial = computed(() => {
 </script>
 
 <template>
-  <div class="album-folder-cover-root">
+  <div ref="rootRef" class="album-folder-cover-root">
     <!-- Gradient placeholder — always underneath, pulses while loading -->
     <div
       class="album-folder-cover-placeholder"
