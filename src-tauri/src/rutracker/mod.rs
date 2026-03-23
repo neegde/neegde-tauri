@@ -192,7 +192,12 @@ fn extract_avatar_from_profile(html: &str, base: &str) -> Option<String> {
         if let Some(id_pos) = html.find(id_marker) {
             // Search backwards for the opening <img tag
             let tag_start = html[..id_pos].rfind('<')?;
-            let tag = &html[tag_start..id_pos + id_marker.len() + 200.min(html.len() - id_pos - id_marker.len())];
+            let raw_end = (id_pos
+                + id_marker.len()
+                + 200.min(html.len().saturating_sub(id_pos + id_marker.len())))
+            .min(html.len());
+            let tag_end = html.floor_char_boundary(raw_end);
+            let tag = &html[tag_start..tag_end];
 
             // Extract src from within the tag
             for src_marker in &[r#"src=""#, r#"src='"#] {

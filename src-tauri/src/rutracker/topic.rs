@@ -110,8 +110,10 @@ fn extract_magnet(html: &str) -> Option<String> {
 /// and plain `<img src="URL">` tags.
 fn extract_first_post_image(html: &str, base: &str) -> Option<String> {
     let body_pos = html.find(r#"class="post_body""#)?;
-    // Cap the search area; large posts can be hundreds of KB
-    let area_end = (body_pos + 40_000).min(html.len());
+    // Cap the search area; large posts can be hundreds of KB.
+    // `body_pos + N` is a byte offset — must align to a UTF-8 char boundary.
+    let raw_end = (body_pos + 40_000).min(html.len());
+    let area_end = html.floor_char_boundary(raw_end);
     let area = &html[body_pos..area_end];
 
     // Strategy 1: <var class="postImg" title="URL"> — Rutracker's own image embed
