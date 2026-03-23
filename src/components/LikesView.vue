@@ -40,6 +40,19 @@ function tracksLabel(n) {
 function albumsLabel(n) {
   return `${n} ${n === 1 ? "альбом" : n < 5 ? "альбома" : "альбомов"}`;
 }
+
+/** Индекс файла обложки в торренте: как у альбома, плюс запасной вариант из лайкнутого альбома той же раздачи. */
+function trackCoverFileIdx(like) {
+  if (like.coverFile?.origIdx != null) return like.coverFile.origIdx;
+  if (like.coverFileIdx != null) return like.coverFileIdx;
+  const album = props.likes.find(
+    (l) =>
+      l.type === "album" &&
+      String(l.torrentId) === String(like.torrentId) &&
+      l.audioFiles?.some((f) => f.origIdx === like.fileIdx)
+  );
+  return album?.coverFile?.origIdx ?? null;
+}
 </script>
 
 <template>
@@ -96,6 +109,8 @@ function albumsLabel(n) {
             <CoverThumb
               :torrent-id="like.torrentId"
               :source="like.source"
+              :magnet="like.magnet"
+              :cover-file-idx="trackCoverFileIdx(like)"
               :size="40"
               :radius="4"
             />
@@ -136,7 +151,14 @@ function albumsLabel(n) {
           @click="emit('open-torrent', like)"
         >
           <div class="album-art">
-            <span>{{ getEmoji(like.torrentId) }}</span>
+            <CoverThumb
+              :torrent-id="like.torrentId"
+              :source="like.source"
+              :magnet="like.magnet"
+              :cover-file-idx="like.coverFile?.origIdx ?? null"
+              :fallback="getEmoji(like.torrentId)"
+              fill
+            />
             <button
               class="album-art-play"
               title="Слушать"

@@ -107,6 +107,23 @@ function albumLikeId(torrent, dirPath) {
 }
 
 function makeTrackLike(torrent, magnet, f) {
+  let coverFileIdx = null;
+  /** Как у лайка альбома — чтобы во вкладке «Треки» брать тот же origIdx, что и для coverFile в торренте. */
+  let coverFile = null;
+  for (const a of albums.value) {
+    if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
+      const cf = a.coverFile;
+      if (cf) {
+        coverFileIdx = cf.origIdx ?? null;
+        coverFile = {
+          origIdx: cf.origIdx,
+          path: cf.path,
+          size: cf.size,
+        };
+      }
+      break;
+    }
+  }
   return {
     id: trackLikeId(torrent, f),
     type: "track",
@@ -116,6 +133,8 @@ function makeTrackLike(torrent, magnet, f) {
     magnet,
     fileIdx: f.origIdx,
     fileName: basename(f.path),
+    coverFileIdx,
+    coverFile,
   };
 }
 
@@ -238,8 +257,10 @@ onUnmounted(() => {
             {{ countLabel(singleAlbumWrap.raw.audioFiles.length) }}
             <span class="dot">·</span>
             {{ fmtSize(totalBytes) }}
-            <span class="dot">·</span>
-            <span :class="seeds > 0 ? 'seeds-ok' : 'seeds-dead'">{{ seedsLabel(seeds) }}</span>
+            <template v-if="!torrent.fromLikes">
+              <span class="dot">·</span>
+              <span :class="seeds > 0 ? 'seeds-ok' : 'seeds-dead'">{{ seedsLabel(seeds) }}</span>
+            </template>
             <template v-if="torrent.category && torrent.category !== '—'">
               <span class="dot">·</span>
               {{ torrent.category }}
@@ -335,10 +356,12 @@ onUnmounted(() => {
             <span class="dot">·</span>
           </template>
           <span>{{ fmtSize(totalBytes) }}</span>
-          <span class="dot">·</span>
-          <span :class="seeds > 0 ? 'seeds-ok' : 'seeds-dead'">
-            {{ seedsLabel(seeds) }}
-          </span>
+          <template v-if="!torrent.fromLikes">
+            <span class="dot">·</span>
+            <span :class="seeds > 0 ? 'seeds-ok' : 'seeds-dead'">
+              {{ seedsLabel(seeds) }}
+            </span>
+          </template>
           <template v-if="torrent.added && torrent.added !== '—'">
             <span class="dot">·</span>
             <span>{{ fmtDate(torrent.added) }}</span>

@@ -158,6 +158,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
       <CoverThumb
         :torrent-id="track.torrentId"
         :source="track.source"
+        :magnet="track.magnet"
+        :cover-file-idx="track.coverFileIdx ?? null"
         :size="56"
         :radius="4"
         fallback="♪"

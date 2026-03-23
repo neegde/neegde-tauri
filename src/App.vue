@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from "vue";
-import { isAudio, basename } from "./utils.js";
+import { isAudio, basename, detectAlbums } from "./utils.js";
+import { loadLikes, saveLikes } from "./libraryStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
@@ -78,8 +79,9 @@ const torrentSelectedBeforeAlbumPreview = ref(null);
 /** Стек для кнопки «вперёд» (как в Spotify): снимки экранов при «назад». */
 const forwardStack = ref([]);
 
-// ── Likes ─────────────────────────────────────────────────────────────────────
-const likes = ref({});
+// ── Likes (persisted locally) ────────────────────────────────────────────────
+const likes = ref(loadLikes());
+watch(likes, (v) => saveLikes(v), { deep: true });
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
 const queue    = ref([]);
@@ -194,7 +196,17 @@ async function handleSelect(torrent) {
   }
 }
 
-function makeQueueItem(f, torrent, magnet) {
+function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
+  let coverFileIdx = explicitCoverFileIdx ?? null;
+  if (coverFileIdx == null && fileList?.length) {
+    const albs = detectAlbums(fileList);
+    for (const a of albs) {
+      if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
+        coverFileIdx = a.coverFile?.origIdx ?? null;
+        break;
+      }
+    }
+  }
   return {
     magnet,
     fileIdx:     f.origIdx,
@@ -202,6 +214,7 @@ function makeQueueItem(f, torrent, magnet) {
     torrentName: torrent?.name    ?? "",
     torrentId:   torrent?.id      ?? "",
     source:      torrent?.source  ?? "rutracker",
+    coverFileIdx,
   };
 }
 
@@ -212,20 +225,31 @@ function handlePlay(fileIdx) {
   if (existing !== -1) { queuePos.value = existing; return; }
   const audioFiles = files.value.filter((f) => isAudio(f.path));
   const startIdx   = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
-  queue.value    = audioFiles.slice(startIdx).map((f) => makeQueueItem(f, selected.value, torrentMagnet.value));
+  queue.value    = audioFiles.slice(startIdx).map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
   queuePos.value = 0;
 }
 
 function handlePlayAll() {
   const audioFiles = files.value.filter((f) => isAudio(f.path));
   if (!audioFiles.length) return;
-  queue.value = audioFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value));
+  queue.value = audioFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
   queuePos.value = 0;
 }
 
 function handlePlayAlbum(albumFiles) {
   if (!albumFiles.length) return;
-  queue.value = albumFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value));
+  const albs = detectAlbums(files.value);
+  const first = albumFiles[0];
+  let coverIdx = null;
+  for (const a of albs) {
+    if (a.audioFiles.some((af) => af.origIdx === first.origIdx)) {
+      coverIdx = a.coverFile?.origIdx ?? null;
+      break;
+    }
+  }
+  queue.value = albumFiles.map((f) =>
+    makeQueueItem(f, selected.value, torrentMagnet.value, files.value, coverIdx)
+  );
   queuePos.value = 0;
 }
 
@@ -313,6 +337,7 @@ function handlePlayFromLike(like) {
   queue.value = likedTracks.slice(startIdx).map((l) => ({
     magnet: l.magnet, fileIdx: l.fileIdx, fileName: l.fileName,
     torrentName: l.torrentName, torrentId: l.torrentId, source: l.source,
+    coverFileIdx: l.coverFileIdx ?? null,
   }));
   queuePos.value = 0;
 }
@@ -322,6 +347,7 @@ function handlePlayAlbumFromLike(like) {
   queue.value = like.audioFiles.map((f) => ({
     magnet: like.magnet, fileIdx: f.origIdx, fileName: basename(f.path),
     torrentName: like.torrentName, torrentId: like.torrentId, source: like.source,
+    coverFileIdx: like.coverFile?.origIdx ?? null,
   }));
   queuePos.value = 0;
 }
@@ -555,7 +581,7 @@ function handleNavBack() {
               <div class="onboarding-body">
                 <div class="onboarding-title">Аккаунт — для библиотеки</div>
                 <div class="onboarding-desc">
-                  Войдите в аккаунт, чтобы лайки сохранялись между устройствами.
+                  Лайки уже сохраняются на этом компьютере. Аккаунт — для синхронизации между устройствами (скоро).
                 </div>
               </div>
             </div>
