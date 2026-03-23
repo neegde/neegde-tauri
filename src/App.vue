@@ -3,90 +3,82 @@ import { ref, computed, watch } from "vue";
 import { isAudio, basename } from "./utils.js";
 import { MOCK_RESULTS, MOCK_FILES_MAP, MOCK_FILES_DEFAULT } from "./mockData.js";
 
-import SearchBar from "./components/SearchBar.vue";
-import Results from "./components/Results.vue";
-import TorrentView from "./components/TorrentView.vue";
-import LikesView from "./components/LikesView.vue";
-import Player from "./components/Player.vue";
-import LoginPanel from "./components/LoginPanel.vue";
+import SearchBar    from "./components/SearchBar.vue";
+import Results      from "./components/Results.vue";
+import TorrentView  from "./components/TorrentView.vue";
+import LikesView    from "./components/LikesView.vue";
+import SettingsView from "./components/SettingsView.vue";
+import Player       from "./components/Player.vue";
 import AppAuthPanel from "./components/AppAuthPanel.vue";
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 const rtLoggedIn = ref(false);
-const appUser = ref(null);
+const appUser    = ref(null);
 const authPanelOpen = ref(false);
 
 // ── View ──────────────────────────────────────────────────────────────────────
-const view = ref("search");
+const view       = ref("search");  // "search" | "likes" | "settings"
 const returnView = ref("search");
 
 // ── Search ────────────────────────────────────────────────────────────────────
 const results = ref([]);
 const loading = ref(false);
-const error = ref(null);
+const error   = ref(null);
 
 // ── Torrent ───────────────────────────────────────────────────────────────────
-const selected = ref(null);
+const selected      = ref(null);
 const torrentMagnet = ref("");
-const files = ref([]);
-const loadingFiles = ref(false);
+const files         = ref([]);
+const loadingFiles  = ref(false);
 
 // ── Likes ─────────────────────────────────────────────────────────────────────
 const likes = ref({});
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
-const queue = ref([]);
+const queue    = ref([]);
 const queuePos = ref(0);
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 const likesCount = computed(() => Object.keys(likes.value).length);
-const showRtLogin = computed(() => !rtLoggedIn.value && !appUser.value);
-const mainRef = ref(null);
+const mainRef    = ref(null);
 
 watch(
   () => selected.value?.id,
-  (newId) => {
-    if (newId && mainRef.value) mainRef.value.scrollTo(0, 0);
-  }
+  (newId) => { if (newId && mainRef.value) mainRef.value.scrollTo(0, 0); }
 );
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
-function handleLogin(_username, _password) {
-  // Mock: instant success
+function handleLogin(_u, _p) {
   rtLoggedIn.value = true;
-  return { success: true };
 }
 
 function handleLogout() {
   rtLoggedIn.value = false;
-  results.value = [];
-  selected.value = null;
-  queue.value = [];
+  results.value    = [];
+  selected.value   = null;
+  queue.value      = [];
 }
 
-function handleAppLogin(username, _password) {
-  appUser.value = { username };
+function handleAppLogin(username) {
+  appUser.value       = { username };
   authPanelOpen.value = false;
 }
 
-function handleAppRegister(_username, _password) {
-  // stub
-}
+function handleAppRegister() { /* stub */ }
 
 function handleAppLogout() {
   appUser.value = null;
-  likes.value = {};
+  likes.value   = {};
 }
 
 async function handleSearch(_query, _cat) {
-  loading.value = true;
-  error.value = null;
-  results.value = [];
+  loading.value  = true;
+  error.value    = null;
+  results.value  = [];
   selected.value = null;
-  files.value = [];
-  view.value = "search";
-
+  files.value    = [];
+  view.value     = "search";
   await new Promise((r) => setTimeout(r, 700));
   loading.value = false;
   results.value = MOCK_RESULTS;
@@ -94,16 +86,13 @@ async function handleSearch(_query, _cat) {
 
 function handleSelect(torrent) {
   if (selected.value?.id === torrent.id) {
-    selected.value = null;
-    files.value = [];
-    torrentMagnet.value = "";
+    selected.value = null; files.value = []; torrentMagnet.value = "";
     return;
   }
-  selected.value = torrent;
-  files.value = [];
+  selected.value      = torrent;
+  files.value         = [];
   torrentMagnet.value = "mock-magnet";
-  loadingFiles.value = true;
-
+  loadingFiles.value  = true;
   setTimeout(() => {
     loadingFiles.value = false;
     files.value = MOCK_FILES_MAP[torrent.id] ?? MOCK_FILES_DEFAULT;
@@ -113,57 +102,36 @@ function handleSelect(torrent) {
 function makeQueueItem(f, torrent, magnet) {
   return {
     magnet,
-    fileIdx: f.origIdx,
-    fileName: basename(f.path),
-    torrentName: torrent?.name ?? "",
-    torrentId: torrent?.id ?? "",
-    source: torrent?.source ?? "rutracker",
+    fileIdx:     f.origIdx,
+    fileName:    basename(f.path),
+    torrentName: torrent?.name    ?? "",
+    torrentId:   torrent?.id      ?? "",
+    source:      torrent?.source  ?? "rutracker",
   };
 }
 
-function handlePlay(fileIdx, _fileName) {
+function handlePlay(fileIdx) {
   const existing = queue.value.findIndex(
     (q) => q.fileIdx === fileIdx && q.magnet === torrentMagnet.value
   );
   if (existing !== -1) { queuePos.value = existing; return; }
-
   const audioFiles = files.value.filter((f) => isAudio(f.path));
-  const clickedPos = audioFiles.findIndex((f) => f.origIdx === fileIdx);
-  const startIdx = clickedPos !== -1 ? clickedPos : 0;
-
-  queue.value = audioFiles.slice(startIdx).map((f) =>
-    makeQueueItem(f, selected.value, torrentMagnet.value)
-  );
+  const startIdx   = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
+  queue.value    = audioFiles.slice(startIdx).map((f) => makeQueueItem(f, selected.value, torrentMagnet.value));
   queuePos.value = 0;
 }
 
 function handlePlayAll() {
   const audioFiles = files.value.filter((f) => isAudio(f.path));
   if (!audioFiles.length) return;
-  queue.value = audioFiles.map((f) =>
-    makeQueueItem(f, selected.value, torrentMagnet.value)
-  );
+  queue.value = audioFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value));
   queuePos.value = 0;
 }
 
 function handlePlayAlbum(albumFiles) {
   if (!albumFiles.length) return;
-  queue.value = albumFiles.map((f) =>
-    makeQueueItem(f, selected.value, torrentMagnet.value)
-  );
+  queue.value = albumFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value));
   queuePos.value = 0;
-}
-
-function handleDownload(_fileIdx, _fileName) {
-  // No backend — noop
-}
-
-function handleDownloadAll() {
-  // No backend — noop
-}
-
-function handleDownloadAlbum(_albumFiles) {
-  // No backend — noop
 }
 
 function handleToggleLike(like) {
@@ -174,47 +142,33 @@ function handleToggleLike(like) {
 }
 
 function handleOpenTorrentFromLike(like) {
-  const artistMatch = like.torrentName?.match(/^(.+?)\s+[-–—]\s+/);
+  const m = like.torrentName?.match(/^(.+?)\s+[-–—]\s+/);
   const torrent = {
     id: like.torrentId,
     name: like.type === "album" ? (like.albumName || like.torrentName) : like.torrentName,
-    source: like.source,
-    seeders: "?",
-    size: 0,
-    category: "—",
-    added: "—",
-    fromLikes: true,
-    artist: artistMatch ? artistMatch[1].trim() : "",
+    source: like.source, seeders: "?", size: 0, category: "—", added: "—",
+    fromLikes: true, artist: m ? m[1].trim() : "",
   };
-  returnView.value = "likes";
-  view.value = "search";
-  selected.value = torrent;
+  returnView.value    = "likes";
+  view.value          = "search";
+  selected.value      = torrent;
   torrentMagnet.value = like.magnet ?? "mock-magnet";
-
   if (like.type === "album" && like.audioFiles?.length) {
-    files.value = like.coverFile
-      ? [...like.audioFiles, like.coverFile]
-      : like.audioFiles;
+    files.value        = like.coverFile ? [...like.audioFiles, like.coverFile] : like.audioFiles;
     loadingFiles.value = false;
     return;
   }
-
-  files.value = MOCK_FILES_MAP[like.torrentId] ?? MOCK_FILES_DEFAULT;
+  files.value        = MOCK_FILES_MAP[like.torrentId] ?? MOCK_FILES_DEFAULT;
   loadingFiles.value = false;
 }
 
 function handlePlayFromLike(like) {
   const likedTracks = Object.values(likes.value)
-    .filter((l) => l.type === "track")
-    .sort((a, b) => b.addedAt - a.addedAt);
+    .filter((l) => l.type === "track").sort((a, b) => b.addedAt - a.addedAt);
   const startIdx = Math.max(0, likedTracks.findIndex((l) => l.id === like.id));
   queue.value = likedTracks.slice(startIdx).map((l) => ({
-    magnet: l.magnet,
-    fileIdx: l.fileIdx,
-    fileName: l.fileName,
-    torrentName: l.torrentName,
-    torrentId: l.torrentId,
-    source: l.source,
+    magnet: l.magnet, fileIdx: l.fileIdx, fileName: l.fileName,
+    torrentName: l.torrentName, torrentId: l.torrentId, source: l.source,
   }));
   queuePos.value = 0;
 }
@@ -222,12 +176,8 @@ function handlePlayFromLike(like) {
 function handlePlayAlbumFromLike(like) {
   if (!like.audioFiles?.length) return;
   queue.value = like.audioFiles.map((f) => ({
-    magnet: like.magnet,
-    fileIdx: f.origIdx,
-    fileName: basename(f.path),
-    torrentName: like.torrentName,
-    torrentId: like.torrentId,
-    source: like.source,
+    magnet: like.magnet, fileIdx: f.origIdx, fileName: basename(f.path),
+    torrentName: like.torrentName, torrentId: like.torrentId, source: like.source,
   }));
   queuePos.value = 0;
 }
@@ -236,27 +186,19 @@ function handleNext() {
   if (queuePos.value < queue.value.length - 1) queuePos.value++;
   else { queue.value = []; queuePos.value = 0; }
 }
-
-function handlePrev() {
-  queuePos.value = Math.max(0, queuePos.value - 1);
-}
+function handlePrev() { queuePos.value = Math.max(0, queuePos.value - 1); }
 
 function navToSearch() {
-  view.value = "search";
+  view.value     = "search";
   selected.value = null;
-  files.value = [];
+  files.value    = [];
   torrentMagnet.value = "";
-  error.value = null;
+  error.value    = null;
 }
 
 function handleBack() {
-  selected.value = null;
-  files.value = [];
-  torrentMagnet.value = "";
-  if (returnView.value === "likes") {
-    view.value = "likes";
-    returnView.value = "search";
-  }
+  selected.value = null; files.value = []; torrentMagnet.value = "";
+  if (returnView.value === "likes") { view.value = "likes"; returnView.value = "search"; }
 }
 </script>
 
@@ -270,6 +212,7 @@ function handleBack() {
       </div>
 
       <nav class="sidebar-nav">
+        <!-- Search -->
         <button
           :class="['source-btn search-nav-btn', view === 'search' ? 'active' : '']"
           @click="navToSearch"
@@ -286,6 +229,7 @@ function handleBack() {
           <span :class="['rt-dot', rtLoggedIn ? 'rt-dot-on' : 'rt-dot-off']" />
         </button>
 
+        <!-- Library -->
         <div class="nav-label" style="margin-top: 16px">Библиотека</div>
         <button
           :class="['source-btn', view === 'likes' ? 'active' : '']"
@@ -295,25 +239,32 @@ function handleBack() {
           Мне нравится
           <span v-if="likesCount > 0" class="likes-badge">{{ likesCount }}</span>
         </button>
+
+        <!-- Settings (bottom of nav) -->
+        <div style="flex: 1" />
+        <button
+          :class="['source-btn', view === 'settings' ? 'active' : '']"
+          @click="view = 'settings'"
+        >
+          <span class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </span>
+          Настройки
+          <!-- Orange dot when Rutracker is not connected -->
+          <span v-if="!rtLoggedIn" class="settings-warn-dot" />
+        </button>
       </nav>
-
-      <div v-if="showRtLogin" class="sidebar-login">
-        <LoginPanel @login="handleLogin" />
-      </div>
-
-      <div v-if="rtLoggedIn" class="sidebar-bottom-rt">
-        <button class="logout-btn" @click="handleLogout">Выйти из Rutracker</button>
-      </div>
 
       <!-- App account block -->
       <div class="sidebar-account">
-        <div v-if="appUser" class="account-info">
-          <div class="account-avatar">{{ appUser.username[0].toUpperCase() }}</div>
-          <div class="account-name">{{ appUser.username }}</div>
-          <button class="account-logout-btn" title="Выйти" @click="handleAppLogout">↩</button>
-        </div>
-        <button v-else class="account-login-btn" @click="authPanelOpen = true">
+        <button class="account-login-btn account-login-btn--wip" disabled title="В разработке">
           Войти в аккаунт
+          <span class="account-wip-badge">скоро</span>
         </button>
       </div>
     </aside>
@@ -322,6 +273,7 @@ function handleBack() {
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
 
+        <!-- Likes view -->
         <LikesView
           v-if="view === 'likes'"
           :likes="Object.values(likes)"
@@ -331,34 +283,40 @@ function handleBack() {
           @open-torrent="handleOpenTorrentFromLike"
         />
 
+        <!-- Settings view -->
+        <SettingsView
+          v-else-if="view === 'settings'"
+          :rt-logged-in="rtLoggedIn"
+          :app-user="appUser"
+          @login="handleLogin"
+          @logout="handleLogout"
+          @app-logout="handleAppLogout"
+          @open-auth="authPanelOpen = true"
+        />
+
+        <!-- Search view -->
         <template v-else>
-          <SearchBar
-            :loading="loading"
-            :show-categories="false"
-            @search="handleSearch"
-          />
+          <SearchBar :loading="loading" :show-categories="false" @search="handleSearch" />
 
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
-          <!-- Onboarding -->
-          <div v-if="showRtLogin && !results.length && !selected && !loading" class="onboarding">
-            <div class="onboarding-card">
-              <div class="onboarding-icon">🎵</div>
+          <!-- Onboarding: nudge to settings if not connected -->
+          <div v-if="!rtLoggedIn && !appUser && !results.length && !selected && !loading" class="onboarding">
+            <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
+              <div class="onboarding-icon">🔗</div>
               <div class="onboarding-body">
-                <div class="onboarding-title">Войдите в Rutracker</div>
+                <div class="onboarding-title">Подключите Rutracker</div>
                 <div class="onboarding-desc">
-                  Введите логин и пароль в боковой панели — поиск заработает сразу.
-                  Лайки сохранятся только в этом браузере.
+                  Зайдите в <strong style="color:var(--text)">Настройки</strong> и введите логин — поиск заработает сразу.
                 </div>
               </div>
             </div>
-            <div class="onboarding-card onboarding-card--dim">
+            <div class="onboarding-card onboarding-card--dim" style="cursor:pointer" @click="authPanelOpen = true">
               <div class="onboarding-icon">♥</div>
               <div class="onboarding-body">
                 <div class="onboarding-title">Аккаунт — для библиотеки</div>
                 <div class="onboarding-desc">
-                  Войдите в аккаунт внизу слева, чтобы лайки сохранялись между
-                  устройствами и сессиями.
+                  Войдите в аккаунт, чтобы лайки сохранялись между устройствами.
                 </div>
               </div>
             </div>
@@ -382,9 +340,9 @@ function handleBack() {
             @play="handlePlay"
             @play-all="handlePlayAll"
             @play-album="handlePlayAlbum"
-            @download-album="handleDownloadAlbum"
-            @download="handleDownload"
-            @download-all="handleDownloadAll"
+            @download-album="() => {}"
+            @download="() => {}"
+            @download-all="() => {}"
             @toggle-like="handleToggleLike"
             @back="handleBack"
           />
