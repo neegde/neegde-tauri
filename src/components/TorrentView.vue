@@ -32,7 +32,8 @@ const props = defineProps({
 const emit = defineEmits([
   "play", "play-all", "play-album",
   "download", "download-all", "download-album",
-  "toggle-like", "back",
+  "toggle-like",
+  "open-album-preview",
 ]);
 
 // ── View mode ────────────────────────────────────────────────────────────────
@@ -41,14 +42,14 @@ const viewMode = ref(localStorage.getItem("albumViewMode") || "list");
 function setViewMode(mode) {
   viewMode.value = mode;
   localStorage.setItem("albumViewMode", mode);
-  expandedIdx.value = null;
 }
 
-// Gallery: index of the expanded album (shows tracklist below the grid)
-const expandedIdx = ref(null);
-
-function toggleExpand(idx) {
-  expandedIdx.value = expandedIdx.value === idx ? null : idx;
+/** Gallery → тот же предпросмотр, что при открытии лайкнутого альбома (только файлы альбома). */
+function openAlbumFromGallery(wrap) {
+  emit("open-album-preview", {
+    album: wrap.raw,
+    displayName: wrap.displayName,
+  });
 }
 
 // ── Albums ───────────────────────────────────────────────────────────────────
@@ -138,11 +139,30 @@ function trackOffset(idx) {
   return albums.value.slice(0, idx).reduce((s, a) => s + a.audioFiles.length, 0);
 }
 
+/** Один альбом в раздаче — экран как превью альбома в Spotify (герой + треклист). */
+const isSpotifyAlbumPage = computed(() => {
+  if (props.loading) return false;
+  if (albums.value.length !== 1) return false;
+  return totalAudio.value > 0;
+});
+
+const singleAlbumWrap = computed(() => displayAlbums.value[0] ?? null);
+
+const spotifyAlbumTitle = computed(
+  () => singleAlbumWrap.value?.displayName?.trim() || props.torrent?.name?.trim() || "Альбом"
+);
+
+const spotifyArtist = computed(() => {
+  if (props.torrent?.fromLikes && props.torrent?.artist) return props.torrent.artist;
+  const m = props.torrent?.name?.match(/^(.+?)\s+[-–—]\s+/);
+  if (m) return m[1].trim();
+  return "Неизвестный исполнитель";
+});
+
 watch(
   () => props.magnet,
   () => {
     disposeTorrentPreview();
-    expandedIdx.value = null;
   }
 );
 
@@ -188,12 +208,117 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="torrent-page">
+  <div
+    :class="['torrent-page', isSpotifyAlbumPage && 'torrent-page--spotify-album']"
+  >
 
-    <div class="torrent-nav">
-      <button class="back-btn" @click="emit('back')">← Назад к результатам</button>
+    <div v-if="loading" class="loading-tracks">
+      <span class="spinner" /> Загрузка файлов…
     </div>
 
+    <p v-else-if="albums.length === 0" class="empty-msg">Аудиофайлы не найдены.</p>
+
+    <!-- ── Spotify-style single album ───────────────────────────────────── -->
+    <template v-else-if="isSpotifyAlbumPage && singleAlbumWrap">
+      <div class="spotify-hero-bg" aria-hidden="true" />
+      <section class="spotify-hero" aria-label="Альбом">
+        <div class="spotify-hero-cover">
+          <AlbumFolderCover
+            :magnet="magnet"
+            :cover-file="singleAlbumWrap.raw.coverFile"
+            :label="spotifyAlbumTitle"
+            :cover="cover"
+          />
+        </div>
+        <div class="spotify-hero-text">
+          <span class="spotify-hero-kicker">Альбом</span>
+          <h1 class="spotify-hero-title">{{ spotifyAlbumTitle }}</h1>
+          <p class="spotify-hero-artist">{{ spotifyArtist }}</p>
+          <p class="spotify-hero-meta">
+            {{ countLabel(singleAlbumWrap.raw.audioFiles.length) }}
+            <span class="dot">·</span>
+            {{ fmtSize(totalBytes) }}
+            <span class="dot">·</span>
+            <span :class="seeds > 0 ? 'seeds-ok' : 'seeds-dead'">{{ seedsLabel(seeds) }}</span>
+            <template v-if="torrent.category && torrent.category !== '—'">
+              <span class="dot">·</span>
+              {{ torrent.category }}
+            </template>
+          </p>
+        </div>
+      </section>
+
+      <div class="spotify-toolbar">
+        <button
+          type="button"
+          class="spotify-play-fab"
+          title="Слушать"
+          @click="emit('play-all')"
+        >
+          ▶
+        </button>
+        <button
+          type="button"
+          :class="['spotify-tool-btn', likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'liked' : '']"
+          :title="likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'Убрать из любимых' : 'В любимые'"
+          @click="
+            emit(
+              'toggle-like',
+              makeAlbumLike(torrent, magnet, singleAlbumWrap.raw, singleAlbumWrap.displayName)
+            )
+          "
+        >
+          {{ likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? "♥" : "♡" }}
+        </button>
+        <button
+          type="button"
+          class="spotify-tool-btn"
+          title="Скачать альбом"
+          @click="emit('download-all')"
+        >
+          ↓
+        </button>
+      </div>
+
+      <div class="spotify-tracklist">
+        <div class="spotify-tracklist-head">
+          <span class="spotify-col-n">#</span>
+          <span class="spotify-col-title">Название</span>
+          <span class="spotify-col-time" />
+        </div>
+        <div
+          v-for="(f, i) in singleAlbumWrap.raw.audioFiles"
+          :key="f.origIdx"
+          :class="['spotify-track-row', nowPlayingIdx === f.origIdx ? 'playing' : '']"
+          @click="emit('play', f.origIdx, f.path)"
+        >
+          <div class="spotify-col-n">
+            <span v-if="nowPlayingIdx === f.origIdx" class="playing-anim">♪</span>
+            <template v-else>
+              <span class="spotify-num">{{ i + 1 }}</span>
+              <span class="spotify-play-hint">▶</span>
+            </template>
+          </div>
+          <div class="spotify-col-title">
+            <span class="spotify-track-title" :title="basename(f.path)">{{ basename(f.path) }}</span>
+          </div>
+          <div class="spotify-col-time">
+            <span class="spotify-dur">{{ f.size > 0 ? fmtSize(f.size) : "—" }}</span>
+            <div class="spotify-track-actions">
+              <button
+                :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
+                @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
+              >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
+              <button class="track-btn" title="Слушать" @click.stop="emit('play', f.origIdx, f.path)">▶</button>
+              <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- ── Multi-album: classic torrent header + list / gallery ─────────── -->
+    <template v-else>
     <div class="album-header">
       <div class="album-cover">
         <img v-if="cover" :src="cover" alt="Обложка" class="cover-img" />
@@ -258,14 +383,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="loading" class="loading-tracks">
-      <span class="spinner" /> Загрузка файлов…
-    </div>
-
-    <p v-else-if="albums.length === 0" class="empty-msg">Аудиофайлы не найдены.</p>
-
     <!-- ── LIST VIEW ─────────────────────────────────────────────────────── -->
-    <template v-else-if="viewMode === 'list'">
+    <template v-if="viewMode === 'list'">
       <div
         v-for="(wrap, albumIdx) in displayAlbums"
         :key="wrap.raw.dirPath || String(albumIdx)"
@@ -331,13 +450,13 @@ onUnmounted(() => {
     </template>
 
     <!-- ── GALLERY VIEW ──────────────────────────────────────────────────── -->
-    <template v-else>
+    <template v-else-if="viewMode === 'gallery'">
       <div class="album-gallery">
         <div
           v-for="(wrap, albumIdx) in displayAlbums"
           :key="wrap.raw.dirPath || String(albumIdx)"
-          :class="['gallery-card', expandedIdx === albumIdx ? 'gallery-card--active' : '']"
-          @click="toggleExpand(albumIdx)"
+          class="gallery-card"
+          @click="openAlbumFromGallery(wrap)"
         >
           <div class="gallery-card-cover">
             <AlbumFolderCover
@@ -358,70 +477,7 @@ onUnmounted(() => {
           <div class="gallery-card-count">{{ countLabel(wrap.raw.audioFiles.length) }}</div>
         </div>
       </div>
-
-      <!-- Expanded tracklist for the selected gallery card -->
-      <div
-        v-if="expandedIdx !== null && displayAlbums[expandedIdx]"
-        class="gallery-expanded"
-      >
-        <div class="gallery-expanded-header">
-          <div class="album-section-cover" style="width:48px;height:48px">
-            <AlbumFolderCover
-              :magnet="magnet"
-              :cover-file="displayAlbums[expandedIdx].raw.coverFile"
-              :label="displayAlbums[expandedIdx].displayName"
-              :cover="cover"
-            />
-          </div>
-          <div class="album-section-info">
-            <div class="album-section-kind">Альбом</div>
-            <div class="album-section-name">{{ displayAlbums[expandedIdx].displayName }}</div>
-            <div class="album-section-count">{{ countLabel(displayAlbums[expandedIdx].raw.audioFiles.length) }}</div>
-          </div>
-          <button
-            :class="['track-btn', 'like-btn', 'album-like-btn', likes?.[albumLikeId(torrent, displayAlbums[expandedIdx].raw.dirPath)] ? 'liked' : '']"
-            :title="likes?.[albumLikeId(torrent, displayAlbums[expandedIdx].raw.dirPath)] ? 'Убрать лайк' : 'Нравится'"
-            @click="emit('toggle-like', makeAlbumLike(torrent, magnet, displayAlbums[expandedIdx].raw, displayAlbums[expandedIdx].displayName))"
-          >{{ likes?.[albumLikeId(torrent, displayAlbums[expandedIdx].raw.dirPath)] ? "♥" : "♡" }}</button>
-          <button class="btn-play-album" title="Слушать альбом" @click="emit('play-album', displayAlbums[expandedIdx].raw.audioFiles)">▶</button>
-          <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', displayAlbums[expandedIdx].raw.audioFiles)">↓</button>
-          <button class="gallery-close-btn" title="Закрыть" @click="expandedIdx = null">✕</button>
-        </div>
-
-        <div class="tracklist-header">
-          <span>#</span>
-          <span style="padding-left: 12px">Название</span>
-          <span style="text-align: right">Размер</span>
-          <span />
-        </div>
-        <div
-          v-for="(f, i) in displayAlbums[expandedIdx].raw.audioFiles"
-          :key="f.origIdx"
-          :class="['track-row', nowPlayingIdx === f.origIdx ? 'playing' : '']"
-          @click="emit('play', f.origIdx, f.path)"
-        >
-          <div class="track-num">
-            <span v-if="nowPlayingIdx === f.origIdx" class="playing-anim">♪</span>
-            <template v-else>
-              <span class="track-num-val">{{ trackOffset(expandedIdx) + i + 1 }}</span>
-              <span class="track-num-icon">▶</span>
-            </template>
-          </div>
-          <div class="track-info">
-            <div class="track-name" :title="basename(f.path)">{{ basename(f.path) }}</div>
-          </div>
-          <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
-          <div class="track-actions">
-            <button
-              :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
-              :title="likes?.[trackLikeId(torrent, f)] ? 'Убрать лайк' : 'Нравится'"
-              @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
-            >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
-            <button class="track-btn" title="Слушать" @click.stop="emit('play', f.origIdx, f.path)">▶</button>
-            <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
-          </div>
-        </div>
-      </div>
+    </template>
     </template>
 
   </div>

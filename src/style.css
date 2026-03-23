@@ -44,11 +44,29 @@ body {
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
+  min-height: 0;
+}
+
+/* Верхняя полоса: логотип + навигация вперёд/назад — sticky, не уезжает при прокрутке сайдбара */
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 10px 16px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--sidebar-bg);
 }
 
 .sidebar-logo {
-  padding: 24px 24px 20px;
-  border-bottom: 1px solid var(--border);
+  padding: 0;
+  border: none;
+  min-width: 0;
+  flex: 1;
 }
 .logo-text {
   font-size: 18px;
@@ -468,24 +486,296 @@ body {
 .seeds-ok      { color: var(--green); }
 .seeds-dead    { color: var(--red); }
 
+/* ── Spotify-style single-album page ───────────────────────────────────── */
+.torrent-page--spotify-album {
+  position: relative;
+  overflow-x: hidden;
+}
+.torrent-page--spotify-album .spotify-hero-bg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: min(52vh, 380px);
+  background: linear-gradient(
+    180deg,
+    rgba(72, 56, 112, 0.55) 0%,
+    rgba(24, 24, 24, 0.92) 78%,
+    var(--bg, #121212) 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+.torrent-page--spotify-album .spotify-hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 24px 32px;
+  padding: 0 0 20px;
+}
+.torrent-page--spotify-album .spotify-hero-cover {
+  width: clamp(180px, 26vw, 232px);
+  max-width: min(40vw, 232px);
+  aspect-ratio: 1;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
+  background: linear-gradient(135deg, #3a3a5c, #1a1a2e);
+}
+.torrent-page--spotify-album .spotify-hero-text {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+}
+.torrent-page--spotify-album .spotify-hero-kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text);
+  margin: 0;
+}
+.torrent-page--spotify-album .spotify-hero-title {
+  font-size: clamp(1.2rem, 2.4vw, 2.1rem);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.18;
+  margin: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.torrent-page--spotify-album .spotify-hero-artist {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.torrent-page--spotify-album .spotify-hero-meta {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0.25rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  row-gap: 4px;
+}
+.torrent-page--spotify-album .spotify-toolbar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 0 28px;
+}
+.torrent-page--spotify-album .spotify-play-fab {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #000;
+  font-size: 22px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s, background 0.15s, box-shadow 0.15s;
+}
+.torrent-page--spotify-album .spotify-play-fab:hover {
+  transform: scale(1.06);
+  background: var(--accent-h);
+}
+.torrent-page--spotify-album .spotify-tool-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  transition: color 0.15s, transform 0.1s, background 0.15s;
+}
+.torrent-page--spotify-album .spotify-tool-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.torrent-page--spotify-album .spotify-tool-btn.liked {
+  color: #e05c6a;
+}
+.torrent-page--spotify-album .spotify-tracklist {
+  position: relative;
+  z-index: 1;
+  padding-bottom: 32px;
+}
+.torrent-page--spotify-album .spotify-tracklist-head {
+  display: grid;
+  grid-template-columns: 48px 1fr 120px;
+  align-items: center;
+  padding: 8px 16px;
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.torrent-page--spotify-album .spotify-col-n {
+  text-align: center;
+  position: relative;
+}
+.torrent-page--spotify-album .spotify-track-row .spotify-col-title {
+  min-width: 0;
+}
+.torrent-page--spotify-album .spotify-track-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 120px;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
+}
+.torrent-page--spotify-album .spotify-track-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.torrent-page--spotify-album .spotify-track-row.playing {
+  background: rgba(29, 185, 84, 0.12);
+}
+.torrent-page--spotify-album .spotify-num {
+  font-size: 15px;
+  color: var(--muted);
+}
+.torrent-page--spotify-album .spotify-play-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: none;
+  font-size: 12px;
+  color: var(--text);
+}
+.torrent-page--spotify-album .spotify-track-row:hover .spotify-num {
+  opacity: 0;
+}
+.torrent-page--spotify-album .spotify-track-row:hover .spotify-play-hint {
+  display: block;
+}
+.torrent-page--spotify-album .spotify-track-row.playing .spotify-num {
+  color: var(--accent);
+  opacity: 1;
+}
+.torrent-page--spotify-album .spotify-track-row.playing .spotify-play-hint {
+  display: none;
+}
+.torrent-page--spotify-album .spotify-track-title {
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.torrent-page--spotify-album .spotify-col-time {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.torrent-page--spotify-album .spotify-dur {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.torrent-page--spotify-album .spotify-track-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.torrent-page--spotify-album .spotify-track-row:hover .spotify-track-actions {
+  opacity: 1;
+}
+@media (max-width: 640px) {
+  .torrent-page--spotify-album .spotify-hero {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 16px;
+  }
+  .torrent-page--spotify-album .spotify-hero-text {
+    width: 100%;
+    align-items: center;
+  }
+  .torrent-page--spotify-album .spotify-hero-meta {
+    justify-content: center;
+  }
+  .torrent-page--spotify-album .spotify-toolbar {
+    justify-content: center;
+  }
+  .torrent-page--spotify-album .spotify-hero-cover {
+    max-width: min(72vw, 240px);
+  }
+}
+
 /* ── Torrent Page (full-view) ─────────────────────────────────────────── */
 .torrent-page { animation: fade-up 0.2s ease; }
 @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } }
 
-.torrent-nav { padding: 4px 0 4px; }
-.back-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  padding: 6px 12px 6px 8px;
-  border-radius: 500px;
-  letter-spacing: 0.3px;
-  transition: color 0.15s, background 0.15s;
+/* Top bar: строка поиска (стрелки — в сайдбаре) */
+.main-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 18px;
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
-.back-btn:hover { color: var(--text); background: rgba(255,255,255,0.07); }
+.main-toolbar-search {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+.main-toolbar-search .search-form {
+  margin-bottom: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.main-toolbar-search .search-input-wrap {
+  max-width: none;
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+}
 
 /* ── Cover loading shimmer ────────────────────────────────────────────── */
 @keyframes cover-shimmer {
@@ -519,7 +809,10 @@ body {
 }
 
 /* ── Album sections (multi-album torrents) ────────────────────────────── */
-.album-section { margin-top: 36px; }
+.album-section {
+  margin-top: 36px;
+  scroll-margin-top: 12px;
+}
 .album-section:first-of-type { margin-top: 12px; }
 
 .album-section-header {
@@ -628,7 +921,6 @@ body {
   transition: background 0.15s;
 }
 .gallery-card:hover { background: rgba(255,255,255,0.06); }
-.gallery-card--active { background: rgba(255,255,255,0.09); }
 .gallery-card-cover {
   position: relative;
   width: 100%;
@@ -649,9 +941,10 @@ body {
   padding: 10px;
   opacity: 0;
   transition: opacity 0.18s;
+  /* Let clicks reach the card / cover; only the play button stays interactive */
+  pointer-events: none;
 }
 .gallery-card:hover .gallery-card-overlay { opacity: 1; }
-.gallery-card--active .gallery-card-overlay { opacity: 1; }
 .gallery-play-btn {
   background: var(--accent);
   border: none;
@@ -667,6 +960,7 @@ body {
   justify-content: center;
   transition: transform 0.12s, background 0.15s;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  pointer-events: auto;
 }
 .gallery-play-btn:hover { transform: scale(1.1); background: var(--accent-h); }
 .gallery-card-name {
@@ -678,38 +972,6 @@ body {
   margin-bottom: 3px;
 }
 .gallery-card-count { font-size: 11px; color: var(--muted); }
-
-/* Expanded tracklist panel in gallery mode */
-.gallery-expanded {
-  margin-top: 8px;
-  border-top: 1px solid var(--border);
-  padding-top: 4px;
-  animation: gallery-expand 0.18s ease;
-}
-@keyframes gallery-expand {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.gallery-expanded-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 16px 14px 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
-}
-.gallery-close-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 14px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
-  margin-left: 4px;
-}
-.gallery-close-btn:hover { color: var(--text); background: rgba(255,255,255,0.08); }
 
 /* ── Album / Track-list View ──────────────────────────────────────────── */
 .album-header {
@@ -1428,6 +1690,14 @@ body {
 [data-theme="light"] .main-wrap {
   background: linear-gradient(180deg, #ddd4f0 0%, var(--bg) 340px);
 }
+[data-theme="light"] .torrent-page--spotify-album .spotify-hero-bg {
+  background: linear-gradient(
+    180deg,
+    rgba(120, 100, 180, 0.38) 0%,
+    rgba(240, 240, 240, 0.95) 78%,
+    var(--bg) 100%
+  );
+}
 [data-theme="light"] .app-auth-modal       { background: var(--surface); }
 [data-theme="light"] .player               { background: var(--surface); }
 
@@ -1467,7 +1737,6 @@ body {
 [data-theme="light"] .likes-tab                         { background: rgba(0,0,0,0.07); }
 [data-theme="light"] .likes-tab:hover                   { background: rgba(0,0,0,0.12); }
 [data-theme="light"] .likes-tab.active                  { color: #fff; }
-[data-theme="light"] .back-btn:hover                    { background: rgba(0,0,0,0.05); }
 [data-theme="light"] .likes-badge                       { background: rgba(0,0,0,0.1); }
 [data-theme="light"] .settings-card-icon                { background: rgba(0,0,0,0.06); }
 [data-theme="light"] ::-webkit-scrollbar-thumb          { background: rgba(0,0,0,0.2); }

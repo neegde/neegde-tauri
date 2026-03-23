@@ -12,6 +12,7 @@ import LikesView    from "./components/LikesView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import Player       from "./components/Player.vue";
 import AppAuthPanel from "./components/AppAuthPanel.vue";
+import NavArrows    from "./components/NavArrows.vue";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
@@ -70,6 +71,13 @@ const torrentCover  = ref(null);   // base64 data URL or null
 const files         = ref([]);
 const loadingFiles  = ref(false);
 
+/** Полный список файлов раздачи до предпросмотра одного альбома (как из лайков). */
+const torrentFilesBeforeAlbumPreview = ref(null);
+const torrentSelectedBeforeAlbumPreview = ref(null);
+
+/** Стек для кнопки «вперёд» (как в Spotify): снимки экранов при «назад». */
+const forwardStack = ref([]);
+
 // ── Likes ─────────────────────────────────────────────────────────────────────
 const likes = ref({});
 
@@ -82,9 +90,22 @@ const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
 const likesCount = computed(() => Object.keys(likes.value).length);
 const mainRef    = ref(null);
 
+const navCanGoBack = computed(() => {
+  if (view.value !== "search") return false;
+  if (torrentFilesBeforeAlbumPreview.value) return true;
+  return !!selected.value;
+});
+
 watch(
   () => selected.value?.id,
   (newId) => { if (newId && mainRef.value) mainRef.value.scrollTo(0, 0); }
+);
+
+watch(
+  () => view.value,
+  (v) => {
+    if (v === "settings" || v === "likes") forwardStack.value = [];
+  }
 );
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -104,6 +125,7 @@ function handleLogout() {
   torrentMagnet.value = "";
   torrentCover.value  = null;
   queue.value        = [];
+  forwardStack.value = [];
   clearRutrackerCoverCache();
 }
 
@@ -121,6 +143,7 @@ function handleAppLogout() {
 
 async function handleSearch(query) {
   if (!query?.trim()) return;
+  forwardStack.value = [];
   loading.value      = true;
   error.value        = null;
   results.value      = [];
@@ -139,10 +162,14 @@ async function handleSearch(query) {
 }
 
 async function handleSelect(torrent) {
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
   if (selected.value?.id === torrent.id) {
+    forwardStack.value = [];
     selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
     return;
   }
+  forwardStack.value = [];
   selected.value      = torrent;
   files.value         = [];
   torrentMagnet.value = "";
@@ -209,7 +236,35 @@ function handleToggleLike(like) {
   likes.value = next;
 }
 
+/** Предпросмотр одного альбома из галереи — как handleOpenTorrentFromLike для type === "album". */
+function handleOpenAlbumPreview({ album, displayName }) {
+  if (!selected.value || !album?.audioFiles?.length) return;
+  if (torrentFilesBeforeAlbumPreview.value) return;
+
+  forwardStack.value = [];
+  torrentFilesBeforeAlbumPreview.value = files.value;
+  torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
+
+  const list = album.coverFile
+    ? [...album.audioFiles, album.coverFile]
+    : [...album.audioFiles];
+  files.value = list;
+
+  const base = torrentSelectedBeforeAlbumPreview.value;
+  const m = base?.name?.match(/^(.+?)\s+[-–—]\s+/);
+  selected.value = {
+    ...base,
+    name: displayName,
+    fromLikes: true,
+    artist: m ? m[1].trim() : "",
+  };
+  if (mainRef.value) mainRef.value.scrollTo(0, 0);
+}
+
 async function handleOpenTorrentFromLike(like) {
+  forwardStack.value = [];
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
   const m = like.torrentName?.match(/^(.+?)\s+[-–—]\s+/);
   const torrent = {
     id: like.torrentId,
@@ -278,6 +333,7 @@ function handleNext() {
 function handlePrev() { queuePos.value = Math.max(0, queuePos.value - 1); }
 
 function navToSearch() {
+  forwardStack.value = [];
   view.value          = "search";
   selected.value      = null;
   files.value         = [];
@@ -287,8 +343,70 @@ function navToSearch() {
 }
 
 function handleBack() {
-  selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
-  if (returnView.value === "likes") { view.value = "likes"; returnView.value = "search"; }
+  if (torrentFilesBeforeAlbumPreview.value) {
+    forwardStack.value.push({
+      type: "album-preview",
+      files: [...files.value],
+      selected: { ...selected.value },
+      magnet: torrentMagnet.value,
+      cover: torrentCover.value,
+      fullFiles: torrentFilesBeforeAlbumPreview.value,
+      fullSelected: torrentSelectedBeforeAlbumPreview.value,
+    });
+    files.value = torrentFilesBeforeAlbumPreview.value;
+    selected.value = torrentSelectedBeforeAlbumPreview.value;
+    torrentFilesBeforeAlbumPreview.value = null;
+    torrentSelectedBeforeAlbumPreview.value = null;
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+    return;
+  }
+  if (selected.value) {
+    forwardStack.value.push({
+      type: "torrent",
+      selected: { ...selected.value },
+      files: [...files.value],
+      magnet: torrentMagnet.value,
+      cover: torrentCover.value,
+      restoreLikesView: returnView.value === "likes",
+    });
+  }
+  selected.value = null;
+  files.value = [];
+  torrentMagnet.value = "";
+  torrentCover.value = null;
+  if (returnView.value === "likes") {
+    view.value = "likes";
+    returnView.value = "search";
+  }
+}
+
+function handleForwardNav() {
+  const snap = forwardStack.value.pop();
+  if (!snap) return;
+  if (snap.type === "album-preview") {
+    files.value = snap.files;
+    selected.value = snap.selected;
+    torrentMagnet.value = snap.magnet;
+    torrentCover.value = snap.cover;
+    torrentFilesBeforeAlbumPreview.value = snap.fullFiles;
+    torrentSelectedBeforeAlbumPreview.value = snap.fullSelected;
+  } else if (snap.type === "torrent") {
+    if (snap.restoreLikesView) {
+      returnView.value = "likes";
+      view.value = "search";
+    }
+    selected.value = snap.selected;
+    files.value = snap.files;
+    torrentMagnet.value = snap.magnet;
+    torrentCover.value = snap.cover;
+    torrentFilesBeforeAlbumPreview.value = null;
+    torrentSelectedBeforeAlbumPreview.value = null;
+  }
+  if (mainRef.value) mainRef.value.scrollTo(0, 0);
+}
+
+function handleNavBack() {
+  handleBack();
 }
 </script>
 
@@ -297,9 +415,18 @@ function handleBack() {
 
     <!-- ── Sidebar ─────────────────────────────────────────────────── -->
     <aside class="sidebar">
-      <div class="sidebar-logo">
-        <div class="logo-text">Где слушаешь? <span class="logo-nigde">Нигде.</span></div>
-      </div>
+      <header class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="logo-text">Где слушаешь? <span class="logo-nigde">Нигде.</span></div>
+        </div>
+        <NavArrows
+          class="sidebar-nav-arrows"
+          :can-go-back="navCanGoBack"
+          :can-go-forward="forwardStack.length > 0"
+          @back="handleNavBack"
+          @forward="handleForwardNav"
+        />
+      </header>
 
       <nav class="sidebar-nav">
         <!-- Search -->
@@ -362,6 +489,16 @@ function handleBack() {
     <!-- ── Main ────────────────────────────────────────────────────── -->
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
+        <div v-if="view === 'search'" class="main-toolbar">
+          <div class="main-toolbar-search">
+            <SearchBar
+              v-model="searchQuery"
+              :loading="loading"
+              :show-categories="false"
+              @search="handleSearch"
+            />
+          </div>
+        </div>
 
         <!-- Likes view -->
         <LikesView
@@ -391,13 +528,6 @@ function handleBack() {
 
         <!-- Search view -->
         <template v-else>
-          <SearchBar
-            v-model="searchQuery"
-            :loading="loading"
-            :show-categories="false"
-            @search="handleSearch"
-          />
-
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Session restore loading -->
@@ -454,7 +584,7 @@ function handleBack() {
             @download="() => {}"
             @download-all="() => {}"
             @toggle-like="handleToggleLike"
-            @back="handleBack"
+            @open-album-preview="handleOpenAlbumPreview"
           />
         </template>
 
