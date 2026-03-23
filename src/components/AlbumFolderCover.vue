@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { isImage, basename } from "../utils.js";
+import { isImage, basename, MAX_TORRENT_COVER_BYTES } from "../utils.js";
 
 const props = defineProps({
   magnet:    { type: String, default: "" },
@@ -11,10 +11,9 @@ const props = defineProps({
   cover:     { type: String, default: null },
 });
 
-const MAX_COVER_BYTES = 3 * 1024 * 1024;
-
 const rootRef = ref(null);
-const resolvedCover = ref(null);
+/** From BitTorrent fetch — when set, replaces post cover preview. */
+const torrentCover = ref(null);
 const imgLoaded     = ref(false);
 const imgFailed     = ref(false);
 const fetching      = ref(false);
@@ -37,21 +36,38 @@ const needsTorrentFetch = computed(() => {
     props.magnet &&
     isImage(f.path) &&
     f.size > 0 &&
-    f.size <= MAX_COVER_BYTES
+    f.size <= MAX_TORRENT_COVER_BYTES
   );
+});
+
+const displaySrc = computed(() => {
+  if (torrentCover.value) return torrentCover.value;
+  if (needsTorrentFetch.value && props.cover) return props.cover;
+  if (!needsTorrentFetch.value) return props.cover ?? null;
+  return null;
+});
+
+const placeholderShimmer = computed(
+  () =>
+    fetching.value &&
+    !torrentCover.value &&
+    !(needsTorrentFetch.value && props.cover),
+);
+
+watch(displaySrc, () => {
+  imgLoaded.value = false;
+  imgFailed.value = false;
 });
 
 async function loadCover() {
   const gen = loadGen;
-  resolvedCover.value = null;
+  torrentCover.value = null;
   imgLoaded.value     = false;
   imgFailed.value     = false;
 
   const f = props.coverFile;
 
-  // Primary: download the actual cover image file from the torrent (separate session,
-  // no interference with audio playback)
-  if (f && props.magnet && isImage(f.path) && f.size > 0 && f.size <= MAX_COVER_BYTES) {
+  if (f && props.magnet && isImage(f.path) && f.size > 0 && f.size <= MAX_TORRENT_COVER_BYTES) {
     fetching.value = true;
     try {
       const url = await invoke("torrent_fetch_image", {
@@ -60,7 +76,7 @@ async function loadCover() {
       });
       if (gen !== loadGen) return;
       if (url) {
-        resolvedCover.value = url;
+        torrentCover.value = url;
         return;
       }
     } catch (_) {
@@ -71,14 +87,12 @@ async function loadCover() {
   }
 
   if (gen !== loadGen) return;
-  // Fallback: cover from Rutracker post (already loaded as data: URL, no extra request)
-  resolvedCover.value = props.cover ?? null;
 }
 
 function scheduleCoverLoad() {
   disconnectObserver();
   loadGen += 1;
-  resolvedCover.value = null;
+  torrentCover.value = null;
   imgLoaded.value = false;
   imgFailed.value = false;
   fetching.value = false;
@@ -93,7 +107,7 @@ function scheduleCoverLoad() {
           disconnectObserver();
           loadCover();
         },
-        { rootMargin: "280px" }
+        { rootMargin: "600px" }
       );
       observer.observe(el);
     });
@@ -115,8 +129,8 @@ watch(
   scheduleCoverLoad,
 );
 
-const showImg   = computed(() => !!resolvedCover.value && !imgFailed.value);
-const isLoading = computed(() => fetching.value || (showImg.value && !imgLoaded.value));
+const showImg   = computed(() => !!displaySrc.value && !imgFailed.value);
+const isLoading = computed(() => showImg.value && !imgLoaded.value);
 
 const hue = computed(() => {
   const s = props.label || props.coverFile?.path || "x";
@@ -138,19 +152,19 @@ const initial = computed(() => {
 
 <template>
   <div ref="rootRef" class="album-folder-cover-root">
-    <!-- Gradient placeholder — always underneath, pulses while loading -->
+    <!-- Gradient placeholder — underneath; pulses while waiting for BT with no post preview -->
     <div
       class="album-folder-cover-placeholder"
-      :class="{ shimmer: isLoading }"
+      :class="{ shimmer: placeholderShimmer }"
       :style="gradientStyle"
     >
       <span v-if="!showImg || imgFailed" class="album-folder-cover-letter">{{ initial }}</span>
     </div>
 
-    <!-- Cover image — on top, fades in after @load -->
+    <!-- Post preview or torrent image -->
     <img
       v-if="showImg"
-      :src="resolvedCover"
+      :src="displaySrc"
       class="album-folder-cover-img"
       :class="{ visible: imgLoaded }"
       alt=""

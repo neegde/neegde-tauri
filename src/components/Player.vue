@@ -76,10 +76,29 @@ function updateBufferStats() {
   }
 }
 
+function describeMediaError(code) {
+  const MEDIA_ERR = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+  };
+  return MEDIA_ERR[code] ?? `UNKNOWN(${code})`;
+}
+
 function onAudioError() {
   streamPhase.value = "error";
   const err = audioRef.value?.error;
-  streamError.value = err ? `Код ошибки ${err.code}` : "Ошибка загрузки потока";
+  const srcUrl = src.value;
+  console.error("[player/audio element error]", {
+    code: err?.code,
+    message: err?.message,
+    mediaError: err ? describeMediaError(err.code) : null,
+    src: srcUrl?.slice?.(0, 120),
+  });
+  streamError.value = err
+    ? `Ошибка воспроизведения: ${describeMediaError(err.code)}`
+    : "Ошибка загрузки потока";
 }
 
 watch(
@@ -100,13 +119,28 @@ watch(
       if (!cancelled) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
-        if (!nextSrc) streamError.value = "Пустой URL потока";
+        if (!nextSrc) {
+          console.error("[player/stream] empty URL", { magnetLen: magnet?.length, fileIdx });
+          streamError.value = "Пустой URL потока";
+        }
       }
-    } catch (_) {
+    } catch (e) {
+      console.error("[player/stream] torrent_prepare_stream failed", {
+        magnetLen: magnet?.length,
+        fileIdx,
+        error: e,
+        message: typeof e === "string" ? e : e?.message ?? String(e),
+      });
       if (!cancelled) {
         src.value = "";
         streamPhase.value = "error";
-        streamError.value = "Не удалось открыть поток";
+        const detail =
+          typeof e === "string"
+            ? e
+            : e?.message ?? (e != null ? String(e) : "");
+        streamError.value = detail
+          ? `Не удалось открыть поток: ${detail}`
+          : "Не удалось открыть поток";
       }
     }
   },
@@ -231,9 +265,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
   transition: width 220ms ease;
 }
 .stream-inline-error {
-  margin-top: 8px;
+  margin-top: 4px;
+  margin-bottom: 14px;
   font-size: 12px;
+  line-height: 1.35;
   color: #ff7d7d;
+  text-align: center;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 @keyframes stream-shimmer {
   0%   { left: -35%; opacity: 0.35; }

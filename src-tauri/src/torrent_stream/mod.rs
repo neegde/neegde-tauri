@@ -15,7 +15,14 @@ pub async fn torrent_prepare_stream(
     magnet: String,
     file_idx: usize,
 ) -> Result<StreamReady, String> {
-    state.prepare(magnet, file_idx).await
+    let result = state.prepare(magnet.clone(), file_idx).await;
+    if let Err(ref err) = result {
+        eprintln!(
+            "[torrent_prepare_stream] file_idx={file_idx} magnet_len={} err={err}",
+            magnet.len()
+        );
+    }
+    result
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
+use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions};
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -150,9 +150,17 @@ impl TorrentStreamInner {
         std::fs::create_dir_all(&base_dir)
             .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;
 
-        let session = Session::new(base_dir)
-            .await
-            .map_err(|e| format!("Не удалось создать torrent session: {e}"))?;
+        // Avoid persistent DHT: two app sessions (stream + images) would fight the same
+        // on-disk DHT state; initialization also fails on some setups ("error initializing persistent DHT").
+        let session = Session::new_with_opts(
+            base_dir,
+            SessionOptions {
+                disable_dht_persistence: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| format!("Не удалось создать torrent session: {e}"))?;
         *guard = Some(session.clone());
         Ok(session)
     }

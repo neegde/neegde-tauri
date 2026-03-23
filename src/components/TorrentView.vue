@@ -1,8 +1,23 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from "vue";
-import { isAudio, basename, fmtSize, fmtDate, detectAlbums, sumFileSizes } from "../utils.js";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  isAudio,
+  isImage,
+  basename,
+  fmtSize,
+  fmtDate,
+  detectAlbums,
+  sumFileSizes,
+  MAX_TORRENT_COVER_BYTES,
+} from "../utils.js";
 import { disposeTorrentPreview } from "../torrentSession.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
+
+/** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
+const PREFETCH_ALBUM_COVERS = 12;
+
+const lastCoverPrefetchKey = ref("");
 
 const props = defineProps({
   torrent: Object,
@@ -129,6 +144,42 @@ watch(
     disposeTorrentPreview();
     expandedIdx.value = null;
   }
+);
+
+function prefetchAlbumCovers() {
+  const m = props.magnet?.trim();
+  if (!m || props.loading || !props.files?.length) return;
+
+  const list = detectAlbums(props.files);
+  const indices = [];
+  const n = Math.min(list.length, PREFETCH_ALBUM_COVERS);
+  for (let i = 0; i < n; i++) {
+    const cf = list[i].coverFile;
+    if (
+      !cf ||
+      !isImage(cf.path) ||
+      cf.size <= 0 ||
+      cf.size > MAX_TORRENT_COVER_BYTES
+    ) {
+      continue;
+    }
+    indices.push(cf.origIdx);
+  }
+  const key = `${m}:${indices.join(",")}`;
+  if (key === lastCoverPrefetchKey.value) return;
+  lastCoverPrefetchKey.value = key;
+
+  for (const fileIdx of indices) {
+    invoke("torrent_fetch_image", { magnet: m, fileIdx }).catch(() => {});
+  }
+}
+
+watch(
+  () => [props.magnet, props.loading, props.files],
+  () => {
+    prefetchAlbumCovers();
+  },
+  { flush: "post" }
 );
 
 onUnmounted(() => {

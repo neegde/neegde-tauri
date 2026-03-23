@@ -1,6 +1,9 @@
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
 const COVER_NAMES = ["cover", "folder", "front", "albumart", "album", "artwork", "thumb"];
 
+/** Max size for torrent image fetch / cover preview (matches backend cap). */
+export const MAX_TORRENT_COVER_BYTES = 3 * 1024 * 1024;
+
 export function isImage(path) {
   const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
   return IMAGE_EXTS.has(ext);
