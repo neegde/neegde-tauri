@@ -18,6 +18,14 @@ type ManagedTorrentHandle = Arc<ManagedTorrent>;
 
 const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024; // 3 MB hard cap
 const FETCH_TIMEOUT_SECS: u64 = 15;
+
+fn torrent_images_dir_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        "torrent_images_dev"
+    } else {
+        "torrent_images"
+    }
+}
 /// In-memory cache for successful data URLs (avoids repeat BT work and IPC payload).
 const CACHE_MAX_ENTRIES: usize = 128;
 
@@ -144,7 +152,7 @@ pub struct TorrentImageState {
 impl TorrentImageState {
     pub fn new(app: &tauri::AppHandle) -> Self {
         let base_dir = app.path().app_data_dir().ok().map(|d| {
-            let p = d.join("torrent_images");
+            let p = d.join(torrent_images_dir_name());
             let _ = std::fs::create_dir_all(&p);
             p
         });

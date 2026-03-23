@@ -12,6 +12,16 @@ use tokio::sync::Mutex;
 use super::types::{PreparedStream, StreamReady};
 use super::PREBUFFER_BYTES;
 
+/// Dev (`tauri dev`) and release (installed `.app`) must not share the same on-disk torrent tree:
+/// two processes would fight over the same files (`error opening … in read/write mode`).
+fn torrent_streams_dir_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        "torrent_streams_dev"
+    } else {
+        "torrent_streams"
+    }
+}
+
 pub struct TorrentStreamState {
     pub(super) inner: Arc<TorrentStreamInner>,
 }
@@ -53,7 +63,7 @@ impl TorrentStreamState {
         let added = session
             .add_torrent(AddTorrent::from_url(&magnet), Some(opts))
             .await
-            .map_err(|e| format!("Ошибка открытия торрента: {e}"))?;
+            .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?;
 
         let handle = match added {
             AddTorrentResponse::Added(_, handle) => handle,
@@ -66,7 +76,7 @@ impl TorrentStreamState {
         handle
             .wait_until_initialized()
             .await
-            .map_err(|e| format!("Ошибка инициализации торрента: {e}"))?;
+            .map_err(|e| format!("Ошибка инициализации торрента: {e:#}"))?;
 
         // Stream only the chosen file and prioritize pieces around stream cursor.
         let mut only = HashSet::new();
@@ -74,7 +84,7 @@ impl TorrentStreamState {
         session
             .update_only_files(&handle, &only)
             .await
-            .map_err(|e| format!("Ошибка настройки sequential-режима: {e}"))?;
+            .map_err(|e| format!("Ошибка настройки sequential-режима: {e:#}"))?;
 
         let mime = handle
             .with_metadata(|meta| {
@@ -91,7 +101,7 @@ impl TorrentStreamState {
         let mut stream = handle
             .clone()
             .stream(file_idx)
-            .map_err(|e| format!("Не удалось открыть поток файла: {e}"))?;
+            .map_err(|e| format!("Не удалось открыть поток файла: {e:#}"))?;
 
         let total_len = stream.len();
         let target = PREBUFFER_BYTES.min(total_len as usize);
@@ -101,7 +111,7 @@ impl TorrentStreamState {
             let n = stream
                 .read(&mut prebuffer[filled..target])
                 .await
-                .map_err(|e| format!("Ошибка предварительной буферизации: {e}"))?;
+                .map_err(|e| format!("Ошибка предварительной буферизации: {e:#}"))?;
             if n == 0 {
                 break;
             }
@@ -146,7 +156,7 @@ impl TorrentStreamInner {
             .path()
             .app_data_dir()
             .map_err(|e| format!("Не удалось получить app_data_dir: {e}"))?
-            .join("torrent_streams");
+            .join(torrent_streams_dir_name());
         std::fs::create_dir_all(&base_dir)
             .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;
 

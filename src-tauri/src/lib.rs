@@ -5,6 +5,21 @@ mod torrent_stream;
 
 use tauri::{Manager, RunEvent};
 
+/// librqbit opens every file in a torrent on disk at once; large discographies exceed the default
+/// macOS soft `RLIMIT_NOFILE` (~256) → "Too many open files (os error 24)".
+fn raise_nofile_limit() {
+    #[cfg(unix)]
+    {
+        match rlimit::increase_nofile_limit(65_536) {
+            Ok(n) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[neegde] RLIMIT_NOFILE soft limit: {n}");
+            }
+            Err(e) => eprintln!("[neegde] could not raise RLIMIT_NOFILE: {e}"),
+        }
+    }
+}
+
 /// Vite from `beforeDevCommand` is a sibling of this process under `tauri dev`, not the same
 /// process group, so `kill(-pgrp)` never reaches it. Free the dev port when the event loop exits.
 fn kill_vite_dev_server() {
@@ -40,6 +55,8 @@ async fn fetch_album_cover(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    raise_nofile_limit();
+
     let app = tauri::Builder::default()
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));
