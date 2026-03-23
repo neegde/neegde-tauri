@@ -1238,3 +1238,103 @@ body {
   padding: 2px 5px;
   border-radius: 3px;
 }
+
+/* ── Theme Toggle ─────────────────────────────────────────────────── */
+.theme-toggle {
+  display: flex;
+  background: var(--surface-h);
+  border-radius: 500px;
+  padding: 3px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.theme-btn {
+  background: none;
+  border: none;
+  border-radius: 500px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.theme-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+}
+.theme-btn:not(.active):hover { color: var(--text); }
+
+/* ── Light Theme ──────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg:         #f0f0f0;
+  --sidebar-bg: #e4e4e4;
+  --surface:    #ffffff;
+  --surface-h:  #ebebeb;
+  --border:     rgba(0,0,0,0.1);
+  --text:       #121212;
+  --muted:      #6a6a6a;
+  --muted2:     #999999;
+}
+
+[data-theme="light"] .main-wrap {
+  background: linear-gradient(180deg, #ddd4f0 0%, var(--bg) 340px);
+}
+[data-theme="light"] .app-auth-modal       { background: var(--surface); }
+[data-theme="light"] .player               { background: var(--surface); }
+
+[data-theme="light"] .album-art,
+[data-theme="light"] .album-cover,
+[data-theme="light"] .player-art,
+[data-theme="light"] .account-avatar,
+[data-theme="light"] .album-section-cover,
+[data-theme="light"] .cover-thumb {
+  background: linear-gradient(135deg, #c8c0e0, #a898c8);
+}
+
+[data-theme="light"] .source-btn:hover                  { background: rgba(0,0,0,0.06); }
+[data-theme="light"] .source-btn.active                 { background: rgba(0,0,0,0.09); }
+[data-theme="light"] .search-input-wrap                 { background: rgba(0,0,0,0.07); }
+[data-theme="light"] .search-input-wrap:focus-within    { background: rgba(0,0,0,0.12); }
+[data-theme="light"] .search-btn                        { color: #fff; }
+[data-theme="light"] .search-btn:not(:disabled):hover   { background: #333; }
+[data-theme="light"] .cat-tab                           { border-color: rgba(0,0,0,0.2); }
+[data-theme="light"] .cat-tab.active                    { color: #fff; }
+[data-theme="light"] .cat-tab:not(.active):hover        { border-color: var(--text); color: var(--text); }
+[data-theme="light"] .spinner                           { border-color: rgba(0,0,0,0.15); border-top-color: #444; }
+[data-theme="light"] .btn-play-album,
+[data-theme="light"] .btn-dl-album,
+[data-theme="light"] .btn-dl-all,
+[data-theme="light"] .account-login-btn,
+[data-theme="light"] .logout-btn,
+[data-theme="light"] .settings-action-btn--ghost        { border-color: rgba(0,0,0,0.2); }
+[data-theme="light"] .login-input                       { background: rgba(0,0,0,0.06); color: var(--text); }
+[data-theme="light"] .login-input:focus                 { background: rgba(0,0,0,0.1); }
+[data-theme="light"] .login-input::placeholder          { color: var(--muted2); }
+[data-theme="light"] .progress-track                    { background: rgba(0,0,0,0.15); }
+[data-theme="light"] .track-row:hover                   { background: rgba(0,0,0,0.04); }
+[data-theme="light"] .player-close:hover                { background: rgba(0,0,0,0.07); }
+[data-theme="light"] .ctrl-btn-play                     { color: #fff; }
+[data-theme="light"] .ctrl-btn-play:hover               { background: #333 !important; }
+[data-theme="light"] .likes-tab                         { background: rgba(0,0,0,0.07); }
+[data-theme="light"] .likes-tab:hover                   { background: rgba(0,0,0,0.12); }
+[data-theme="light"] .likes-tab.active                  { color: #fff; }
+[data-theme="light"] .back-btn:hover                    { background: rgba(0,0,0,0.05); }
+[data-theme="light"] .likes-badge                       { background: rgba(0,0,0,0.1); }
+[data-theme="light"] .settings-card-icon                { background: rgba(0,0,0,0.06); }
+[data-theme="light"] ::-webkit-scrollbar-thumb          { background: rgba(0,0,0,0.2); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover    { background: rgba(0,0,0,0.35); }
+[data-theme="light"] .account-login-btn--wip:hover      { border-color: rgba(0,0,0,0.2) !important; }
+
+[data-theme="light"] .likes-hero {
+  background: linear-gradient(180deg, #c8b8e8 0%, #d8ccf0 50%, transparent 100%);
+}
+[data-theme="light"] .likes-hero-icon {
+  background: linear-gradient(135deg, #9878d8 0%, #7050b8 100%);
+  box-shadow: 0 24px 64px rgba(112,80,184,0.3);
+}
+[data-theme="light"] .likes-hero-label { color: rgba(0,0,0,0.7); }
+[data-theme="light"] .likes-hero-title { color: var(--text); }
+[data-theme="light"] .likes-hero-meta  { color: rgba(0,0,0,0.55); }

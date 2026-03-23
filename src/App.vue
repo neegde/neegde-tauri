@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import { isAudio, basename } from "./utils.js";
 import { MOCK_RESULTS, MOCK_FILES_MAP, MOCK_FILES_DEFAULT } from "./mockData.js";
 
@@ -10,6 +10,19 @@ import LikesView    from "./components/LikesView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import Player       from "./components/Player.vue";
 import AppAuthPanel from "./components/AppAuthPanel.vue";
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+const theme = ref(localStorage.getItem("theme") || "dark");
+
+onMounted(() => {
+  document.documentElement.setAttribute("data-theme", theme.value);
+});
+
+function handleThemeChange(newTheme) {
+  theme.value = newTheme;
+  localStorage.setItem("theme", newTheme);
+  document.documentElement.setAttribute("data-theme", newTheme);
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 const rtLoggedIn = ref(false);
@@ -288,10 +301,12 @@ function handleBack() {
           v-else-if="view === 'settings'"
           :rt-logged-in="rtLoggedIn"
           :app-user="appUser"
+          :theme="theme"
           @login="handleLogin"
           @logout="handleLogout"
           @app-logout="handleAppLogout"
           @open-auth="authPanelOpen = true"
+          @theme-change="handleThemeChange"
         />
 
         <!-- Search view -->

@@ -4,9 +4,10 @@ import { ref } from "vue";
 const props = defineProps({
   rtLoggedIn: Boolean,
   appUser: Object,
+  theme: { type: String, default: "dark" },
 });
 
-const emit = defineEmits(["login", "logout", "app-logout", "open-auth"]);
+const emit = defineEmits(["login", "logout", "app-logout", "open-auth", "theme-change"]);
 
 // Rutracker login form state (embedded in the card)
 const rtUsername = ref("");
@@ -117,6 +118,31 @@ async function handleRtLogin(e) {
           <p class="settings-card-desc">
             Синхронизация лайков между устройствами появится в следующих версиях.
           </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Внешний вид ────────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Внешний вид</div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">🎨</div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Тема</div>
+            <div class="settings-card-status">{{ theme === 'light' ? 'Светлая' : 'Тёмная' }}</div>
+          </div>
+          <div class="theme-toggle">
+            <button
+              :class="['theme-btn', theme !== 'light' ? 'active' : '']"
+              @click="emit('theme-change', 'dark')"
+            >Тёмная</button>
+            <button
+              :class="['theme-btn', theme === 'light' ? 'active' : '']"
+              @click="emit('theme-change', 'light')"
+            >Светлая</button>
+          </div>
         </div>
       </div>
     </div>
