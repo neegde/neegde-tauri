@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import CoverThumb from "./CoverThumb.vue";
 import { streamUrl } from "../api.js";
 
@@ -26,9 +26,18 @@ const audioRef = ref(null);
 const playing = ref(true);
 const current = ref(0);
 const duration = ref(0);
+const src = ref("");
+const streamPhase = ref("idle"); // idle | preparing | buffering | ready | error
+const streamError = ref("");
+const bufferedSeconds = ref(0);
+const bufferedPercent = ref(0);
 
-const src = computed(() => streamUrl(props.track.magnet, props.track.fileIdx));
 const progress = computed(() => duration.value > 0 ? current.value / duration.value : 0);
+const isLoading = computed(() => streamPhase.value === "preparing" || streamPhase.value === "buffering");
+const loadingProgress = computed(() => {
+  if (duration.value > 0) return bufferedPercent.value;
+  return isLoading.value ? Math.min(95, bufferedSeconds.value * 4) : 100;
+});
 
 function togglePlay() {
   const a = audioRef.value;
@@ -52,6 +61,57 @@ function onKey(e) {
   if (e.code === "ArrowRight" && props.hasNext) { e.preventDefault(); emit("next"); }
   if (e.code === "ArrowLeft" && props.hasPrev) { e.preventDefault(); emit("prev"); }
 }
+
+function updateBufferStats() {
+  const a = audioRef.value;
+  if (!a || !a.buffered?.length) {
+    bufferedSeconds.value = 0;
+    bufferedPercent.value = 0;
+    return;
+  }
+  const end = a.buffered.end(a.buffered.length - 1);
+  bufferedSeconds.value = Number.isFinite(end) ? end : 0;
+  if (duration.value > 0 && Number.isFinite(end)) {
+    bufferedPercent.value = Math.max(0, Math.min(100, (end / duration.value) * 100));
+  }
+}
+
+function onAudioError() {
+  streamPhase.value = "error";
+  const err = audioRef.value?.error;
+  streamError.value = err ? `Код ошибки ${err.code}` : "Ошибка загрузки потока";
+}
+
+watch(
+  () => [props.track?.magnet, props.track?.fileIdx],
+  async ([magnet, fileIdx], _, onCleanup) => {
+    src.value = "";
+    current.value = 0;
+    duration.value = 0;
+    bufferedSeconds.value = 0;
+    bufferedPercent.value = 0;
+    streamError.value = "";
+    streamPhase.value = "preparing";
+
+    let cancelled = false;
+    onCleanup(() => { cancelled = true; });
+    try {
+      const nextSrc = await streamUrl(magnet, fileIdx);
+      if (!cancelled) {
+        src.value = nextSrc;
+        streamPhase.value = nextSrc ? "buffering" : "error";
+        if (!nextSrc) streamError.value = "Пустой URL потока";
+      }
+    } catch (_) {
+      if (!cancelled) {
+        src.value = "";
+        streamPhase.value = "error";
+        streamError.value = "Не удалось открыть поток";
+      }
+    }
+  },
+  { immediate: true }
+);
 
 onMounted(() => window.addEventListener("keydown", onKey));
 onUnmounted(() => window.removeEventListener("keydown", onKey));
@@ -102,11 +162,17 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
 
       <div class="player-progress">
         <span class="progress-time">{{ fmtTime(current) }}</span>
-        <div class="progress-track" title="Перемотка" @click="seek">
+        <div :class="['progress-track', isLoading ? 'progress-track-loading' : '']" title="Перемотка" @click="seek">
+          <div
+            v-if="streamPhase !== 'error'"
+            class="progress-buffer"
+            :style="{ width: `${loadingProgress}%` }"
+          />
           <div class="progress-fill" :style="{ width: `${progress * 100}%` }" />
         </div>
         <span class="progress-time">{{ fmtTime(duration) }}</span>
       </div>
+      <div v-if="streamPhase === 'error' && streamError" class="stream-inline-error">{{ streamError }}</div>
     </div>
 
     <!-- Right: close -->
@@ -115,14 +181,63 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
     </div>
 
     <audio
+      v-if="src"
       ref="audioRef"
       :src="src"
-      autoplay
+      :autoplay="Boolean(src)"
+      @loadstart="streamPhase = 'buffering'"
       @play="playing = true"
+      @playing="streamPhase = 'ready'"
       @pause="playing = false"
+      @progress="updateBufferStats"
+      @canplay="updateBufferStats"
+      @durationchange="duration = audioRef?.duration ?? 0; updateBufferStats()"
+      @waiting="streamPhase = 'buffering'"
+      @stalled="streamPhase = 'buffering'"
+      @error="onAudioError"
       @timeupdate="current = audioRef?.currentTime ?? 0"
-      @durationchange="duration = audioRef?.duration ?? 0"
       @ended="emit('ended')"
     />
   </div>
 </template>
+
+<style scoped>
+.progress-track {
+  position: relative;
+  overflow: hidden;
+}
+.progress-track-loading::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -35%;
+  width: 35%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.42) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: stream-shimmer 1.05s ease-in-out infinite;
+  pointer-events: none;
+}
+.progress-buffer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  width: 0%;
+  background: rgba(255, 255, 255, 0.28);
+  transition: width 220ms ease;
+}
+.stream-inline-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #ff7d7d;
+}
+@keyframes stream-shimmer {
+  0%   { left: -35%; opacity: 0.35; }
+  35%  { opacity: 0.85; }
+  100% { left: 110%; opacity: 0.2; }
+}
+</style>

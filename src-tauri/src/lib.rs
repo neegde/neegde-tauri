@@ -1,4 +1,5 @@
 mod rutracker;
+mod torrent_stream;
 
 use tauri::{Manager, RunEvent};
 
@@ -29,6 +30,7 @@ pub fn run() {
         .setup(|app| {
             // RutrackerState needs the AppHandle to locate the app data dir.
             app.manage(rutracker::RutrackerState::new(app.handle()));
+            app.manage(torrent_stream::TorrentStreamState::new(app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -39,6 +41,8 @@ pub fn run() {
             rutracker::rutracker_search,
             rutracker::rutracker_get_cover,
             rutracker::rutracker_get_torrent_details,
+            torrent_stream::torrent_prepare_stream,
+            torrent_stream::torrent_dispose_preview,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

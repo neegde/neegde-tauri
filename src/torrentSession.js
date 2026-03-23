@@ -1,5 +1,9 @@
 /**
  * Reserved for cleaning up torrent streaming / preview state when leaving a release
- * or switching magnet. No-op until a stream backend is wired (see `streamUrl` in api.js).
+ * or switching magnet.
  */
-export function disposeTorrentPreview() {}
+import { invoke } from "@tauri-apps/api/core";
+
+export function disposeTorrentPreview() {
+  return invoke("torrent_dispose_preview").catch(() => {});
+}

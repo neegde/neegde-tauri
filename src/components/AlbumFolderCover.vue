@@ -1,6 +1,5 @@
 <script setup>
 import { ref, computed, watch } from "vue";
-import { streamUrl } from "../api.js";
 import { isImage, basename } from "../utils.js";
 
 const props = defineProps({
@@ -14,12 +13,16 @@ const MAX_COVER_BYTES = 3 * 1024 * 1024;
 
 const imgFailed = ref(false);
 
-/** When `streamUrl` is implemented (native/WebTorrent backend), cover images load here. */
+/**
+ * Cover preview streaming is intentionally disabled here.
+ * `streamUrl` now performs heavy torrent prepare + prebuffer and is used by audio playback.
+ * Using it for every visible album cover causes many parallel prepare calls and can race
+ * with the player stream startup.
+ */
 const src = computed(() => {
   const f = props.coverFile;
   if (!f || !props.magnet || !isImage(f.path) || f.size > MAX_COVER_BYTES) return "";
-  const u = streamUrl(props.magnet, f.origIdx);
-  return typeof u === "string" && u.length > 0 ? u : "";
+  return "";
 });
 
 watch(src, () => {
