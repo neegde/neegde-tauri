@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from "vue";
 import { fmtSize } from "../utils.js";
-import { getRutrackerCoverDataUrl } from "../rutracker/search.js";
+import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../rutracker/search.js";
 
 const props = defineProps({
   torrent: Object,
@@ -49,6 +49,12 @@ function setupCoverObserver() {
 
   const topicId = String(props.torrent.id);
   const gen = fetchGen;
+
+  const cached = peekRutrackerCover(topicId);
+  if (cached !== undefined) {
+    if (cached) coverUrl.value = cached;
+    return;
+  }
 
   observer = new IntersectionObserver(
     ([entry]) => {

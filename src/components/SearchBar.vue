@@ -2,11 +2,12 @@
 import { ref } from "vue";
 
 const props = defineProps({
+  modelValue: { type: String, default: "" },
   loading: Boolean,
   showCategories: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(["search"]);
+const emit = defineEmits(["search", "update:modelValue"]);
 
 const CATS = [
   { id: "100", label: "Все" },
@@ -14,12 +15,12 @@ const CATS = [
   { id: "104", label: "FLAC" },
 ];
 
-const query = ref("");
 const cat = ref("100");
 
 function submit(e) {
   e.preventDefault();
-  if (query.value.trim()) emit("search", query.value.trim(), cat.value);
+  const q = props.modelValue.trim();
+  if (q) emit("search", q, cat.value);
 }
 </script>
 
@@ -31,10 +32,10 @@ function submit(e) {
         class="search-input"
         type="text"
         placeholder="Название группы или исполнителя…"
-        v-model="query"
-        autofocus
+        :value="modelValue"
+        @input="emit('update:modelValue', $event.target.value)"
       />
-      <button class="search-btn" type="submit" :disabled="loading || !query.trim()">
+      <button class="search-btn" type="submit" :disabled="loading || !modelValue.trim()">
         <span v-if="loading" class="spinner" />
         <template v-else>Найти</template>
       </button>

@@ -70,11 +70,26 @@ export function makeMagnet(hash, name) {
 export function fmtSize(bytes) {
   const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
   let n = Number(bytes);
-  for (const u of units) {
-    if (n < 1024) return `${n.toFixed(1)} ${u}`;
+  if (!Number.isFinite(n) || n < 0) n = 0;
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) {
     n /= 1024;
+    u++;
   }
-  return `${n.toFixed(1)} ТБ`;
+  const text =
+    u === 0 || Number.isInteger(n) ? String(Math.round(n)) : n.toFixed(1);
+  return `${text} ${units[u]}`;
+}
+
+/** Sum of `file.size` for loaded torrent file rows (more reliable than tracker HTML for totals). */
+export function sumFileSizes(files) {
+  if (!files?.length) return 0;
+  let s = 0;
+  for (const f of files) {
+    const n = Number(f.size);
+    if (Number.isFinite(n)) s += n;
+  }
+  return s;
 }
 
 export function fmtDate(val) {

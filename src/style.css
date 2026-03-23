@@ -102,7 +102,15 @@ body {
 .rt-dot-loading           { background: var(--muted); animation: rt-dot-pulse 1s ease-in-out infinite; }
 @keyframes rt-dot-pulse   { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 
-.session-restore-loading  { display: flex; align-items: center; gap: 12px; padding: 32px 24px; }
+/* pointer-events: none — никогда не перехватывать клики по контенту под баннером */
+.session-restore-loading  {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px;
+  pointer-events: none;
+  user-select: none;
+}
 .session-restore-text     { color: var(--text); font-size: 14px; font-weight: 500; }
 .session-restore-sub      { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
@@ -512,6 +520,7 @@ body {
 
 /* ── Album sections (multi-album torrents) ────────────────────────────── */
 .album-section { margin-top: 36px; }
+.album-section:first-of-type { margin-top: 12px; }
 
 .album-section-header {
   display: flex;
@@ -534,6 +543,14 @@ body {
   overflow: hidden;
 }
 .album-section-info { flex: 1; min-width: 0; }
+.album-section-kind {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted2);
+  margin-bottom: 2px;
+}
 .album-section-name {
   font-size: 15px;
   font-weight: 700;
@@ -639,7 +656,7 @@ body {
 /* ── Track List ───────────────────────────────────────────────────────── */
 .tracklist-header {
   display: grid;
-  grid-template-columns: 44px 1fr 90px 48px;
+  grid-template-columns: 44px 1fr 88px 118px;
   padding: 6px 16px;
   font-size: 11px;
   font-weight: 700;
@@ -653,7 +670,7 @@ body {
 
 .track-row {
   display: grid;
-  grid-template-columns: 44px 1fr 90px 48px;
+  grid-template-columns: 44px 1fr 88px 118px;
   align-items: center;
   padding: 8px 16px;
   border-radius: 4px;

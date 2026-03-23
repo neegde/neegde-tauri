@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getMirror } from "./config.js";
+import { rememberRutrackerCover, getRutrackerCoverDataUrl, peekRutrackerCover, clearRutrackerCoverCache } from "./coverCache.js";
+
+export { getRutrackerCoverDataUrl, peekRutrackerCover, clearRutrackerCoverCache };
 
 /**
  * Search Rutracker music sections.
@@ -20,15 +23,7 @@ export async function searchMusic(query) {
  */
 export async function getTorrentDetails(topicId) {
   const mirror = getMirror();
-  return invoke("rutracker_get_torrent_details", { mirror, topicId });
-}
-
-/**
- * Cover from the first post of a topic, as base64 data URL (for grid previews).
- * @param {string} topicId
- * @returns {Promise<string|null>}
- */
-export async function getRutrackerCoverDataUrl(topicId) {
-  const mirror = getMirror();
-  return invoke("rutracker_get_cover", { mirror, topicId });
+  const details = await invoke("rutracker_get_torrent_details", { mirror, topicId });
+  rememberRutrackerCover(topicId, details.cover_data_url ?? null);
+  return details;
 }

@@ -2,7 +2,8 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { isAudio, basename } from "./utils.js";
 import { restoreSession } from "./rutracker/auth.js";
-import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
+import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
+import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
 
 import SearchBar    from "./components/SearchBar.vue";
 import Results      from "./components/Results.vue";
@@ -17,14 +18,26 @@ const theme = ref(localStorage.getItem("theme") || "dark");
 
 const restoringSession = ref(true);
 
+/** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
+const RESTORE_UI_MAX_MS = 20_000;
+
 onMounted(async () => {
   document.documentElement.setAttribute("data-theme", theme.value);
-  // Restore Rutracker session from disk (validates live with a single GET).
+  authPanelOpen.value = false;
+
+  const unblockTimer = window.setTimeout(() => {
+    restoringSession.value = false;
+  }, RESTORE_UI_MAX_MS);
+
   try {
-    const s = await restoreSession();
-    if (s.logged_in) handleLogin(s.username, s.avatar_url);
+    const raw = await restoreSession();
+    const s = normalizeLoginStatus(raw);
+    if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
   } catch (_) { /* offline or no saved session — stay logged out */ }
-  finally { restoringSession.value = false; }
+  finally {
+    window.clearTimeout(unblockTimer);
+    restoringSession.value = false;
+  }
 });
 
 function handleThemeChange(newTheme) {
@@ -45,6 +58,7 @@ const view       = ref("search");  // "search" | "likes" | "settings"
 const returnView = ref("search");
 
 // ── Search ────────────────────────────────────────────────────────────────────
+const searchQuery = ref("");
 const results = ref([]);
 const loading = ref(false);
 const error   = ref(null);
@@ -90,6 +104,7 @@ function handleLogout() {
   torrentMagnet.value = "";
   torrentCover.value  = null;
   queue.value        = [];
+  clearRutrackerCoverCache();
 }
 
 function handleAppLogin(username) {
@@ -376,7 +391,12 @@ function handleBack() {
 
         <!-- Search view -->
         <template v-else>
-          <SearchBar :loading="loading" :show-categories="false" @search="handleSearch" />
+          <SearchBar
+            v-model="searchQuery"
+            :loading="loading"
+            :show-categories="false"
+            @search="handleSearch"
+          />
 
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 

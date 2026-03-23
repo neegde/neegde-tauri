@@ -2,6 +2,7 @@
 import { ref, onMounted } from "vue";
 import { login, logout } from "../rutracker/auth.js";
 import { getMirror, setMirror, resetMirror, hasCustomMirror, DEFAULT_MIRROR } from "../rutracker/config.js";
+import { clearRutrackerCoverCache } from "../rutracker/search.js";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -61,6 +62,7 @@ onMounted(() => {
 
 function saveMirror() {
   setMirror(mirrorUrl.value);
+  clearRutrackerCoverCache();
   mirrorSaved.value = true;
   setTimeout(() => { mirrorSaved.value = false; }, 2000);
 }
@@ -68,6 +70,7 @@ function saveMirror() {
 function doResetMirror() {
   resetMirror();
   mirrorUrl.value = DEFAULT_MIRROR;
+  clearRutrackerCoverCache();
   mirrorSaved.value = true;
   setTimeout(() => { mirrorSaved.value = false; }, 2000);
 }
