@@ -90,6 +90,22 @@ const queue    = ref([]);
 const queuePos = ref(0);
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
 
+/** Подсветка «сейчас играет» только среди файлов текущего экрана (раздача / предпросмотр альбома). */
+const nowPlayingIdxForTorrentView = computed(() => {
+  const np = nowPlaying.value;
+  if (!np || np.magnet !== torrentMagnet.value) return null;
+  const fi = np.fileIdx;
+  if (fi == null || fi === "") return null;
+  const n = Number(fi);
+  if (!Number.isFinite(n)) return null;
+  const visible = files.value;
+  if (!visible?.length) return null;
+  const inVisible = visible.some(
+    (f) => Number(f.origIdx) === n && isAudio(f.path)
+  );
+  return inVisible ? n : null;
+});
+
 // ── Computed ──────────────────────────────────────────────────────────────────
 const likesCount = computed(() => Object.keys(likes.value).length);
 const mainRef    = ref(null);
@@ -603,7 +619,7 @@ function handleNavBack() {
             :loading="loadingFiles"
             :magnet="torrentMagnet"
             :cover="torrentCover"
-            :now-playing-idx="nowPlaying?.fileIdx ?? null"
+            :now-playing-idx="nowPlayingIdxForTorrentView"
             :likes="likes"
             @play="handlePlay"
             @play-all="handlePlayAll"
