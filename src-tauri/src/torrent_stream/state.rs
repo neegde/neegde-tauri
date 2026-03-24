@@ -34,6 +34,8 @@ pub(super) struct TorrentStreamInner {
     pub(super) token_counter: AtomicU64,
     /// Запрос остановки текущего `torrent_export_files` (из UI).
     pub(super) export_cancel_requested: Arc<AtomicBool>,
+    /// Отмена долгого `torrent_prepare_stream` (prebuffer и т.д.).
+    pub(super) prepare_cancel_requested: Arc<AtomicBool>,
 }
 
 impl TorrentStreamState {
@@ -46,11 +48,29 @@ impl TorrentStreamState {
                 streams: Mutex::new(HashMap::new()),
                 token_counter: AtomicU64::new(1),
                 export_cancel_requested: Arc::new(AtomicBool::new(false)),
+                prepare_cancel_requested: Arc::new(AtomicBool::new(false)),
             }),
         }
     }
 
+    fn check_prepare_cancel(&self) -> Result<(), String> {
+        if self
+            .inner
+            .prepare_cancel_requested
+            .load(Ordering::SeqCst)
+        {
+            self.inner
+                .prepare_cancel_requested
+                .store(false, Ordering::SeqCst);
+            return Err("Загрузка отменена".into());
+        }
+        Ok(())
+    }
+
     pub(super) async fn prepare(&self, magnet: String, file_idx: usize) -> Result<StreamReady, String> {
+        self.inner
+            .prepare_cancel_requested
+            .store(false, Ordering::SeqCst);
         if magnet.trim().is_empty() {
             return Err("Пустой magnet".into());
         }
@@ -68,6 +88,8 @@ impl TorrentStreamState {
             .await
             .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?;
 
+        self.check_prepare_cancel()?;
+
         let handle = match added {
             AddTorrentResponse::Added(_, handle) => handle,
             AddTorrentResponse::AlreadyManaged(_, handle) => handle,
@@ -81,6 +103,8 @@ impl TorrentStreamState {
             .await
             .map_err(|e| format!("Ошибка инициализации торрента: {e:#}"))?;
 
+        self.check_prepare_cancel()?;
+
         // Stream only the chosen file and prioritize pieces around stream cursor.
         let mut only = HashSet::new();
         only.insert(file_idx);
@@ -88,6 +112,8 @@ impl TorrentStreamState {
             .update_only_files(&handle, &only)
             .await
             .map_err(|e| format!("Ошибка настройки sequential-режима: {e:#}"))?;
+
+        self.check_prepare_cancel()?;
 
         let mime = handle
             .with_metadata(|meta| {
@@ -111,6 +137,7 @@ impl TorrentStreamState {
         let mut prebuffer = vec![0u8; target];
         let mut filled = 0usize;
         while filled < target {
+            self.check_prepare_cancel()?;
             let n = stream
                 .read(&mut prebuffer[filled..target])
                 .await
@@ -166,6 +193,13 @@ impl TorrentStreamState {
         self.inner
             .export_cancel_requested
             .load(Ordering::SeqCst)
+    }
+
+    /// Запрос отмены из UI (кнопка «стоп» во время подготовки потока).
+    pub fn prepare_cancel_trigger(&self) {
+        self.inner
+            .prepare_cancel_requested
+            .store(true, Ordering::SeqCst);
     }
 }
 

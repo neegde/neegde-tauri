@@ -3,6 +3,10 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import CoverThumb from "../shared/CoverThumb.vue";
 import { streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename } from "../../lib/utils.js";
+import {
+  disposeTorrentPreview,
+  torrentPrepareCancel,
+} from "../../torrent/torrentSession.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -29,6 +33,17 @@ const src = ref("");
 const streamPhase = ref("idle"); // idle | preparing | buffering | ready | error
 const streamError = ref("");
 const bufferedPercent = ref(0);
+/** Отмена загрузки без смены трека — не применять URL после await. */
+const loadCancelledByUser = ref(false);
+/** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
+const prepareAttempt = ref(0);
+
+watch(
+  () => [props.track?.magnet, props.track?.fileIdx],
+  () => {
+    prepareAttempt.value = 0;
+  }
+);
 
 const progress = computed(() => duration.value > 0 ? current.value / duration.value : 0);
 const isLoading = computed(() => streamPhase.value === "preparing" || streamPhase.value === "buffering");
@@ -38,10 +53,39 @@ const loadingProgress = computed(() => {
   return isLoading.value ? 0 : 100;
 });
 
+function cancelLoad() {
+  loadCancelledByUser.value = true;
+  void torrentPrepareCancel();
+  void disposeTorrentPreview();
+  stopBufferPoll();
+  src.value = "";
+  current.value = 0;
+  duration.value = 0;
+  bufferedPercent.value = 0;
+  streamError.value = "";
+  streamPhase.value = "idle";
+  playing.value = false;
+}
+
+function onPlayButtonClick() {
+  if (isLoading.value) {
+    cancelLoad();
+    return;
+  }
+  togglePlay();
+}
+
 function togglePlay() {
   if (!hasTrack.value) return;
   const a = audioRef.value;
-  if (!a) return;
+  if (!a) {
+    if (!src.value && (streamPhase.value === "idle" || streamPhase.value === "error")) {
+      streamError.value = "";
+      loadCancelledByUser.value = false;
+      prepareAttempt.value++;
+    }
+    return;
+  }
   if (a.paused) {
     void a.play().catch(() => {
       playing.value = !a.paused;
@@ -62,7 +106,11 @@ function seek(e) {
 function onKey(e) {
   const tag = e.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return;
-  if (e.code === "Space" && hasTrack.value) { e.preventDefault(); togglePlay(); }
+  if (e.code === "Space" && hasTrack.value) {
+    e.preventDefault();
+    if (isLoading.value) cancelLoad();
+    else togglePlay();
+  }
   if (e.code === "ArrowRight" && props.hasNext) { e.preventDefault(); emit("next"); }
   if (e.code === "ArrowLeft" && props.hasPrev) { e.preventDefault(); emit("prev"); }
 }
@@ -136,7 +184,7 @@ function bufferPollTick() {
 }
 
 watch(
-  () => [props.track?.magnet, props.track?.fileIdx],
+  () => [props.track?.magnet, props.track?.fileIdx, prepareAttempt.value],
   async ([magnet, fileIdx], _, onCleanup) => {
     if (!props.track || !magnet) {
       stopBufferPoll();
@@ -147,10 +195,12 @@ watch(
       bufferedPercent.value = 0;
       streamError.value = "";
       streamPhase.value = "idle";
+      loadCancelledByUser.value = false;
       return;
     }
 
-    playing.value = true;
+    loadCancelledByUser.value = false;
+    playing.value = false;
     src.value = "";
     current.value = 0;
     duration.value = 0;
@@ -162,7 +212,7 @@ watch(
     onCleanup(() => { cancelled = true; });
     try {
       const nextSrc = await streamUrl(magnet, fileIdx);
-      if (!cancelled) {
+      if (!cancelled && !loadCancelledByUser.value) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
         if (!nextSrc) {
@@ -171,13 +221,19 @@ watch(
         }
       }
     } catch (e) {
-      console.error("[player/stream] torrent_prepare_stream failed", {
-        magnetLen: magnet?.length,
-        fileIdx,
-        error: e,
-        message: typeof e === "string" ? e : e?.message ?? String(e),
-      });
-      if (!cancelled) {
+      const msg = typeof e === "string" ? e : e?.message ?? String(e ?? "");
+      const isUserCancel =
+        loadCancelledByUser.value ||
+        (typeof msg === "string" && msg.includes("отмен"));
+      if (!cancelled && !isUserCancel) {
+        console.error("[player/stream] torrent_prepare_stream failed", {
+          magnetLen: magnet?.length,
+          fileIdx,
+          error: e,
+          message: msg,
+        });
+      }
+      if (!cancelled && !isUserCancel) {
         src.value = "";
         streamPhase.value = "error";
         const detail =
@@ -241,10 +297,11 @@ onUnmounted(() => {
 
           <button
             class="ctrl-btn ctrl-btn-play"
-            :title="playing ? 'Пауза (Пробел)' : 'Играть (Пробел)'"
-            @click="togglePlay"
+            :title="(isLoading || playing) ? 'Пауза (Пробел)' : 'Играть (Пробел)'"
+            type="button"
+            @click="onPlayButtonClick"
           >
-            {{ playing ? "⏸" : "▶" }}
+            {{ (isLoading || playing) ? "⏸" : "▶" }}
           </button>
 
           <button
