@@ -5,6 +5,7 @@ import {
   isAudio,
   isImage,
   basename,
+  trackDisplayBasename,
   fmtSize,
   fmtDate,
   detectAlbums,
@@ -140,7 +141,7 @@ function makeTrackLike(torrent, magnet, f) {
     source: torrent.source,
     magnet,
     fileIdx: f.origIdx,
-    fileName: basename(f.path),
+    fileName: trackDisplayBasename(f.path),
     coverFileIdx,
     coverFile,
   };
@@ -329,7 +330,7 @@ onUnmounted(() => {
             </template>
           </div>
           <div class="spotify-col-title">
-            <span class="spotify-track-title" :title="basename(f.path)">{{ basename(f.path) }}</span>
+            <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
           </div>
           <div class="spotify-col-time">
             <span class="spotify-dur">{{ f.size > 0 ? fmtSize(f.size) : "—" }}</span>
@@ -464,7 +465,7 @@ onUnmounted(() => {
             </template>
           </div>
           <div class="track-info">
-            <div class="track-name" :title="basename(f.path)">{{ basename(f.path) }}</div>
+            <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
           </div>
           <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
           <div class="track-actions">

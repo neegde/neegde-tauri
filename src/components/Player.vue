@@ -2,10 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import CoverThumb from "./CoverThumb.vue";
 import { streamUrl } from "../api.js";
-
-function basename(path) {
-  return path.replace(/\\/g, "/").split("/").pop() ?? path;
-}
+import { trackDisplayBasename } from "../utils.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -227,7 +224,7 @@ onUnmounted(() => {
           fallback="♪"
         />
         <div class="player-track-info">
-          <span class="player-name">{{ basename(track.fileName) }}</span>
+          <span class="player-name">{{ trackDisplayBasename(track.fileName) }}</span>
           <span class="player-artist">{{ track.torrentName }}</span>
         </div>
       </div>

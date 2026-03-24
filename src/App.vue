@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from "vue";
-import { isAudio, basename, detectAlbums } from "./utils.js";
+import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./utils.js";
 import { trackCoverFileIdxForLike } from "./likesCover.js";
 import { loadLikes, saveLikes } from "./libraryStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
@@ -249,7 +249,7 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
   return {
     magnet,
     fileIdx:     f.origIdx,
-    fileName:    basename(f.path),
+    fileName:    trackDisplayBasename(f.path),
     torrentName: torrent?.name    ?? "",
     torrentId:   torrent?.id      ?? "",
     source:      torrent?.source  ?? "rutracker",
@@ -262,14 +262,14 @@ function handlePlay(fileIdx) {
     (q) => q.fileIdx === fileIdx && q.magnet === torrentMagnet.value
   );
   if (existing !== -1) { queuePos.value = existing; return; }
-  const audioFiles = files.value.filter((f) => isAudio(f.path));
+  const audioFiles = orderedAudioFiles(files.value);
   const startIdx   = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
   queue.value    = audioFiles.slice(startIdx).map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
   queuePos.value = 0;
 }
 
 function handlePlayAll() {
-  const audioFiles = files.value.filter((f) => isAudio(f.path));
+  const audioFiles = orderedAudioFiles(files.value);
   if (!audioFiles.length) return;
   queue.value = audioFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
   queuePos.value = 0;
@@ -384,7 +384,7 @@ function handlePlayFromLike(like) {
 function handlePlayAlbumFromLike(like) {
   if (!like.audioFiles?.length) return;
   queue.value = like.audioFiles.map((f) => ({
-    magnet: like.magnet, fileIdx: f.origIdx, fileName: basename(f.path),
+    magnet: like.magnet, fileIdx: f.origIdx, fileName: trackDisplayBasename(f.path),
     torrentName: like.torrentName, torrentId: like.torrentId, source: like.source,
     coverFileIdx: like.coverFile?.origIdx ?? null,
   }));
@@ -394,7 +394,7 @@ function handlePlayAlbumFromLike(like) {
 function handleDownloadTrack(origIdx) {
   downloadOverlayExpanded.value = true;
   const f = files.value.find((x) => x.origIdx === origIdx);
-  const label = f ? basename(f.path) : `Файл ${origIdx}`;
+  const label = f ? trackDisplayBasename(f.path) : `Файл ${origIdx}`;
   exportTorrentFiles(torrentMagnet.value, [origIdx], [label], (p) => {
     downloadProgress.value = p;
   });
@@ -404,7 +404,7 @@ function handleDownloadAll() {
   downloadOverlayExpanded.value = true;
   const audio = files.value.filter((f) => isAudio(f.path));
   const idxs = audio.map((f) => f.origIdx);
-  const labels = audio.map((f) => basename(f.path));
+  const labels = audio.map((f) => trackDisplayBasename(f.path));
   exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
     downloadProgress.value = p;
   });
@@ -414,7 +414,7 @@ function handleDownloadAlbum(albumFiles) {
   downloadOverlayExpanded.value = true;
   const audio = (albumFiles ?? []).filter((f) => isAudio(f.path));
   const idxs = audio.map((f) => f.origIdx);
-  const labels = audio.map((f) => basename(f.path));
+  const labels = audio.map((f) => trackDisplayBasename(f.path));
   exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
     downloadProgress.value = p;
   });

@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import CoverThumb from "./CoverThumb.vue";
 import PlayingIndicator from "./PlayingIndicator.vue";
 import { trackCoverFileIdxForLike } from "../likesCover.js";
+import { trackDisplayBasename } from "../utils.js";
 
 const props = defineProps({
   likes: Array,
@@ -128,7 +129,7 @@ function trackCoverFileIdx(like) {
               :radius="4"
             />
             <div class="track-info">
-              <div class="track-name">{{ like.fileName }}</div>
+              <div class="track-name">{{ trackDisplayBasename(like.fileName) }}</div>
               <button
                 class="likes-track-sub"
                 @click.stop="emit('open-torrent', like)"
