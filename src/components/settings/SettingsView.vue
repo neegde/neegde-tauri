@@ -16,6 +16,7 @@ import {
   probeMirrorsNow,
 } from "../../rutracker/config.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
+import EqualizerPanel from "./EqualizerPanel.vue";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -401,110 +402,125 @@ function doResetMirror() {
         <span v-if="hasCustomMirror()" class="nerd-custom-dot" title="Зеркало изменено" />
       </button>
 
-      <div v-if="nerdOpen" class="settings-card nerd-card">
-        <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">🪞</div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Зеркало Rutracker</div>
-            <div class="settings-card-status">Адрес сайта для подключения</div>
+      <div v-if="nerdOpen" class="nerd-stack">
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">🪞</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Зеркало Rutracker</div>
+              <div class="settings-card-status">Адрес сайта для подключения</div>
+            </div>
+          </div>
+
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Если доступ к основному домену закрыт, включи автовыбор — приложение
+              переберёт известные зеркала и возьмёт первое отвечающее. Либо выбери
+              зеркало вручную из списка или введи свой URL.
+            </p>
+
+            <div class="nerd-mode-row" role="radiogroup" aria-label="Режим зеркала">
+              <label class="nerd-radio">
+                <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_AUTO" />
+                Автовыбор зеркала
+              </label>
+              <label class="nerd-radio">
+                <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_MANUAL" />
+                Вручную
+              </label>
+            </div>
+
+            <template v-if="mirrorMode === MIRROR_MODE_AUTO">
+              <p class="settings-card-desc nerd-desc nerd-active-mirror">
+                Сейчас:
+                <span class="nerd-mirror-host">{{ hostLabel(activeMirrorDisplay) }}</span>
+              </p>
+              <div class="nerd-mirror-actions">
+                <button
+                  type="button"
+                  class="login-btn nerd-save-btn"
+                  :disabled="nerdProbeBusy"
+                  @click="saveMirror"
+                >
+                  <span v-if="nerdProbeBusy" class="spinner" />
+                  <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                </button>
+                <button
+                  v-if="persistedMirrorMode === MIRROR_MODE_AUTO"
+                  type="button"
+                  class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                  :disabled="nerdProbeBusy"
+                  @click="refreshAutoMirror"
+                >
+                  Обновить зеркало
+                </button>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="nerd-mirror-row nerd-mirror-row--stack">
+                <select
+                  class="login-input nerd-mirror-select"
+                  v-model="mirrorSelect"
+                  @change="onMirrorSelectChange"
+                >
+                  <option v-for="u in KNOWN_MIRRORS" :key="u" :value="u">
+                    {{ hostLabel(u) }}
+                  </option>
+                  <option value="__custom__">Свой URL…</option>
+                </select>
+                <input
+                  v-if="mirrorSelect === '__custom__'"
+                  class="login-input nerd-mirror-input"
+                  type="url"
+                  placeholder="https://…"
+                  v-model="mirrorUrl"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="nerd-mirror-row">
+                <button
+                  type="button"
+                  class="login-btn nerd-save-btn"
+                  :disabled="nerdProbeBusy"
+                  @click="saveMirror"
+                >
+                  <span v-if="nerdProbeBusy" class="spinner" />
+                  <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                </button>
+              </div>
+            </template>
+
+            <p v-if="nerdProbeError" class="login-error nerd-probe-error">{{ nerdProbeError }}</p>
+
+            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
+              Список зеркал: rutracker.net, rutracker.org, rutracker.nl, rutracker.cr,
+              maintracker.org, rutracker.lib. При смене зеркала сессия может сброситься —
+              войди в Rutracker снова.
+            </p>
+
+            <button
+              v-if="hasCustomMirror()"
+              type="button"
+              class="nerd-reset-btn"
+              @click="doResetMirror"
+            >
+              Сбросить к rutracker.net (ручной режим)
+            </button>
           </div>
         </div>
 
-        <div class="settings-card-body">
-          <p class="settings-card-desc nerd-desc">
-            Если доступ к основному домену закрыт, включи автовыбор — приложение
-            переберёт известные зеркала и возьмёт первое отвечающее. Либо выбери
-            зеркало вручную из списка или введи свой URL.
-          </p>
-
-          <div class="nerd-mode-row" role="radiogroup" aria-label="Режим зеркала">
-            <label class="nerd-radio">
-              <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_AUTO" />
-              Автовыбор зеркала
-            </label>
-            <label class="nerd-radio">
-              <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_MANUAL" />
-              Вручную
-            </label>
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">🎚</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Эквалайзер</div>
+              <div class="settings-card-status">10 полос · Web Audio · локально</div>
+            </div>
           </div>
-
-          <template v-if="mirrorMode === MIRROR_MODE_AUTO">
-            <p class="settings-card-desc nerd-desc nerd-active-mirror">
-              Сейчас:
-              <span class="nerd-mirror-host">{{ hostLabel(activeMirrorDisplay) }}</span>
-            </p>
-            <div class="nerd-mirror-actions">
-              <button
-                type="button"
-                class="login-btn nerd-save-btn"
-                :disabled="nerdProbeBusy"
-                @click="saveMirror"
-              >
-                <span v-if="nerdProbeBusy" class="spinner" />
-                <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
-              </button>
-              <button
-                v-if="persistedMirrorMode === MIRROR_MODE_AUTO"
-                type="button"
-                class="login-btn nerd-save-btn nerd-save-btn--ghost"
-                :disabled="nerdProbeBusy"
-                @click="refreshAutoMirror"
-              >
-                Обновить зеркало
-              </button>
-            </div>
-          </template>
-
-          <template v-else>
-            <div class="nerd-mirror-row nerd-mirror-row--stack">
-              <select
-                class="login-input nerd-mirror-select"
-                v-model="mirrorSelect"
-                @change="onMirrorSelectChange"
-              >
-                <option v-for="u in KNOWN_MIRRORS" :key="u" :value="u">
-                  {{ hostLabel(u) }}
-                </option>
-                <option value="__custom__">Свой URL…</option>
-              </select>
-              <input
-                v-if="mirrorSelect === '__custom__'"
-                class="login-input nerd-mirror-input"
-                type="url"
-                placeholder="https://…"
-                v-model="mirrorUrl"
-                spellcheck="false"
-              />
-            </div>
-            <div class="nerd-mirror-row">
-              <button
-                type="button"
-                class="login-btn nerd-save-btn"
-                :disabled="nerdProbeBusy"
-                @click="saveMirror"
-              >
-                <span v-if="nerdProbeBusy" class="spinner" />
-                <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
-              </button>
-            </div>
-          </template>
-
-          <p v-if="nerdProbeError" class="login-error nerd-probe-error">{{ nerdProbeError }}</p>
-
-          <p class="settings-card-desc nerd-desc nerd-mirror-hint">
-            Список зеркал: rutracker.net, rutracker.org, rutracker.nl, rutracker.cr,
-            maintracker.org, rutracker.lib. При смене зеркала сессия может сброситься —
-            войди в Rutracker снова.
-          </p>
-
-          <button
-            v-if="hasCustomMirror()"
-            type="button"
-            class="nerd-reset-btn"
-            @click="doResetMirror"
-          >
-            Сбросить к rutracker.net (ручной режим)
-          </button>
+          <div class="settings-card-body settings-card-body--eq">
+            <EqualizerPanel />
+          </div>
         </div>
       </div>
     </div>
@@ -610,6 +626,12 @@ function doResetMirror() {
 }
 
 .nerd-card { margin-top: 0; }
+
+.nerd-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
 .nerd-desc { font-size: 12px; }
 

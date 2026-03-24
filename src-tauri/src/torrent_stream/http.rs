@@ -125,6 +125,8 @@ async fn write_response_head(
         "HTTP/1.1 {status} {status_text}\r\n\
          Connection: close\r\n\
          Accept-Ranges: bytes\r\n\
+         Access-Control-Allow-Origin: *\r\n\
+         Access-Control-Allow-Headers: Range\r\n\
          Content-Type: {content_type}\r\n\
          Content-Length: {content_len}\r\n"
     );

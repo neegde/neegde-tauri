@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
 import CoverThumb from "../shared/CoverThumb.vue";
 import { streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename } from "../../lib/utils.js";
@@ -7,6 +7,14 @@ import {
   disposeTorrentPreview,
   torrentPrepareCancel,
 } from "../../torrent/torrentSession.js";
+import {
+  ensureEqualizer,
+  destroyEqualizer,
+  resumeEqualizerContext,
+  isEqualizerActive,
+  setEqualizerOutputGain,
+} from "../../audio/equalizerGraph.js";
+import { eqBandsDb } from "../../audio/equalizerState.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -206,8 +214,50 @@ watch(volume, (v) => {
 
 watchEffect(() => {
   const a = audioRef.value;
-  if (a) a.volume = volume.value;
+  if (!a) return;
+  const v = volume.value;
+  if (isEqualizerActive()) {
+    a.volume = 1;
+    setEqualizerOutputGain(v);
+  } else {
+    a.volume = v;
+  }
 });
+
+/**
+ * Web Audio: эквалайзер. Разрываем граф только когда элемент audio снят с DOM
+ * (иначе повторный createMediaElementSource недопустим / возможна тишина).
+ */
+watch(
+  () => [audioRef.value, src.value],
+  async () => {
+    await nextTick();
+    const a = audioRef.value;
+    const s = src.value;
+    if (!a) {
+      destroyEqualizer();
+      return;
+    }
+    if (!s) return;
+    const handle = ensureEqualizer(a, [...eqBandsDb.value]);
+    if (handle) {
+      a.volume = 1;
+      setEqualizerOutputGain(volume.value);
+    }
+    await resumeEqualizerContext();
+  },
+  { flush: "post" }
+);
+
+function onAudioPlay() {
+  playing.value = true;
+  void resumeEqualizerContext();
+}
+
+function onAudioPlaying() {
+  streamPhase.value = "ready";
+  void resumeEqualizerContext();
+}
 
 let bufferPollRaf = 0;
 function stopBufferPoll() {
@@ -307,6 +357,7 @@ watch(
 onMounted(() => window.addEventListener("keydown", onKey));
 onUnmounted(() => {
   stopBufferPoll();
+  destroyEqualizer();
   window.removeEventListener("keydown", onKey);
 });
 </script>
@@ -416,11 +467,12 @@ onUnmounted(() => {
         v-if="src"
         ref="audioRef"
         class="player-audio"
+        crossorigin="anonymous"
         :src="src"
         :autoplay="Boolean(src)"
         @loadstart="streamPhase = 'buffering'"
-        @play="playing = true"
-        @playing="streamPhase = 'ready'"
+        @play="onAudioPlay"
+        @playing="onAudioPlaying"
         @pause="playing = false"
         @progress="updateBufferStats"
         @canplay="updateBufferStats"
