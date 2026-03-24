@@ -1,16 +1,134 @@
-use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions};
+use librqbit::{
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, TorrentStats,
+    TorrentStatsState,
+};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::Emitter;
 use tauri::Manager;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tokio::time::MissedTickBehavior;
 
 use super::types::{PreparedStream, StreamReady};
 use super::PREBUFFER_BYTES;
+
+/// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TorrentPrepareProgressPayload {
+    state: String,
+    progress_bytes: u64,
+    total_bytes: u64,
+    pct: f64,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_mbps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_mbps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eta_human: Option<String>,
+    peers_queued: usize,
+    peers_connecting: usize,
+    peers_live: usize,
+    peers_seen: usize,
+    peers_dead: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prebuffer_filled: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prebuffer_target: Option<u64>,
+}
+
+struct PrepareProgressShared {
+    poller_stop: AtomicBool,
+    prebuffer_filled: AtomicU64,
+    prebuffer_target: AtomicU64,
+}
+
+impl PrepareProgressShared {
+    fn new() -> Self {
+        Self {
+            poller_stop: AtomicBool::new(false),
+            prebuffer_filled: AtomicU64::new(0),
+            prebuffer_target: AtomicU64::new(0),
+        }
+    }
+}
+
+struct PrepareStopGuard(Arc<PrepareProgressShared>);
+
+impl Drop for PrepareStopGuard {
+    fn drop(&mut self) {
+        self.0.poller_stop.store(true, Ordering::SeqCst);
+    }
+}
+
+fn build_prepare_progress_payload(
+    s: &TorrentStats,
+    prebuffer_filled: u64,
+    prebuffer_target: u64,
+) -> TorrentPrepareProgressPayload {
+    let pct = if s.total_bytes > 0 {
+        (s.progress_bytes.min(s.total_bytes) as f64 / s.total_bytes as f64) * 100.0
+    } else {
+        0.0
+    };
+    let message = match s.state {
+        TorrentStatsState::Initializing => "Получение метаданных торрента…".to_string(),
+        TorrentStatsState::Live => "Загрузка по BitTorrent (нужен стартовый буфер)…".to_string(),
+        TorrentStatsState::Paused => "Пауза — возобновляем…".to_string(),
+        TorrentStatsState::Error => s
+            .error
+            .clone()
+            .unwrap_or_else(|| "Ошибка торрента".to_string()),
+    };
+    let (download_mbps, upload_mbps, eta_human) = if let Some(ref live) = s.live {
+        (
+            Some(live.download_speed.mbps),
+            Some(live.upload_speed.mbps),
+            live.time_remaining
+                .as_ref()
+                .map(|t| format!("{}", t)),
+        )
+    } else {
+        (None, None, None)
+    };
+    let (peers_queued, peers_connecting, peers_live, peers_seen, peers_dead) = s
+        .live
+        .as_ref()
+        .map(|l| {
+            let p = &l.snapshot.peer_stats;
+            (p.queued, p.connecting, p.live, p.seen, p.dead)
+        })
+        .unwrap_or((0, 0, 0, 0, 0));
+    let (prebuffer_filled_opt, prebuffer_target_opt) = if prebuffer_target > 0 {
+        (Some(prebuffer_filled), Some(prebuffer_target))
+    } else {
+        (None, None)
+    };
+    TorrentPrepareProgressPayload {
+        state: format!("{}", s.state),
+        progress_bytes: s.progress_bytes,
+        total_bytes: s.total_bytes,
+        pct,
+        message,
+        download_mbps,
+        upload_mbps,
+        eta_human,
+        peers_queued,
+        peers_connecting,
+        peers_live,
+        peers_seen,
+        peers_dead,
+        prebuffer_filled: prebuffer_filled_opt,
+        prebuffer_target: prebuffer_target_opt,
+    }
+}
 
 /// Dev (`tauri dev`) and release (installed `.app`) must not share the same on-disk torrent tree:
 /// two processes would fight over the same files (`error opening … in read/write mode`).
@@ -98,6 +216,27 @@ impl TorrentStreamState {
             }
         };
 
+        let prep_shared = Arc::new(PrepareProgressShared::new());
+        let app_handle = self.inner.app.clone();
+        let h_poll = handle.clone();
+        let prep_for_task = Arc::clone(&prep_shared);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(380));
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if prep_for_task.poller_stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                let s = h_poll.stats();
+                let pf = prep_for_task.prebuffer_filled.load(Ordering::Relaxed);
+                let pt = prep_for_task.prebuffer_target.load(Ordering::Relaxed);
+                let payload = build_prepare_progress_payload(&s, pf, pt);
+                let _ = app_handle.emit("torrent-prepare-progress", &payload);
+            }
+        });
+        let _prep_stop_guard = PrepareStopGuard(Arc::clone(&prep_shared));
+
         handle
             .wait_until_initialized()
             .await
@@ -134,6 +273,9 @@ impl TorrentStreamState {
 
         let total_len = stream.len();
         let target = PREBUFFER_BYTES.min(total_len as usize);
+        prep_shared
+            .prebuffer_target
+            .store(target as u64, Ordering::Relaxed);
         let mut prebuffer = vec![0u8; target];
         let mut filled = 0usize;
         while filled < target {
@@ -146,6 +288,9 @@ impl TorrentStreamState {
                 break;
             }
             filled += n;
+            prep_shared
+                .prebuffer_filled
+                .store(filled as u64, Ordering::Relaxed);
         }
         prebuffer.truncate(filled);
 

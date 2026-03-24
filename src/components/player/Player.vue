@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
+import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
 import { streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename } from "../../lib/utils.js";
@@ -90,6 +91,60 @@ const bufferedPercent = ref(0);
 const loadCancelledByUser = ref(false);
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
+
+/** Последняя статистика BitTorrent с бэкенда (событие torrent-prepare-progress). */
+const prepareProgress = ref(null);
+let unlistenPrepareProgress = () => {};
+
+function fmtBytes(n) {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  const x = Number(n);
+  if (x < 1024) return `${Math.round(x)} B`;
+  if (x < 1024 * 1024) return `${(x / 1024).toFixed(1)} KiB`;
+  return `${(x / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+const prepareDotClass = computed(() => {
+  const p = prepareProgress.value;
+  if (!p) return "prepare-dot--info";
+  if (p.state === "error") return "prepare-dot--bad";
+  if (p.state === "initializing") return "prepare-dot--info";
+  const dl = p.downloadMbps ?? 0;
+  const live = p.peersLive ?? 0;
+  if (live >= 1 && dl >= 0.02) return "prepare-dot--ok";
+  if (live >= 1 || dl >= 0.015) return "prepare-dot--ok";
+  if ((p.peersConnecting ?? 0) > 0 || (p.peersQueued ?? 0) > 0) return "prepare-dot--warn";
+  return "prepare-dot--warn";
+});
+
+const prepareHintDetail = computed(() => {
+  const p = prepareProgress.value;
+  if (!p) {
+    return "Подключение к пирам и загрузка начального буфера.\nПодождите — скорость зависит от сидов и сети.";
+  }
+  const lines = [p.message, ""];
+  lines.push(
+    `Файл: ${fmtBytes(p.progressBytes)} / ${fmtBytes(p.totalBytes)} (${p.pct?.toFixed?.(1) ?? "?"}%)`
+  );
+  if (p.downloadMbps != null || p.uploadMbps != null) {
+    const dl = p.downloadMbps != null ? `${p.downloadMbps.toFixed(2)} MiB/s` : "—";
+    const ul = p.uploadMbps != null ? `${p.uploadMbps.toFixed(2)} MiB/s` : "—";
+    lines.push(`Скорость: ↓ ${dl}  ↑ ${ul}`);
+  }
+  lines.push(
+    `Пиры: активных ${p.peersLive ?? 0}, подключаются ${p.peersConnecting ?? 0}, в очереди ${p.peersQueued ?? 0}, видели ${p.peersSeen ?? 0}, отвалилось ${p.peersDead ?? 0}`
+  );
+  if (p.prebufferTarget != null && p.prebufferTarget > 0) {
+    const f = p.prebufferFilled ?? 0;
+    lines.push(`Стартовый буфер для воспроизведения: ${fmtBytes(f)} / ${fmtBytes(p.prebufferTarget)}`);
+  }
+  if (p.etaHuman) lines.push(`Оценка времени до полной загрузки торрента: ${p.etaHuman}`);
+  lines.push("");
+  lines.push(
+    "Пока мало пиров или низкая скорость — ожидание нормально. Закройте VPN или попробуйте позже, если так часто."
+  );
+  return lines.join("\n");
+});
 
 watch(
   () => [props.track?.magnet, props.track?.fileIdx],
@@ -380,6 +435,7 @@ watch(
   async ([magnet, fileIdx, , suppressed], _, onCleanup) => {
     if (!props.track || !magnet) {
       stopBufferPoll();
+      prepareProgress.value = null;
       playing.value = false;
       src.value = "";
       current.value = 0;
@@ -393,6 +449,7 @@ watch(
 
     if (suppressed) {
       stopBufferPoll();
+      prepareProgress.value = null;
       playing.value = false;
       src.value = "";
       current.value = 0;
@@ -405,6 +462,7 @@ watch(
     }
 
     loadCancelledByUser.value = false;
+    prepareProgress.value = null;
     playing.value = false;
     src.value = "";
     current.value = 0;
@@ -441,6 +499,7 @@ watch(
       if (!cancelled && !isUserCancel) {
         src.value = "";
         streamPhase.value = "error";
+        prepareProgress.value = null;
         const detail =
           typeof e === "string"
             ? e
@@ -459,16 +518,25 @@ watch(
   (loading) => {
     stopBufferPoll();
     if (loading) bufferPollRaf = requestAnimationFrame(bufferPollTick);
+    else prepareProgress.value = null;
   },
   { immediate: true }
 );
 
-onMounted(() => {
+onMounted(async () => {
   installMediaSessionHandlers();
   window.addEventListener("keydown", onKey);
+  try {
+    unlistenPrepareProgress = await listen("torrent-prepare-progress", (e) => {
+      prepareProgress.value = e.payload;
+    });
+  } catch {
+    unlistenPrepareProgress = () => {};
+  }
 });
 onUnmounted(() => {
   stopBufferPoll();
+  unlistenPrepareProgress();
   clearMediaSessionHandlers();
   clearMediaSessionPresentation();
   destroyEqualizer();
@@ -500,6 +568,21 @@ onUnmounted(() => {
       <!-- Center: controls + progress -->
       <div class="player-center">
         <div class="player-controls">
+          <div v-if="isLoading" class="prepare-hint">
+            <button
+              type="button"
+              class="prepare-hint-trigger"
+              aria-label="Статус загрузки BitTorrent"
+            >
+              <span class="prepare-hint-dot-wrap" aria-hidden="true">
+                <span :class="['prepare-dot', prepareDotClass]" />
+              </span>
+            </button>
+            <div class="prepare-hint-panel" role="tooltip">
+              <pre class="prepare-hint-pre">{{ prepareHintDetail }}</pre>
+            </div>
+          </div>
+
           <button
             class="ctrl-btn"
             :disabled="!hasPrev"
@@ -737,5 +820,88 @@ onUnmounted(() => {
 }
 .progress-track--idle:hover {
   height: 4px;
+}
+
+/* Индикатор загрузки торрента (цвет + подсказка с пирами и скоростью) */
+.player-controls {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.prepare-hint {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-right: 4px;
+}
+.prepare-hint-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: help;
+  line-height: 0;
+}
+.prepare-hint-trigger:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.prepare-hint-dot-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+}
+.prepare-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+.prepare-dot--info {
+  background: linear-gradient(145deg, #6ab0ff, #3d7ccc);
+}
+.prepare-dot--ok {
+  background: linear-gradient(145deg, #5fd68a, #2fa85c);
+}
+.prepare-dot--warn {
+  background: linear-gradient(145deg, #f0c860, #d4a017);
+}
+.prepare-dot--bad {
+  background: linear-gradient(145deg, #ff7d7d, #c42e2e);
+}
+.prepare-hint-panel {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  z-index: 80;
+  min-width: 240px;
+  max-width: min(92vw, 400px);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg-elevated, rgba(32, 32, 38, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  text-align: left;
+}
+.prepare-hint:hover .prepare-hint-panel {
+  display: block;
+}
+.prepare-hint-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 11.5px;
 }
 </style>
