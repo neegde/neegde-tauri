@@ -12,3 +12,4 @@ dist
 rt_session.json
 rt_meta.json
 .todo
+.DS_Store
