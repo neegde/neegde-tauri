@@ -1,6 +1,5 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from "vue";
-import CoverLightbox from "./CoverLightbox.vue";
 import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../../rutracker/search.js";
 import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
 
@@ -16,11 +15,7 @@ const props = defineProps({
   fallback: { type: String, default: "🎵" },
   /** Заполняет родителя (например `.album-art` в сетке лайков). */
   fill: { type: Boolean, default: false },
-  /** Клик — полноэкранный просмотр обложки */
-  enlargeable: { type: Boolean, default: false },
 });
-
-const lightboxOpen = ref(false);
 
 const rootRef = ref(null);
 const coverUrl = ref(null);
@@ -115,45 +110,17 @@ watch(
   () => setupCover()
 );
 onUnmounted(resetCover);
-
-function canEnlarge() {
-  return props.enlargeable && coverUrl.value && !coverErr.value;
-}
-
-function onThumbClick(e) {
-  if (!canEnlarge()) return;
-  e.stopPropagation();
-  lightboxOpen.value = true;
-}
-
-function onThumbKeydown(e) {
-  if (!canEnlarge()) return;
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    e.stopPropagation();
-    lightboxOpen.value = true;
-  }
-}
 </script>
 
 <template>
   <div
     ref="rootRef"
-    :class="[
-      'cover-thumb',
-      fill ? 'cover-thumb--fill' : '',
-      canEnlarge() ? 'cover-thumb--enlargeable' : '',
-    ]"
+    :class="['cover-thumb', fill ? 'cover-thumb--fill' : '']"
     :style="
       fill
         ? undefined
         : { width: size + 'px', height: size + 'px', borderRadius: radius + 'px' }
     "
-    :tabindex="canEnlarge() ? 0 : undefined"
-    :role="canEnlarge() ? 'button' : undefined"
-    :aria-label="canEnlarge() ? 'Показать обложку крупно' : undefined"
-    @click="onThumbClick"
-    @keydown="onThumbKeydown"
   >
     <img
       v-if="coverUrl && !coverErr"
@@ -163,24 +130,5 @@ function onThumbKeydown(e) {
       @error="coverErr = true"
     />
     <span v-else class="cover-thumb-fallback">{{ fallback }}</span>
-    <CoverLightbox v-model:open="lightboxOpen" :src="coverUrl || ''" alt="" />
   </div>
 </template>
-
-<style scoped>
-.cover-thumb--enlargeable {
-  cursor: zoom-in;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-.cover-thumb--enlargeable:hover {
-  transform: scale(1.04);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-}
-.cover-thumb--enlargeable:focus-visible {
-  outline: 2px solid var(--accent, #1db954);
-  outline-offset: 2px;
-}
-[data-theme="light"] .cover-thumb--enlargeable:hover {
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
-}
-</style>

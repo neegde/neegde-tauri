@@ -195,6 +195,7 @@ function onCoverClick(e) {
       v-model:open="lightboxOpen"
       :src="displaySrc || ''"
       :alt="label || 'Обложка альбома'"
+      large
     />
   </div>
 </template>

@@ -15,13 +15,11 @@ import {
 import { disposeTorrentPreview } from "../../torrent/torrentSession.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
-import CoverLightbox from "../shared/CoverLightbox.vue";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
 
 const lastCoverPrefetchKey = ref("");
-const headerCoverLightboxOpen = ref(false);
 
 const props = defineProps({
   torrent: Object,
@@ -352,15 +350,10 @@ onUnmounted(() => {
     <!-- ── Multi-album: classic torrent header + list / gallery ─────────── -->
     <template v-else>
     <div class="album-header">
-      <div
-        class="album-cover"
-        :class="{ 'album-cover--zoomable': !!cover }"
-        @click="cover && (headerCoverLightboxOpen = true)"
-      >
+      <div class="album-cover">
         <img v-if="cover" :src="cover" alt="Обложка" class="cover-img" />
         <span v-else>🎵</span>
       </div>
-      <CoverLightbox v-model:open="headerCoverLightboxOpen" :src="cover || ''" alt="Обложка раздачи" />
       <div class="album-info">
         <div class="album-type">
           {{ torrent.fromLikes && torrent.artist ? torrent.artist : `Раздача · ${source}` }}
@@ -436,6 +429,7 @@ onUnmounted(() => {
               :cover-file="wrap.raw.coverFile"
               :label="wrap.displayName"
               :cover="cover"
+              :enlargeable="false"
             />
           </div>
           <div class="album-section-info">
@@ -503,6 +497,7 @@ onUnmounted(() => {
               :cover-file="wrap.raw.coverFile"
               :label="wrap.displayName"
               :cover="cover"
+              :enlargeable="false"
             />
             <div class="gallery-card-overlay">
               <button
@@ -529,13 +524,5 @@ onUnmounted(() => {
   object-fit: cover;
   border-radius: inherit;
   display: block;
-}
-.album-cover--zoomable {
-  cursor: zoom-in;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-.album-cover--zoomable:hover {
-  transform: scale(1.03);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
 }
 </style>

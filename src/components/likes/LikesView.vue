@@ -128,7 +128,6 @@ function trackCoverFileIdx(like) {
               :cover-file-idx="trackCoverFileIdx(like)"
               :size="40"
               :radius="4"
-              enlargeable
             />
             <div class="track-info">
               <div class="track-name">{{ trackDisplayBasename(like.fileName) }}</div>
@@ -173,7 +172,6 @@ function trackCoverFileIdx(like) {
               :cover-file-idx="like.coverFile?.origIdx ?? null"
               :fallback="getEmoji(like.torrentId)"
               fill
-              enlargeable
             />
             <button
               class="album-art-play"

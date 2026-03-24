@@ -5,6 +5,8 @@ const props = defineProps({
   open: Boolean,
   src: { type: String, default: null },
   alt: { type: String, default: "" },
+  /** Крупное окно (просмотр обложки альбома в раздаче). В остальных местах — компактно, как раньше. */
+  large: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update:open"]);
@@ -51,8 +53,14 @@ onUnmounted(() => {
         <button type="button" class="cover-lb-close" aria-label="Закрыть" @click="close">
           ×
         </button>
-        <div class="cover-lb-frame" @click.stop>
-          <img :src="src" :alt="alt" class="cover-lb-img" decoding="async" />
+        <div class="cover-lb-frame" :class="{ 'cover-lb-frame--large': large }" @click.stop>
+          <img
+            :src="src"
+            :alt="alt"
+            class="cover-lb-img"
+            :class="{ 'cover-lb-img--large': large }"
+            decoding="async"
+          />
         </div>
       </div>
     </Transition>
@@ -98,22 +106,30 @@ onUnmounted(() => {
 }
 
 .cover-lb-frame {
-  max-width: min(92vw, 760px);
-  max-height: min(85vh, 760px);
+  max-width: min(92vw, 420px);
+  max-height: min(85vh, 420px);
   border-radius: 12px;
   overflow: hidden;
   box-shadow:
     0 24px 80px rgba(0, 0, 0, 0.55),
     0 0 0 1px rgba(255, 255, 255, 0.1);
 }
+.cover-lb-frame--large {
+  max-width: min(92vw, 760px);
+  max-height: min(85vh, 760px);
+}
 
 .cover-lb-img {
   display: block;
-  max-width: min(92vw, 760px);
-  max-height: min(85vh, 760px);
+  max-width: min(92vw, 420px);
+  max-height: min(85vh, 420px);
   width: auto;
   height: auto;
   object-fit: contain;
+}
+.cover-lb-img--large {
+  max-width: min(92vw, 760px);
+  max-height: min(85vh, 760px);
 }
 
 .cover-lb-enter-active,
