@@ -2,6 +2,7 @@
 import { ref, watch, onMounted, onUnmounted } from "vue";
 import { fmtSize } from "../../lib/utils.js";
 import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../../rutracker/search.js";
+import CoverLightbox from "../shared/CoverLightbox.vue";
 
 const props = defineProps({
   torrent: Object,
@@ -30,6 +31,7 @@ function seedsLabel(n) {
 const cardRef = ref(null);
 const coverUrl = ref(null);
 const coverErr = ref(false);
+const coverLightboxOpen = ref(false);
 let observer = null;
 let fetchGen = 0;
 
@@ -82,6 +84,12 @@ watch(
   () => [props.torrent?.id, props.torrent?.source],
   () => setupCoverObserver()
 );
+
+function onCoverImageClick(e) {
+  if (!coverUrl.value || coverErr.value) return;
+  e.stopPropagation();
+  coverLightboxOpen.value = true;
+}
 </script>
 
 <template>
@@ -95,9 +103,10 @@ watch(
       <img
         v-if="coverUrl && !coverErr"
         :src="coverUrl"
-        class="album-art-img"
+        class="album-art-img album-art-img--zoomable"
         alt=""
         @error="coverErr = true"
+        @click="onCoverImageClick"
       />
       <span v-else>{{ emoji }}</span>
       <button
@@ -105,6 +114,7 @@ watch(
         title="Открыть"
         @click.stop="emit('select', torrent)"
       >▶</button>
+      <CoverLightbox v-model:open="coverLightboxOpen" :src="coverUrl || ''" :alt="torrent.name || ''" />
     </div>
     <div class="album-name">{{ torrent.name }}</div>
     <div class="album-meta">
@@ -116,3 +126,13 @@ watch(
     </div>
   </div>
 </template>
+
+<style scoped>
+.album-art-img--zoomable {
+  cursor: zoom-in;
+  transition: transform 0.16s ease;
+}
+.album-art-img--zoomable:hover {
+  transform: scale(1.04);
+}
+</style>

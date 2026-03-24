@@ -461,6 +461,7 @@ onUnmounted(() => {
           :size="56"
           :radius="4"
           fallback="♪"
+          enlargeable
         />
         <div class="player-track-info">
           <span class="player-name">{{ trackDisplayBasename(track.fileName) }}</span>
