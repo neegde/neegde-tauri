@@ -571,6 +571,16 @@ function handleNavBack() {
         </button>
       </nav>
 
+      <div
+        v-if="restoringSession && !rtLoggedIn"
+        class="sidebar-rt-connecting"
+        aria-live="polite"
+        title="Проверяем сохранённый вход в Rutracker"
+      >
+        <span class="spinner sidebar-rt-connecting-spinner" />
+        <span class="sidebar-rt-connecting-label">Вход в Rutracker…</span>
+      </div>
+
       <!-- App account block -->
       <div class="sidebar-account">
         <button class="account-login-btn account-login-btn--wip" disabled title="В разработке">
@@ -625,15 +635,6 @@ function handleNavBack() {
         <!-- Search view -->
         <template v-else>
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
-
-          <!-- Session restore loading -->
-          <div v-if="restoringSession && !rtLoggedIn" class="session-restore-loading">
-            <span class="spinner" />
-            <div>
-              <div class="session-restore-text">Подключаемся к Rutracker…</div>
-              <div class="session-restore-sub">Поиск будет доступен через секунду</div>
-            </div>
-          </div>
 
           <!-- Onboarding: nudge to settings if not connected -->
           <div v-if="!restoringSession && !rtLoggedIn && !appUser && !results.length && !selected && !loading" class="onboarding">
