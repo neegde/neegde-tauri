@@ -15,6 +15,16 @@ import {
   setEqualizerOutputGain,
 } from "../../audio/equalizerGraph.js";
 import { eqBandsDb } from "../../audio/equalizerState.js";
+import {
+  setMediaSessionApi,
+  installMediaSessionHandlers,
+  clearMediaSessionHandlers,
+  syncMediaSessionMetadata,
+  syncMediaSessionPlaybackState,
+  syncMediaSessionPositionState,
+  clearMediaSessionPresentation,
+  reaffirmTrackSkipHandlers,
+} from "../../audio/mediaSession.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -147,6 +157,16 @@ function seek(e) {
 function onKey(e) {
   const tag = e.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.code === "MediaTrackNext" && hasTrack.value) {
+    e.preventDefault();
+    emit("next");
+    return;
+  }
+  if (e.code === "MediaTrackPrevious" && hasTrack.value) {
+    e.preventDefault();
+    emit("prev");
+    return;
+  }
   if (e.code === "Space" && hasTrack.value) {
     e.preventDefault();
     if (isLoading.value) cancelLoad();
@@ -202,7 +222,68 @@ function onAudioError() {
     : "Ошибка загрузки потока";
 }
 
-watch(playing, (v) => emit("playing-change", v), { immediate: true });
+watch(playing, (v) => {
+  emit("playing-change", v);
+  syncMediaSessionPlaybackState(v);
+  if (v) reaffirmTrackSkipHandlers();
+}, { immediate: true });
+
+watchEffect(() => {
+  void props.hasPrev;
+  void props.hasNext;
+  setMediaSessionApi({
+    play: () => {
+      const a = audioRef.value;
+      if (a) void a.play().catch(() => {});
+    },
+    pause: () => audioRef.value?.pause(),
+    prev: () => {
+      emit("prev");
+    },
+    next: () => {
+      emit("next");
+    },
+    seek: (t) => {
+      const a = audioRef.value;
+      if (!a) return;
+      const d = duration.value;
+      if (Number.isFinite(d) && d > 0) {
+        a.currentTime = Math.max(0, Math.min(t, d));
+      } else if (Number.isFinite(t) && t >= 0) {
+        a.currentTime = t;
+      }
+    },
+    seekRelative: (delta) => {
+      const a = audioRef.value;
+      if (!a || !Number.isFinite(delta)) return;
+      a.currentTime = Math.max(0, a.currentTime + delta);
+    },
+  });
+});
+
+watch(
+  () => props.track,
+  (t) => {
+    if (!t?.magnet) {
+      clearMediaSessionPresentation();
+      return;
+    }
+    void syncMediaSessionMetadata(t);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [playing.value, duration.value, current.value, props.track?.magnet],
+  () => {
+    if (!props.track?.magnet || streamPhase.value === "error") return;
+    const d = duration.value;
+    const p = current.value;
+    if (!Number.isFinite(d) || d <= 0) return;
+    syncMediaSessionPositionState(d, p, 1);
+  },
+  { flush: "post" }
+);
 
 watch(volume, (v) => {
   try {
@@ -354,9 +435,14 @@ watch(
   { immediate: true }
 );
 
-onMounted(() => window.addEventListener("keydown", onKey));
+onMounted(() => {
+  installMediaSessionHandlers();
+  window.addEventListener("keydown", onKey);
+});
 onUnmounted(() => {
   stopBufferPoll();
+  clearMediaSessionHandlers();
+  clearMediaSessionPresentation();
   destroyEqualizer();
   window.removeEventListener("keydown", onKey);
 });
