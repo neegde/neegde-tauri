@@ -129,8 +129,7 @@ const nowPlayingIdxForTorrentView = computed(() => {
 });
 
 // ── Computed ──────────────────────────────────────────────────────────────────
-const likesCount = computed(() => Object.keys(likes.value).length);
-const mainRef    = ref(null);
+const mainRef = ref(null);
 
 const navCanGoBack = computed(() => {
   if (view.value !== "search") return false;
@@ -553,7 +552,6 @@ function handleNavBack() {
         >
           <span class="source-icon">♥</span>
           Мне нравится
-          <span v-if="likesCount > 0" class="likes-badge">{{ likesCount }}</span>
         </button>
 
         <!-- Settings (bottom of nav) -->

@@ -146,17 +146,6 @@ body {
   white-space: nowrap;
 }
 
-.likes-badge {
-  margin-left: auto;
-  background: rgba(255,255,255,0.12);
-  border-radius: 500px;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
 .sidebar-login      { padding: 16px 12px; border-top: 1px solid var(--border); }
 .sidebar-bottom-rt  { padding: 12px 12px 0; border-top: 1px solid var(--border); }
 
@@ -1863,7 +1852,6 @@ body {
 [data-theme="light"] .likes-tab                         { background: rgba(0,0,0,0.07); }
 [data-theme="light"] .likes-tab:hover                   { background: rgba(0,0,0,0.12); }
 [data-theme="light"] .likes-tab.active                  { color: #fff; }
-[data-theme="light"] .likes-badge                       { background: rgba(0,0,0,0.1); }
 [data-theme="light"] .settings-card-icon                { background: rgba(0,0,0,0.06); }
 [data-theme="light"] ::-webkit-scrollbar-thumb          { background: rgba(0,0,0,0.2); }
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover    { background: rgba(0,0,0,0.35); }
