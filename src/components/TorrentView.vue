@@ -13,6 +13,7 @@ import {
 } from "../utils.js";
 import { disposeTorrentPreview } from "../torrentSession.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
+import PlayingIndicator from "./PlayingIndicator.vue";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
@@ -26,6 +27,8 @@ const props = defineProps({
   magnet: String,
   cover: { type: String, default: null },
   nowPlayingIdx: { default: null },
+  /** Синхронно с кнопкой play/pause в нижнем плеере. */
+  playerPlaying: { type: Boolean, default: true },
   likes: Object,
 });
 
@@ -92,6 +95,11 @@ const source = computed(() =>
 
 function countLabel(n) {
   return `${n} ${n === 1 ? "трек" : n < 5 ? "трека" : "треков"}`;
+}
+
+function playingRowClass(origIdx) {
+  if (props.nowPlayingIdx !== origIdx) return [];
+  return ["playing", props.playerPlaying ? "playing--active" : "playing--paused"];
 }
 
 function seedsLabel(n) {
@@ -310,11 +318,11 @@ onUnmounted(() => {
         <div
           v-for="(f, i) in singleAlbumWrap.raw.audioFiles"
           :key="f.origIdx"
-          :class="['spotify-track-row', nowPlayingIdx === f.origIdx ? 'playing' : '']"
+          :class="['spotify-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
         >
           <div class="spotify-col-n">
-            <span v-if="nowPlayingIdx === f.origIdx" class="playing-anim">♪</span>
+            <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
               <span class="spotify-num">{{ i + 1 }}</span>
               <span class="spotify-play-hint">▶</span>
@@ -445,11 +453,11 @@ onUnmounted(() => {
         <div
           v-for="(f, i) in wrap.raw.audioFiles"
           :key="f.origIdx"
-          :class="['track-row', nowPlayingIdx === f.origIdx ? 'playing' : '']"
+          :class="['track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
         >
           <div class="track-num">
-            <span v-if="nowPlayingIdx === f.origIdx" class="playing-anim">♪</span>
+            <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
               <span class="track-num-val">{{ trackOffset(albumIdx) + i + 1 }}</span>
               <span class="track-num-icon">▶</span>

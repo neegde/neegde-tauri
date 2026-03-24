@@ -90,6 +90,15 @@ const queue    = ref([]);
 const queuePos = ref(0);
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
 
+/** Состояние воспроизведения из плеера — подсветка и анимация в списках. */
+const playerPlaying = ref(true);
+
+const nowPlayingMatchForLikes = computed(() => {
+  const np = nowPlaying.value;
+  if (!np) return null;
+  return { magnet: np.magnet, fileIdx: np.fileIdx };
+});
+
 /** Подсветка «сейчас играет» только среди файлов текущего экрана (раздача / предпросмотр альбома). */
 const nowPlayingIdxForTorrentView = computed(() => {
   const np = nowPlaying.value;
@@ -548,6 +557,8 @@ function handleNavBack() {
         <LikesView
           v-if="view === 'likes'"
           :likes="Object.values(likes)"
+          :now-playing="nowPlayingMatchForLikes"
+          :player-playing="playerPlaying"
           @toggle-like="handleToggleLike"
           @play="handlePlayFromLike"
           @play-album="handlePlayAlbumFromLike"
@@ -620,6 +631,7 @@ function handleNavBack() {
             :magnet="torrentMagnet"
             :cover="torrentCover"
             :now-playing-idx="nowPlayingIdxForTorrentView"
+            :player-playing="playerPlaying"
             :likes="likes"
             @play="handlePlay"
             @play-all="handlePlayAll"
@@ -645,6 +657,7 @@ function handleNavBack() {
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
+      @playing-change="playerPlaying = $event"
       @close="queue = []; queuePos = 0"
     />
 

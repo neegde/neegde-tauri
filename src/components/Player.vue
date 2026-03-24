@@ -20,7 +20,7 @@ const props = defineProps({
   hasNext: Boolean,
 });
 
-const emit = defineEmits(["prev", "next", "ended", "close"]);
+const emit = defineEmits(["prev", "next", "ended", "close", "playing-change"]);
 
 const audioRef = ref(null);
 const playing = ref(true);
@@ -101,9 +101,12 @@ function onAudioError() {
     : "Ошибка загрузки потока";
 }
 
+watch(playing, (v) => emit("playing-change", v), { immediate: true });
+
 watch(
   () => [props.track?.magnet, props.track?.fileIdx],
   async ([magnet, fileIdx], _, onCleanup) => {
+    playing.value = true;
     src.value = "";
     current.value = 0;
     duration.value = 0;
