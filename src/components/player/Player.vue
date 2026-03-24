@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import CoverThumb from "./CoverThumb.vue";
-import { streamUrl } from "../api.js";
-import { trackDisplayBasename } from "../utils.js";
+import CoverThumb from "../shared/CoverThumb.vue";
+import { streamUrl } from "../../torrent/api.js";
+import { trackDisplayBasename } from "../../lib/utils.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";

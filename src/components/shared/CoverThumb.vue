@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from "vue";
-import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../rutracker/search.js";
-import { getTorrentImageDataUrl, peekTorrentImage } from "../torrentImageCache.js";
+import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../../rutracker/search.js";
+import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
 
 const props = defineProps({
   torrentId: [String, Number],

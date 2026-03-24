@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { isImage, basename, MAX_TORRENT_COVER_BYTES } from "../utils.js";
+import { isImage, basename, MAX_TORRENT_COVER_BYTES } from "../../lib/utils.js";
 
 const props = defineProps({
   magnet:    { type: String, default: "" },

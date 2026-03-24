@@ -1,23 +1,23 @@
 <script setup>
 import { ref, computed, watch, onMounted } from "vue";
-import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./utils.js";
-import { trackCoverFileIdxForLike } from "./likesCover.js";
-import { loadLikes, saveLikes } from "./libraryStorage.js";
+import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./lib/utils.js";
+import { trackCoverFileIdxForLike } from "./library/likesCover.js";
+import { loadLikes, saveLikes } from "./library/libraryStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
-import { exportTorrentFiles } from "./torrentExport.js";
+import { exportTorrentFiles } from "./torrent/torrentExport.js";
 
-import SearchBar    from "./components/SearchBar.vue";
-import Results      from "./components/Results.vue";
-import TorrentView  from "./components/TorrentView.vue";
-import LikesView    from "./components/LikesView.vue";
-import SettingsView from "./components/SettingsView.vue";
-import Player       from "./components/Player.vue";
-import AppAuthPanel from "./components/AppAuthPanel.vue";
-import NavArrows    from "./components/NavArrows.vue";
-import DownloadProgressOverlay from "./components/DownloadProgressOverlay.vue";
+import SearchBar    from "./components/search/SearchBar.vue";
+import Results      from "./components/search/Results.vue";
+import TorrentView  from "./components/torrent/TorrentView.vue";
+import LikesView    from "./components/likes/LikesView.vue";
+import SettingsView from "./components/settings/SettingsView.vue";
+import Player       from "./components/player/Player.vue";
+import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
+import NavArrows    from "./components/shell/NavArrows.vue";
+import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");

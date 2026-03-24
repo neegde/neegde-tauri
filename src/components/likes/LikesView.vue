@@ -1,9 +1,9 @@
 <script setup>
 import { ref, computed } from "vue";
-import CoverThumb from "./CoverThumb.vue";
-import PlayingIndicator from "./PlayingIndicator.vue";
-import { trackCoverFileIdxForLike } from "../likesCover.js";
-import { trackDisplayBasename } from "../utils.js";
+import CoverThumb from "../shared/CoverThumb.vue";
+import PlayingIndicator from "../shared/PlayingIndicator.vue";
+import { trackCoverFileIdxForLike } from "../../library/likesCover.js";
+import { trackDisplayBasename } from "../../lib/utils.js";
 
 const props = defineProps({
   likes: Array,

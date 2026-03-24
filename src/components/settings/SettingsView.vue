@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, watch } from "vue";
-import { login, logout } from "../rutracker/auth.js";
+import { login, logout } from "../../rutracker/auth.js";
 import {
   getMirror,
   setMirror,
@@ -13,8 +13,8 @@ import {
   getMirrorMode,
   setMirrorMode,
   probeMirrorsNow,
-} from "../rutracker/config.js";
-import { clearRutrackerCoverCache } from "../rutracker/search.js";
+} from "../../rutracker/config.js";
+import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,

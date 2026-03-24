@@ -11,10 +11,10 @@ import {
   detectAlbums,
   sumFileSizes,
   MAX_TORRENT_COVER_BYTES,
-} from "../utils.js";
-import { disposeTorrentPreview } from "../torrentSession.js";
+} from "../../lib/utils.js";
+import { disposeTorrentPreview } from "../../torrent/torrentSession.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
-import PlayingIndicator from "./PlayingIndicator.vue";
+import PlayingIndicator from "../shared/PlayingIndicator.vue";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from "vue";
-import { fmtSize } from "../utils.js";
-import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../rutracker/search.js";
+import { fmtSize } from "../../lib/utils.js";
+import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../../rutracker/search.js";
 
 const props = defineProps({
   torrent: Object,
