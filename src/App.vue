@@ -84,6 +84,50 @@ const torrentSelectedBeforeAlbumPreview = ref(null);
 
 /** Стек для кнопки «вперёд» (как в Spotify): снимки экранов при «назад». */
 const forwardStack = ref([]);
+/** История «назад» по поиску: результаты → раздача A → раздача B → … */
+const backStack = ref([]);
+
+function snapshotSearchForBack() {
+  return {
+    type: "search",
+    searchQuery: searchQuery.value,
+    results: [...results.value],
+    error: error.value,
+  };
+}
+
+function snapshotTorrentForBack() {
+  return {
+    type: "torrent",
+    selected: { ...selected.value },
+    files: [...files.value],
+    magnet: torrentMagnet.value,
+    cover: torrentCover.value,
+    torrentFilesBeforeAlbumPreview: torrentFilesBeforeAlbumPreview.value
+      ? [...torrentFilesBeforeAlbumPreview.value]
+      : null,
+    torrentSelectedBeforeAlbumPreview: torrentSelectedBeforeAlbumPreview.value
+      ? { ...torrentSelectedBeforeAlbumPreview.value }
+      : null,
+  };
+}
+
+function pushCurrentScreenToForwardStack() {
+  forwardStack.value.push({
+    type: "torrent",
+    selected: { ...selected.value },
+    files: [...files.value],
+    magnet: torrentMagnet.value,
+    cover: torrentCover.value,
+    restoreLikesView: returnView.value === "likes",
+    torrentFilesBeforeAlbumPreview: torrentFilesBeforeAlbumPreview.value
+      ? [...torrentFilesBeforeAlbumPreview.value]
+      : null,
+    torrentSelectedBeforeAlbumPreview: torrentSelectedBeforeAlbumPreview.value
+      ? { ...torrentSelectedBeforeAlbumPreview.value }
+      : null,
+  });
+}
 
 /** Оверлей прогресса экспорта на диск (BitTorrent → копирование). */
 const downloadProgress = ref(null);
@@ -134,19 +178,13 @@ const mainRef = ref(null);
 const navCanGoBack = computed(() => {
   if (view.value !== "search") return false;
   if (torrentFilesBeforeAlbumPreview.value) return true;
+  if (backStack.value.length > 0) return true;
   return !!selected.value;
 });
 
 watch(
   () => selected.value?.id,
   (newId) => { if (newId && mainRef.value) mainRef.value.scrollTo(0, 0); }
-);
-
-watch(
-  () => view.value,
-  (v) => {
-    if (v === "settings" || v === "likes") forwardStack.value = [];
-  }
 );
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -171,6 +209,7 @@ function handleLogout(evt) {
   torrentCover.value  = null;
   queue.value        = [];
   forwardStack.value = [];
+  backStack.value    = [];
   clearRutrackerCoverCache();
 }
 
@@ -189,6 +228,7 @@ function handleAppLogout() {
 async function handleSearch(query) {
   if (!query?.trim()) return;
   forwardStack.value = [];
+  backStack.value = [];
   loading.value      = true;
   error.value        = null;
   results.value      = [];
@@ -207,14 +247,22 @@ async function handleSearch(query) {
 }
 
 async function handleSelect(torrent) {
-  torrentFilesBeforeAlbumPreview.value = null;
-  torrentSelectedBeforeAlbumPreview.value = null;
   if (selected.value?.id === torrent.id) {
     forwardStack.value = [];
+    backStack.value = [];
     selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
+    torrentFilesBeforeAlbumPreview.value = null;
+    torrentSelectedBeforeAlbumPreview.value = null;
     return;
   }
+  if (selected.value) {
+    backStack.value.push(snapshotTorrentForBack());
+  } else {
+    backStack.value.push(snapshotSearchForBack());
+  }
   forwardStack.value = [];
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
   selected.value      = torrent;
   files.value         = [];
   torrentMagnet.value = "";
@@ -314,7 +362,6 @@ function handleOpenAlbumPreview({ album, displayName }) {
   if (!selected.value || !album?.audioFiles?.length) return;
   if (torrentFilesBeforeAlbumPreview.value) return;
 
-  forwardStack.value = [];
   torrentFilesBeforeAlbumPreview.value = files.value;
   torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
 
@@ -336,6 +383,11 @@ function handleOpenAlbumPreview({ album, displayName }) {
 
 async function handleOpenTorrentFromLike(like) {
   forwardStack.value = [];
+  if (selected.value) {
+    backStack.value.push(snapshotTorrentForBack());
+  } else {
+    backStack.value.push({ type: "likes" });
+  }
   torrentFilesBeforeAlbumPreview.value = null;
   torrentSelectedBeforeAlbumPreview.value = null;
   const m = like.torrentName?.match(/^(.+?)\s+[-–—]\s+/);
@@ -446,6 +498,7 @@ function handlePrev() { queuePos.value = Math.max(0, queuePos.value - 1); }
 
 function navToSearch() {
   forwardStack.value = [];
+  backStack.value = [];
   view.value          = "search";
   selected.value      = null;
   files.value         = [];
@@ -472,6 +525,42 @@ function handleBack() {
     if (mainRef.value) mainRef.value.scrollTo(0, 0);
     return;
   }
+
+  if (backStack.value.length > 0) {
+    pushCurrentScreenToForwardStack();
+    const entry = backStack.value.pop();
+    if (entry.type === "search") {
+      searchQuery.value = entry.searchQuery;
+      results.value = [...entry.results];
+      error.value = entry.error;
+      selected.value = null;
+      files.value = [];
+      torrentMagnet.value = "";
+      torrentCover.value = null;
+      torrentFilesBeforeAlbumPreview.value = null;
+      torrentSelectedBeforeAlbumPreview.value = null;
+    } else if (entry.type === "torrent") {
+      selected.value = { ...entry.selected };
+      files.value = [...entry.files];
+      torrentMagnet.value = entry.magnet;
+      torrentCover.value = entry.cover;
+      torrentFilesBeforeAlbumPreview.value = entry.torrentFilesBeforeAlbumPreview;
+      torrentSelectedBeforeAlbumPreview.value = entry.torrentSelectedBeforeAlbumPreview;
+      view.value = "search";
+    } else if (entry.type === "likes") {
+      view.value = "likes";
+      returnView.value = "search";
+      selected.value = null;
+      files.value = [];
+      torrentMagnet.value = "";
+      torrentCover.value = null;
+      torrentFilesBeforeAlbumPreview.value = null;
+      torrentSelectedBeforeAlbumPreview.value = null;
+    }
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+    return;
+  }
+
   if (selected.value) {
     forwardStack.value.push({
       type: "torrent",
@@ -480,12 +569,20 @@ function handleBack() {
       magnet: torrentMagnet.value,
       cover: torrentCover.value,
       restoreLikesView: returnView.value === "likes",
+      torrentFilesBeforeAlbumPreview: torrentFilesBeforeAlbumPreview.value
+        ? [...torrentFilesBeforeAlbumPreview.value]
+        : null,
+      torrentSelectedBeforeAlbumPreview: torrentSelectedBeforeAlbumPreview.value
+        ? { ...torrentSelectedBeforeAlbumPreview.value }
+        : null,
     });
   }
   selected.value = null;
   files.value = [];
   torrentMagnet.value = "";
   torrentCover.value = null;
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
   if (returnView.value === "likes") {
     view.value = "likes";
     returnView.value = "search";
@@ -503,16 +600,16 @@ function handleForwardNav() {
     torrentFilesBeforeAlbumPreview.value = snap.fullFiles;
     torrentSelectedBeforeAlbumPreview.value = snap.fullSelected;
   } else if (snap.type === "torrent") {
+    view.value = "search";
     if (snap.restoreLikesView) {
       returnView.value = "likes";
-      view.value = "search";
     }
     selected.value = snap.selected;
     files.value = snap.files;
     torrentMagnet.value = snap.magnet;
     torrentCover.value = snap.cover;
-    torrentFilesBeforeAlbumPreview.value = null;
-    torrentSelectedBeforeAlbumPreview.value = null;
+    torrentFilesBeforeAlbumPreview.value = snap.torrentFilesBeforeAlbumPreview ?? null;
+    torrentSelectedBeforeAlbumPreview.value = snap.torrentSelectedBeforeAlbumPreview ?? null;
   }
   if (mainRef.value) mainRef.value.scrollTo(0, 0);
 }
