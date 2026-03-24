@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted } from "vue";
 import { isAudio, basename, detectAlbums } from "./utils.js";
 import { loadLikes, saveLikes } from "./libraryStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
+import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
 
@@ -32,6 +33,7 @@ onMounted(async () => {
   }, RESTORE_UI_MAX_MS);
 
   try {
+    await resolveMirrorIfNeeded();
     const raw = await restoreSession();
     const s = normalizeLoginStatus(raw);
     if (s.loggedIn) handleLogin(s.username, s.avatarUrl);

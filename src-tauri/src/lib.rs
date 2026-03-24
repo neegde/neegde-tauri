@@ -72,6 +72,7 @@ pub fn run() {
             rutracker::rutracker_search,
             rutracker::rutracker_get_cover,
             rutracker::rutracker_get_torrent_details,
+            rutracker::rutracker_pick_mirror,
             torrent_stream::torrent_prepare_stream,
             torrent_stream::torrent_dispose_preview,
             torrent_image::torrent_fetch_image,

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::Manager;
 
 // ── Shared data types ─────────────────────────────────────────────────────────
@@ -423,6 +424,52 @@ pub fn rutracker_status(
         logged_in: inner.logged_in,
         username:  inner.username.clone(),
         avatar_url: inner.avatar_url.clone(),
+    })
+}
+
+/// Try each candidate URL in order; return the first mirror whose `/forum/index.php` responds
+/// with a successful or redirect status (site reachable).
+#[tauri::command]
+pub async fn rutracker_pick_mirror(
+    state: tauri::State<'_, RutrackerState>,
+    candidates: Vec<String>,
+) -> Result<String, String> {
+    if candidates.is_empty() {
+        return Err("Список зеркал пуст".into());
+    }
+
+    let client = state.client.clone();
+    let mut last_err = String::new();
+
+    for raw in candidates {
+        let base = raw.trim().trim_end_matches('/').to_string();
+        if base.is_empty() {
+            continue;
+        }
+        let url = format!("{}/forum/index.php", base);
+        match client
+            .get(&url)
+            .timeout(Duration::from_secs(12))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() || status.is_redirection() {
+                    return Ok(base);
+                }
+                last_err = format!("HTTP {}", status.as_u16());
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+
+    Err(if last_err.is_empty() {
+        "Не удалось подключиться ни к одному зеркалу".into()
+    } else {
+        format!("Не удалось подключиться ни к одному зеркалу ({})", last_err)
     })
 }
 

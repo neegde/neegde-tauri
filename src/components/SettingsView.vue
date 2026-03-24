@@ -1,7 +1,19 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { login, logout } from "../rutracker/auth.js";
-import { getMirror, setMirror, resetMirror, hasCustomMirror, DEFAULT_MIRROR } from "../rutracker/config.js";
+import {
+  getMirror,
+  setMirror,
+  resetMirror,
+  hasCustomMirror,
+  DEFAULT_MIRROR,
+  KNOWN_MIRRORS,
+  MIRROR_MODE_AUTO,
+  MIRROR_MODE_MANUAL,
+  getMirrorMode,
+  setMirrorMode,
+  probeMirrorsNow,
+} from "../rutracker/config.js";
 import { clearRutrackerCoverCache } from "../rutracker/search.js";
 
 const props = defineProps({
@@ -53,23 +65,109 @@ async function handleRtLogout() {
 
 // ── Параметры для задротов ────────────────────────────────────────────────────
 const nerdOpen   = ref(false);
+const mirrorMode = ref(MIRROR_MODE_MANUAL);
+const mirrorSelect = ref(KNOWN_MIRRORS[0]);
 const mirrorUrl  = ref("");
 const mirrorSaved = ref(false);
+const nerdProbeBusy = ref(false);
+const nerdProbeError = ref(null);
+/** Сохранённый режим (для кнопки «Обновить» после записи в localStorage). */
+const persistedMirrorMode = ref(getMirrorMode());
+/** Активное зеркало после сохранения / загрузки (для подписи). */
+const activeMirrorDisplay = ref(getMirror());
+
+function syncMirrorSelectFromStorage() {
+  const m = getMirror();
+  if (KNOWN_MIRRORS.includes(m)) {
+    mirrorSelect.value = m;
+  } else {
+    mirrorSelect.value = "__custom__";
+  }
+  mirrorUrl.value = m;
+}
+
+function onMirrorSelectChange() {
+  if (mirrorSelect.value !== "__custom__") {
+    mirrorUrl.value = mirrorSelect.value;
+  }
+}
+
+function hostLabel(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
 
 onMounted(() => {
-  mirrorUrl.value = getMirror();
+  mirrorMode.value = getMirrorMode();
+  persistedMirrorMode.value = getMirrorMode();
+  syncMirrorSelectFromStorage();
+  activeMirrorDisplay.value = getMirror();
 });
 
-function saveMirror() {
-  setMirror(mirrorUrl.value);
-  clearRutrackerCoverCache();
-  mirrorSaved.value = true;
-  setTimeout(() => { mirrorSaved.value = false; }, 2000);
+watch(mirrorMode, (v) => {
+  if (v === MIRROR_MODE_MANUAL) {
+    syncMirrorSelectFromStorage();
+  }
+});
+
+async function saveMirror() {
+  nerdProbeError.value = null;
+  try {
+    if (mirrorMode.value === MIRROR_MODE_AUTO) {
+      setMirrorMode(MIRROR_MODE_AUTO);
+      nerdProbeBusy.value = true;
+      const picked = await probeMirrorsNow();
+      activeMirrorDisplay.value = picked;
+    } else {
+      setMirrorMode(MIRROR_MODE_MANUAL);
+      const url =
+        mirrorSelect.value === "__custom__"
+          ? mirrorUrl.value.trim()
+          : mirrorSelect.value;
+      if (!url) {
+        nerdProbeError.value = "Укажите адрес зеркала.";
+        return;
+      }
+      setMirror(url);
+      activeMirrorDisplay.value = getMirror();
+    }
+    clearRutrackerCoverCache();
+    persistedMirrorMode.value = getMirrorMode();
+    mirrorSaved.value = true;
+    setTimeout(() => { mirrorSaved.value = false; }, 2000);
+  } catch (e) {
+    nerdProbeError.value =
+      e?.toString?.() ?? "Не удалось подобрать зеркало";
+  } finally {
+    nerdProbeBusy.value = false;
+  }
+}
+
+async function refreshAutoMirror() {
+  if (getMirrorMode() !== MIRROR_MODE_AUTO) return;
+  nerdProbeError.value = null;
+  nerdProbeBusy.value = true;
+  try {
+    const picked = await probeMirrorsNow();
+    activeMirrorDisplay.value = picked;
+    clearRutrackerCoverCache();
+  } catch (e) {
+    nerdProbeError.value = e?.toString?.() ?? "Ошибка проверки";
+  } finally {
+    nerdProbeBusy.value = false;
+  }
 }
 
 function doResetMirror() {
   resetMirror();
+  mirrorMode.value = MIRROR_MODE_MANUAL;
+  persistedMirrorMode.value = getMirrorMode();
   mirrorUrl.value = DEFAULT_MIRROR;
+  mirrorSelect.value = DEFAULT_MIRROR;
+  activeMirrorDisplay.value = DEFAULT_MIRROR;
   clearRutrackerCoverCache();
   mirrorSaved.value = true;
   setTimeout(() => { mirrorSaved.value = false; }, 2000);
@@ -246,27 +344,98 @@ function doResetMirror() {
 
         <div class="settings-card-body">
           <p class="settings-card-desc nerd-desc">
-            Если основное зеркало заблокировано, укажи другое.
-            Вход и поиск будут работать через него незаметно для тебя.
+            Если доступ к основному домену закрыт, включи автовыбор — приложение
+            переберёт известные зеркала и возьмёт первое отвечающее. Либо выбери
+            зеркало вручную из списка или введи свой URL.
           </p>
-          <div class="nerd-mirror-row">
-            <input
-              class="login-input nerd-mirror-input"
-              type="url"
-              placeholder="https://rutracker.net"
-              v-model="mirrorUrl"
-              spellcheck="false"
-            />
-            <button class="login-btn nerd-save-btn" @click="saveMirror">
-              {{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}
-            </button>
+
+          <div class="nerd-mode-row" role="radiogroup" aria-label="Режим зеркала">
+            <label class="nerd-radio">
+              <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_AUTO" />
+              Автовыбор зеркала
+            </label>
+            <label class="nerd-radio">
+              <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_MANUAL" />
+              Вручную
+            </label>
           </div>
+
+          <template v-if="mirrorMode === MIRROR_MODE_AUTO">
+            <p class="settings-card-desc nerd-desc nerd-active-mirror">
+              Сейчас:
+              <span class="nerd-mirror-host">{{ hostLabel(activeMirrorDisplay) }}</span>
+            </p>
+            <div class="nerd-mirror-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="nerdProbeBusy"
+                @click="saveMirror"
+              >
+                <span v-if="nerdProbeBusy" class="spinner" />
+                <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+              </button>
+              <button
+                v-if="persistedMirrorMode === MIRROR_MODE_AUTO"
+                type="button"
+                class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                :disabled="nerdProbeBusy"
+                @click="refreshAutoMirror"
+              >
+                Обновить зеркало
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="nerd-mirror-row nerd-mirror-row--stack">
+              <select
+                class="login-input nerd-mirror-select"
+                v-model="mirrorSelect"
+                @change="onMirrorSelectChange"
+              >
+                <option v-for="u in KNOWN_MIRRORS" :key="u" :value="u">
+                  {{ hostLabel(u) }}
+                </option>
+                <option value="__custom__">Свой URL…</option>
+              </select>
+              <input
+                v-if="mirrorSelect === '__custom__'"
+                class="login-input nerd-mirror-input"
+                type="url"
+                placeholder="https://…"
+                v-model="mirrorUrl"
+                spellcheck="false"
+              />
+            </div>
+            <div class="nerd-mirror-row">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="nerdProbeBusy"
+                @click="saveMirror"
+              >
+                <span v-if="nerdProbeBusy" class="spinner" />
+                <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+              </button>
+            </div>
+          </template>
+
+          <p v-if="nerdProbeError" class="login-error nerd-probe-error">{{ nerdProbeError }}</p>
+
+          <p class="settings-card-desc nerd-desc nerd-mirror-hint">
+            Список зеркал: rutracker.net, rutracker.org, rutracker.nl, rutracker.cr,
+            maintracker.org, rutracker.lib. При смене зеркала сессия может сброситься —
+            войди в Rutracker снова.
+          </p>
+
           <button
             v-if="hasCustomMirror()"
+            type="button"
             class="nerd-reset-btn"
             @click="doResetMirror"
           >
-            Сбросить до rutracker.net
+            Сбросить к rutracker.net (ручной режим)
           </button>
         </div>
       </div>
@@ -346,14 +515,76 @@ function doResetMirror() {
 
 .nerd-desc { font-size: 12px; }
 
+.nerd-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 20px;
+  margin-top: 12px;
+}
+.nerd-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.nerd-radio input {
+  accent-color: var(--accent);
+}
+
+.nerd-active-mirror {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+.nerd-mirror-host {
+  color: var(--accent);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.nerd-mirror-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
 .nerd-mirror-row {
   display: flex;
   gap: 8px;
   align-items: center;
   margin-top: 10px;
 }
+.nerd-mirror-row--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+.nerd-mirror-select {
+  width: 100%;
+  margin-bottom: 0;
+  cursor: pointer;
+}
 .nerd-mirror-input { flex: 1; margin-bottom: 0; }
 .nerd-save-btn { white-space: nowrap; margin-top: 0; min-width: 110px; }
+.nerd-save-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  color: var(--text);
+}
+.nerd-save-btn--ghost:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.nerd-mirror-hint {
+  margin-top: 12px;
+  opacity: 0.85;
+}
+.nerd-probe-error {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
 
 .nerd-reset-btn {
   background: none;
