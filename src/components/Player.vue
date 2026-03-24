@@ -29,14 +29,14 @@ const duration = ref(0);
 const src = ref("");
 const streamPhase = ref("idle"); // idle | preparing | buffering | ready | error
 const streamError = ref("");
-const bufferedSeconds = ref(0);
 const bufferedPercent = ref(0);
 
 const progress = computed(() => duration.value > 0 ? current.value / duration.value : 0);
 const isLoading = computed(() => streamPhase.value === "preparing" || streamPhase.value === "buffering");
+/** Без metadata duration неизвестна — не показываем «процент» (он залипает на 95%), только индетерминатный режим в шаблоне */
 const loadingProgress = computed(() => {
   if (duration.value > 0) return bufferedPercent.value;
-  return isLoading.value ? Math.min(95, bufferedSeconds.value * 4) : 100;
+  return isLoading.value ? 0 : 100;
 });
 
 function togglePlay() {
@@ -64,15 +64,22 @@ function onKey(e) {
 
 function updateBufferStats() {
   const a = audioRef.value;
-  if (!a || !a.buffered?.length) {
-    bufferedSeconds.value = 0;
+  if (!a) {
+    bufferedPercent.value = 0;
+    return;
+  }
+  const metaDur = a.duration;
+  if (Number.isFinite(metaDur) && metaDur > 0) {
+    duration.value = metaDur;
+  }
+  if (!a.buffered?.length) {
     bufferedPercent.value = 0;
     return;
   }
   const end = a.buffered.end(a.buffered.length - 1);
-  bufferedSeconds.value = Number.isFinite(end) ? end : 0;
-  if (duration.value > 0 && Number.isFinite(end)) {
-    bufferedPercent.value = Math.max(0, Math.min(100, (end / duration.value) * 100));
+  const effectiveDur = Number.isFinite(duration.value) && duration.value > 0 ? duration.value : 0;
+  if (effectiveDur > 0 && Number.isFinite(end)) {
+    bufferedPercent.value = Math.max(0, Math.min(100, (end / effectiveDur) * 100));
   }
 }
 
@@ -110,7 +117,6 @@ watch(
     src.value = "";
     current.value = 0;
     duration.value = 0;
-    bufferedSeconds.value = 0;
     bufferedPercent.value = 0;
     streamError.value = "";
     streamPhase.value = "preparing";
@@ -150,8 +156,40 @@ watch(
   { immediate: true }
 );
 
+let bufferPollRaf = 0;
+function stopBufferPoll() {
+  if (bufferPollRaf) {
+    cancelAnimationFrame(bufferPollRaf);
+    bufferPollRaf = 0;
+  }
+}
+function bufferPollTick() {
+  bufferPollRaf = 0;
+  updateBufferStats();
+  if (
+    isLoading.value &&
+    streamPhase.value !== "error" &&
+    streamPhase.value !== "idle" &&
+    audioRef.value
+  ) {
+    bufferPollRaf = requestAnimationFrame(bufferPollTick);
+  }
+}
+
+watch(
+  isLoading,
+  (loading) => {
+    stopBufferPoll();
+    if (loading) bufferPollRaf = requestAnimationFrame(bufferPollTick);
+  },
+  { immediate: true }
+);
+
 onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+onUnmounted(() => {
+  stopBufferPoll();
+  window.removeEventListener("keydown", onKey);
+});
 </script>
 
 <template>
@@ -204,8 +242,15 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
         <div :class="['progress-track', isLoading ? 'progress-track-loading' : '']" title="Перемотка" @click="seek">
           <div
             v-if="streamPhase !== 'error'"
-            class="progress-buffer"
-            :style="{ width: `${loadingProgress}%` }"
+            :class="[
+              'progress-buffer',
+              isLoading && duration <= 0 ? 'progress-buffer-indeterminate' : '',
+            ]"
+            :style="
+              isLoading && duration <= 0
+                ? {}
+                : { width: `${loadingProgress}%` }
+            "
           />
           <div class="progress-fill" :style="{ width: `${progress * 100}%` }" />
         </div>
@@ -230,6 +275,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
       @pause="playing = false"
       @progress="updateBufferStats"
       @canplay="updateBufferStats"
+      @loadedmetadata="duration = audioRef?.duration ?? 0; updateBufferStats()"
       @durationchange="duration = audioRef?.duration ?? 0; updateBufferStats()"
       @waiting="streamPhase = 'buffering'"
       @stalled="streamPhase = 'buffering'"
@@ -267,7 +313,13 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
   height: 100%;
   width: 0%;
   background: rgba(255, 255, 255, 0.28);
-  transition: width 220ms ease;
+  /* transition на width даёт ощущение «подвисания» — буфер обновляется рывками */
+  will-change: width;
+}
+.progress-buffer-indeterminate {
+  width: 100%;
+  opacity: 0.38;
+  animation: buffer-breathe 1.1s ease-in-out infinite;
 }
 .stream-inline-error {
   margin-top: 4px;
@@ -283,5 +335,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
   0%   { left: -35%; opacity: 0.35; }
   35%  { opacity: 0.85; }
   100% { left: 110%; opacity: 0.2; }
+}
+@keyframes buffer-breathe {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 0.48;
+  }
 }
 </style>
