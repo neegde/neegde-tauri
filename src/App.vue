@@ -7,6 +7,7 @@ import { restoreSession } from "./rutracker/auth.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
+import { exportTorrentFiles } from "./torrentExport.js";
 
 import SearchBar    from "./components/SearchBar.vue";
 import Results      from "./components/Results.vue";
@@ -16,6 +17,7 @@ import SettingsView from "./components/SettingsView.vue";
 import Player       from "./components/Player.vue";
 import AppAuthPanel from "./components/AppAuthPanel.vue";
 import NavArrows    from "./components/NavArrows.vue";
+import DownloadProgressOverlay from "./components/DownloadProgressOverlay.vue";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
@@ -81,6 +83,15 @@ const torrentSelectedBeforeAlbumPreview = ref(null);
 
 /** Стек для кнопки «вперёд» (как в Spotify): снимки экранов при «назад». */
 const forwardStack = ref([]);
+
+/** Оверлей прогресса экспорта на диск (BitTorrent → копирование). */
+const downloadProgress = ref(null);
+/** false — компактная кнопка «Скачивание» в углу. */
+const downloadOverlayExpanded = ref(true);
+
+watch(downloadProgress, (v) => {
+  if (v == null) downloadOverlayExpanded.value = true;
+});
 
 // ── Likes (persisted locally) ────────────────────────────────────────────────
 const likes = ref(loadLikes());
@@ -380,6 +391,35 @@ function handlePlayAlbumFromLike(like) {
   queuePos.value = 0;
 }
 
+function handleDownloadTrack(origIdx) {
+  downloadOverlayExpanded.value = true;
+  const f = files.value.find((x) => x.origIdx === origIdx);
+  const label = f ? basename(f.path) : `Файл ${origIdx}`;
+  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], (p) => {
+    downloadProgress.value = p;
+  });
+}
+
+function handleDownloadAll() {
+  downloadOverlayExpanded.value = true;
+  const audio = files.value.filter((f) => isAudio(f.path));
+  const idxs = audio.map((f) => f.origIdx);
+  const labels = audio.map((f) => basename(f.path));
+  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
+    downloadProgress.value = p;
+  });
+}
+
+function handleDownloadAlbum(albumFiles) {
+  downloadOverlayExpanded.value = true;
+  const audio = (albumFiles ?? []).filter((f) => isAudio(f.path));
+  const idxs = audio.map((f) => f.origIdx);
+  const labels = audio.map((f) => basename(f.path));
+  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
+    downloadProgress.value = p;
+  });
+}
+
 function handleNext() {
   if (queuePos.value < queue.value.length - 1) queuePos.value++;
   else { queue.value = []; queuePos.value = 0; }
@@ -637,9 +677,9 @@ function handleNavBack() {
             @play="handlePlay"
             @play-all="handlePlayAll"
             @play-album="handlePlayAlbum"
-            @download-album="() => {}"
-            @download="() => {}"
-            @download-all="() => {}"
+            @download-album="handleDownloadAlbum"
+            @download="handleDownloadTrack"
+            @download-all="handleDownloadAll"
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
           />
@@ -666,6 +706,11 @@ function handleNavBack() {
       @login="handleAppLogin"
       @register="handleAppRegister"
       @close="authPanelOpen = false"
+    />
+
+    <DownloadProgressOverlay
+      v-model:expanded="downloadOverlayExpanded"
+      :progress="downloadProgress"
     />
 
   </div>

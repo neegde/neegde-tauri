@@ -58,6 +58,7 @@ pub fn run() {
     raise_nofile_limit();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));
             app.manage(torrent_stream::TorrentStreamState::new(app.handle().clone()));
@@ -75,6 +76,8 @@ pub fn run() {
             rutracker::rutracker_pick_mirror,
             torrent_stream::torrent_prepare_stream,
             torrent_stream::torrent_dispose_preview,
+            torrent_stream::export::torrent_export_files,
+            torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,
             fetch_album_cover,
         ])
