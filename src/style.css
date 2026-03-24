@@ -1354,19 +1354,74 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
 }
-.player-close {
-  background: none;
-  border: none;
+
+.player-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 160px;
+  min-width: 0;
+}
+
+.volume-icon {
+  flex-shrink: 0;
   color: var(--muted);
-  font-size: 20px;
-  cursor: pointer;
-  padding: 6px;
-  border-radius: 50%;
-  transition: color 0.15s, background 0.15s;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.player-close:hover { color: var(--text); background: rgba(255,255,255,0.07); }
+
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  min-width: 64px;
+  max-width: 120px;
+  height: 4px;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--text);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.volume-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.08);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: var(--text);
+  cursor: pointer;
+}
+
+.volume-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+}
 
 /* ── Likes View ───────────────────────────────────────────────────────── */
 .likes-view { animation: fade-up 0.2s ease; }
@@ -1846,7 +1901,8 @@ body {
 [data-theme="light"] .login-input::placeholder          { color: var(--muted2); }
 [data-theme="light"] .progress-track                    { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .track-row:hover                   { background: rgba(0,0,0,0.04); }
-[data-theme="light"] .player-close:hover                { background: rgba(0,0,0,0.07); }
+[data-theme="light"] .volume-slider::-webkit-slider-runnable-track { background: rgba(0,0,0,0.15); }
+[data-theme="light"] .volume-slider::-moz-range-track    { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .ctrl-btn-play                     { color: #fff; }
 [data-theme="light"] .ctrl-btn-play:hover               { background: #333 !important; }
 [data-theme="light"] .likes-tab                         { background: rgba(0,0,0,0.07); }

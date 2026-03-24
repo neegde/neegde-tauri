@@ -812,7 +812,6 @@ function handleNavBack() {
       @next="handleNext"
       @ended="handleNext"
       @playing-change="playerPlaying = $event"
-      @close="queue = []; queuePos = 0"
     />
 
     <!-- ── App auth modal ──────────────────────────────────────────── -->

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from "vue";
 import CoverThumb from "../shared/CoverThumb.vue";
 import { streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename } from "../../lib/utils.js";
@@ -21,11 +21,44 @@ const props = defineProps({
   hasNext: Boolean,
 });
 
-const emit = defineEmits(["prev", "next", "ended", "close", "playing-change"]);
+const emit = defineEmits(["prev", "next", "ended", "playing-change"]);
+
+function loadSavedVolume() {
+  try {
+    const raw = localStorage.getItem("playerVolume");
+    if (raw == null) return 1;
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(1, Math.max(0, n));
+  } catch {
+    return 1;
+  }
+}
 
 const hasTrack = computed(() => Boolean(props.track?.magnet));
 
 const audioRef = ref(null);
+const volume = ref(loadSavedVolume());
+/** Уровень до mute по клику на динамик — для восстановления. */
+const volumeBeforeMute = ref(null);
+
+function toggleMute() {
+  if (volume.value > 0) {
+    volumeBeforeMute.value = volume.value;
+    volume.value = 0;
+  } else {
+    const prev = volumeBeforeMute.value;
+    volume.value =
+      prev != null && prev > 0 ? prev : Math.max(loadSavedVolume(), 0.25);
+  }
+}
+
+function onVolumeWheel(e) {
+  e.preventDefault();
+  const step = 0.06;
+  const next = volume.value + (e.deltaY < 0 ? step : -step);
+  volume.value = Math.min(1, Math.max(0, next));
+}
 const playing = ref(false);
 const current = ref(0);
 const duration = ref(0);
@@ -163,6 +196,19 @@ function onAudioError() {
 
 watch(playing, (v) => emit("playing-change", v), { immediate: true });
 
+watch(volume, (v) => {
+  try {
+    localStorage.setItem("playerVolume", String(v));
+  } catch {
+    /* ignore */
+  }
+});
+
+watchEffect(() => {
+  const a = audioRef.value;
+  if (a) a.volume = volume.value;
+});
+
 let bufferPollRaf = 0;
 function stopBufferPoll() {
   if (bufferPollRaf) {
@@ -291,13 +337,11 @@ onUnmounted(() => {
           <button
             class="ctrl-btn"
             :disabled="!hasPrev"
-            title="Предыдущий (←)"
             @click="emit('prev')"
           >⏮</button>
 
           <button
             class="ctrl-btn ctrl-btn-play"
-            :title="(isLoading || playing) ? 'Пауза (Пробел)' : 'Играть (Пробел)'"
             type="button"
             @click="onPlayButtonClick"
           >
@@ -307,14 +351,13 @@ onUnmounted(() => {
           <button
             class="ctrl-btn"
             :disabled="!hasNext"
-            title="Следующий (→)"
             @click="emit('next')"
           >⏭</button>
         </div>
 
         <div class="player-progress">
           <span class="progress-time">{{ fmtTime(current) }}</span>
-          <div :class="['progress-track', isLoading ? 'progress-track-loading' : '']" title="Перемотка" @click="seek">
+          <div :class="['progress-track', isLoading ? 'progress-track-loading' : '']" @click="seek">
             <div
               v-if="streamPhase !== 'error'"
               :class="[
@@ -334,9 +377,39 @@ onUnmounted(() => {
         <div v-if="streamPhase === 'error' && streamError" class="stream-inline-error">{{ streamError }}</div>
       </div>
 
-      <!-- Right: close -->
+      <!-- Right: volume -->
       <div class="player-right">
-        <button class="player-close" title="Закрыть" @click="emit('close')">✕</button>
+        <div class="player-volume" @wheel.prevent="onVolumeWheel">
+          <button
+            type="button"
+            class="volume-icon-btn"
+            @click="toggleMute"
+          >
+            <span class="volume-icon" aria-hidden="true">
+              <svg v-if="volume > 0" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+              </svg>
+              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <line x1="16" y1="9" x2="23" y2="16" />
+                <line x1="23" y1="9" x2="16" y2="16" />
+              </svg>
+            </span>
+          </button>
+          <input
+            type="range"
+            class="volume-slider"
+            min="0"
+            max="100"
+            step="1"
+            :value="Math.round(volume * 100)"
+            @input="volume = Number($event.target.value) / 100"
+          />
+        </div>
       </div>
 
       <audio
@@ -371,9 +444,9 @@ onUnmounted(() => {
       </div>
       <div class="player-center">
         <div class="player-controls">
-          <button class="ctrl-btn" disabled title="Предыдущий">⏮</button>
-          <button class="ctrl-btn ctrl-btn-play" disabled title="Воспроизведение">▶</button>
-          <button class="ctrl-btn" disabled title="Следующий">⏭</button>
+          <button class="ctrl-btn" disabled>⏮</button>
+          <button class="ctrl-btn ctrl-btn-play" disabled>▶</button>
+          <button class="ctrl-btn" disabled>⏭</button>
         </div>
         <div class="player-progress">
           <span class="progress-time">0:00</span>
@@ -463,6 +536,30 @@ onUnmounted(() => {
     opacity: 0.48;
   }
 }
+.volume-icon-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  margin: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.volume-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.volume-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .player-art--idle {
   flex-shrink: 0;
 }
