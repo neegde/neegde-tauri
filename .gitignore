@@ -11,3 +11,4 @@ dist
 # Rutracker session (stored in OS app data dir, but just in case)
 rt_session.json
 rt_meta.json
+.todo

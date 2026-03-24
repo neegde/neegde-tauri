@@ -42,8 +42,13 @@ const loadingProgress = computed(() => {
 function togglePlay() {
   const a = audioRef.value;
   if (!a) return;
-  if (a.paused) { a.play(); playing.value = true; }
-  else { a.pause(); playing.value = false; }
+  if (a.paused) {
+    void a.play().catch(() => {
+      playing.value = !a.paused;
+    });
+  } else {
+    a.pause();
+  }
 }
 
 function seek(e) {
