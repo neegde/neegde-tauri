@@ -37,9 +37,11 @@ const props = defineProps({
   track: { type: Object, default: null },
   hasPrev: Boolean,
   hasNext: Boolean,
+  /** После восстановления сессии: не использовать HTML autoplay при появлении src. */
+  suppressAutoplay: Boolean,
 });
 
-const emit = defineEmits(["prev", "next", "ended", "playing-change"]);
+const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream"]);
 
 function loadSavedVolume() {
   try {
@@ -128,6 +130,10 @@ function onPlayButtonClick() {
 
 function togglePlay() {
   if (!hasTrack.value) return;
+  if (props.suppressAutoplay && !src.value) {
+    emit("request-stream");
+    return;
+  }
   const a = audioRef.value;
   if (!a) {
     if (!src.value && (streamPhase.value === "idle" || streamPhase.value === "error")) {
@@ -233,6 +239,10 @@ watchEffect(() => {
   void props.hasNext;
   setMediaSessionApi({
     play: () => {
+      if (props.suppressAutoplay && !src.value && hasTrack.value) {
+        emit("request-stream");
+        return;
+      }
       const a = audioRef.value;
       if (a) void a.play().catch(() => {});
     },
@@ -361,9 +371,27 @@ function bufferPollTick() {
 }
 
 watch(
-  () => [props.track?.magnet, props.track?.fileIdx, prepareAttempt.value],
-  async ([magnet, fileIdx], _, onCleanup) => {
+  () => [
+    props.track?.magnet,
+    props.track?.fileIdx,
+    prepareAttempt.value,
+    props.suppressAutoplay,
+  ],
+  async ([magnet, fileIdx, , suppressed], _, onCleanup) => {
     if (!props.track || !magnet) {
+      stopBufferPoll();
+      playing.value = false;
+      src.value = "";
+      current.value = 0;
+      duration.value = 0;
+      bufferedPercent.value = 0;
+      streamError.value = "";
+      streamPhase.value = "idle";
+      loadCancelledByUser.value = false;
+      return;
+    }
+
+    if (suppressed) {
       stopBufferPoll();
       playing.value = false;
       src.value = "";
@@ -556,7 +584,7 @@ onUnmounted(() => {
         class="player-audio"
         crossorigin="anonymous"
         :src="src"
-        :autoplay="Boolean(src)"
+        :autoplay="Boolean(src) && !props.suppressAutoplay"
         @loadstart="streamPhase = 'buffering'"
         @play="onAudioPlay"
         @playing="onAudioPlaying"

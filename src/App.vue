@@ -1,8 +1,13 @@
 <script setup>
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./lib/utils.js";
 import { trackCoverFileIdxForLike } from "./library/likesCover.js";
 import { loadLikes, saveLikes } from "./library/libraryStorage.js";
+import {
+  loadPlayerSession,
+  savePlayerSession,
+  clearPlayerSession,
+} from "./player/playerSessionStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
@@ -20,6 +25,35 @@ import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
 import NavArrows    from "./components/shell/NavArrows.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 
+// ── Queue (восстановление последней сессии из localStorage) ──────────────────
+const _savedPlayer = loadPlayerSession();
+const queue = ref(_savedPlayer?.queue ?? []);
+const queuePos = ref(
+  _savedPlayer && _savedPlayer.queue.length
+    ? _savedPlayer.queuePos
+    : 0
+);
+const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
+
+watch(
+  [queue, queuePos],
+  () => {
+    savePlayerSession(queue.value, queuePos.value);
+  },
+  { deep: true }
+);
+
+function flushPlayerSessionToStorage() {
+  savePlayerSession(queue.value, queuePos.value);
+}
+
+/** После cold start с восстановленной очередью не запускать трек через HTML autoplay — только по клику ▶ / явной смене трека. */
+const suppressAutoplayAfterSessionRestore = ref(Boolean(_savedPlayer?.queue?.length));
+
+function allowPlayerAutoplay() {
+  suppressAutoplayAfterSessionRestore.value = false;
+}
+
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
 
@@ -29,6 +63,7 @@ const restoringSession = ref(true);
 const RESTORE_UI_MAX_MS = 20_000;
 
 onMounted(async () => {
+  window.addEventListener("beforeunload", flushPlayerSessionToStorage);
   document.documentElement.setAttribute("data-theme", theme.value);
   authPanelOpen.value = false;
 
@@ -46,6 +81,10 @@ onMounted(async () => {
     window.clearTimeout(unblockTimer);
     restoringSession.value = false;
   }
+});
+
+onUnmounted(() => {
+  window.removeEventListener("beforeunload", flushPlayerSessionToStorage);
 });
 
 function handleThemeChange(newTheme) {
@@ -141,11 +180,6 @@ watch(downloadProgress, (v) => {
 // ── Likes (persisted locally) ────────────────────────────────────────────────
 const likes = ref(loadLikes());
 watch(likes, (v) => saveLikes(v), { deep: true });
-
-// ── Queue ─────────────────────────────────────────────────────────────────────
-const queue    = ref([]);
-const queuePos = ref(0);
-const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
 
 /** Состояние воспроизведения из плеера — подсветка и анимация в списках. */
 const playerPlaying = ref(true);
@@ -310,6 +344,7 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
 }
 
 function handlePlay(fileIdx) {
+  allowPlayerAutoplay();
   const audioFiles = orderedAudioFiles(files.value);
   const startIdx = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
   const fullQueue = audioFiles.map((f) =>
@@ -327,6 +362,7 @@ function handlePlay(fileIdx) {
 }
 
 function handlePlayAll() {
+  allowPlayerAutoplay();
   const audioFiles = orderedAudioFiles(files.value);
   if (!audioFiles.length) return;
   queue.value = audioFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
@@ -335,6 +371,7 @@ function handlePlayAll() {
 
 function handlePlayAlbum(albumFiles) {
   if (!albumFiles.length) return;
+  allowPlayerAutoplay();
   const albs = detectAlbums(files.value);
   const first = albumFiles[0];
   let coverIdx = null;
@@ -432,6 +469,7 @@ async function handleOpenTorrentFromLike(like) {
 }
 
 function handlePlayFromLike(like) {
+  allowPlayerAutoplay();
   const likedTracks = Object.values(likes.value)
     .filter((l) => l.type === "track").sort((a, b) => b.addedAt - a.addedAt);
   const startIdx = Math.max(0, likedTracks.findIndex((l) => l.id === like.id));
@@ -453,6 +491,7 @@ function handlePlayFromLike(like) {
 
 function handlePlayAlbumFromLike(like) {
   if (!like.audioFiles?.length) return;
+  allowPlayerAutoplay();
   queue.value = like.audioFiles.map((f) => ({
     magnet: like.magnet, fileIdx: f.origIdx, fileName: trackDisplayBasename(f.path),
     torrentName: like.torrentName, torrentId: like.torrentId, source: like.source,
@@ -491,10 +530,14 @@ function handleDownloadAlbum(albumFiles) {
 }
 
 function handleNext() {
+  allowPlayerAutoplay();
   if (queuePos.value < queue.value.length - 1) queuePos.value++;
   else { queue.value = []; queuePos.value = 0; }
 }
-function handlePrev() { queuePos.value = Math.max(0, queuePos.value - 1); }
+function handlePrev() {
+  allowPlayerAutoplay();
+  queuePos.value = Math.max(0, queuePos.value - 1);
+}
 
 function navToSearch() {
   forwardStack.value = [];
@@ -806,11 +849,13 @@ function handleNavBack() {
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
       :track="nowPlaying"
+      :suppress-autoplay="suppressAutoplayAfterSessionRestore"
       :has-prev="queuePos > 0"
       :has-next="queuePos < queue.length - 1"
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
+      @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
     />
 
