@@ -5,14 +5,16 @@ import {
   isAudio,
   isImage,
   basename,
+  trackDisplayBasename,
   fmtSize,
   fmtDate,
   detectAlbums,
   sumFileSizes,
   MAX_TORRENT_COVER_BYTES,
-} from "../utils.js";
-import { disposeTorrentPreview } from "../torrentSession.js";
+} from "../../lib/utils.js";
+import { disposeTorrentPreview } from "../../torrent/torrentSession.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
+import PlayingIndicator from "../shared/PlayingIndicator.vue";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
@@ -26,6 +28,8 @@ const props = defineProps({
   magnet: String,
   cover: { type: String, default: null },
   nowPlayingIdx: { default: null },
+  /** Синхронно с кнопкой play/pause в нижнем плеере. */
+  playerPlaying: { type: Boolean, default: true },
   likes: Object,
 });
 
@@ -94,6 +98,11 @@ function countLabel(n) {
   return `${n} ${n === 1 ? "трек" : n < 5 ? "трека" : "треков"}`;
 }
 
+function playingRowClass(origIdx) {
+  if (props.nowPlayingIdx !== origIdx) return [];
+  return ["playing", props.playerPlaying ? "playing--active" : "playing--paused"];
+}
+
 function seedsLabel(n) {
   return `${n} сид${n === 1 ? "" : n < 5 ? "а" : "ов"}`;
 }
@@ -132,7 +141,7 @@ function makeTrackLike(torrent, magnet, f) {
     source: torrent.source,
     magnet,
     fileIdx: f.origIdx,
-    fileName: basename(f.path),
+    fileName: trackDisplayBasename(f.path),
     coverFileIdx,
     coverFile,
   };
@@ -310,18 +319,18 @@ onUnmounted(() => {
         <div
           v-for="(f, i) in singleAlbumWrap.raw.audioFiles"
           :key="f.origIdx"
-          :class="['spotify-track-row', nowPlayingIdx === f.origIdx ? 'playing' : '']"
+          :class="['spotify-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
         >
           <div class="spotify-col-n">
-            <span v-if="nowPlayingIdx === f.origIdx" class="playing-anim">♪</span>
+            <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
               <span class="spotify-num">{{ i + 1 }}</span>
               <span class="spotify-play-hint">▶</span>
             </template>
           </div>
           <div class="spotify-col-title">
-            <span class="spotify-track-title" :title="basename(f.path)">{{ basename(f.path) }}</span>
+            <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
           </div>
           <div class="spotify-col-time">
             <span class="spotify-dur">{{ f.size > 0 ? fmtSize(f.size) : "—" }}</span>
@@ -445,18 +454,18 @@ onUnmounted(() => {
         <div
           v-for="(f, i) in wrap.raw.audioFiles"
           :key="f.origIdx"
-          :class="['track-row', nowPlayingIdx === f.origIdx ? 'playing' : '']"
+          :class="['track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
         >
           <div class="track-num">
-            <span v-if="nowPlayingIdx === f.origIdx" class="playing-anim">♪</span>
+            <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
               <span class="track-num-val">{{ trackOffset(albumIdx) + i + 1 }}</span>
               <span class="track-num-icon">▶</span>
             </template>
           </div>
           <div class="track-info">
-            <div class="track-name" :title="basename(f.path)">{{ basename(f.path) }}</div>
+            <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
           </div>
           <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
           <div class="track-actions">

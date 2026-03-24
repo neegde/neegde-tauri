@@ -1,0 +1,450 @@
+//! Копирование выбранных файлов из локальной сессии librqbit в папку пользователя.
+//! Треки обрабатываются **по одному**: скачали → скопировали → следующий.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use librqbit::api::TorrentIdOrHash;
+use librqbit::{
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, Magnet, ManagedTorrent, Session,
+    TorrentStatsState,
+};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
+
+use super::TorrentStreamState;
+
+#[derive(Serialize)]
+pub struct TorrentExportResult {
+    pub copied: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportProgressPayload {
+    pub phase: String,
+    pub torrent_state: String,
+    pub progress_bytes: u64,
+    pub total_bytes: u64,
+    pub pct: f64,
+    pub queue_labels: Vec<String>,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_total: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_label: Option<String>,
+    /// Текущий трек в пачке (1..N), если несколько файлов.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_total: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_label: Option<String>,
+}
+
+fn emit_progress(app: &AppHandle, p: ExportProgressPayload) {
+    let _ = app.emit("torrent-export-progress", &p);
+}
+
+fn emit_cancelled(app: &AppHandle, queue_labels: &[String]) {
+    emit_progress(
+        app,
+        ExportProgressPayload {
+            phase: "cancelled".into(),
+            torrent_state: "paused".into(),
+            progress_bytes: 0,
+            total_bytes: 0,
+            pct: 0.0,
+            queue_labels: queue_labels.to_vec(),
+            message: "Скачивание остановлено".into(),
+            copy_index: None,
+            copy_total: None,
+            copy_label: None,
+            batch_index: None,
+            batch_total: None,
+            batch_label: None,
+        },
+    );
+}
+
+async fn pause_torrent(session: &Arc<Session>, handle: &Arc<ManagedTorrent>) {
+    let _ = session.pause(handle).await;
+}
+
+fn unique_dest_path(dest_dir: &Path, base_name: &str) -> PathBuf {
+    let dest = dest_dir.join(base_name);
+    if !dest.exists() {
+        return dest;
+    }
+    let path = Path::new(base_name);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .unwrap_or_default();
+    for n in 1..10_000u32 {
+        let candidate = dest_dir.join(format!("{stem} ({n}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dest_dir.join(format!(
+        "{stem}_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
+/// Добавить торрент в сессию или взять существующий и оставить только один файл в загрузке.
+async fn ensure_torrent_with_single_file(
+    session: &Arc<Session>,
+    magnet: &str,
+    file_idx: usize,
+) -> Result<Arc<ManagedTorrent>, String> {
+    let m = Magnet::parse(magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+    let info_hash = m
+        .as_id20()
+        .ok_or_else(|| "В magnet нет BTIH".to_string())?;
+    let id = TorrentIdOrHash::Hash(info_hash);
+
+    if let Some(handle) = session.get(id) {
+        session
+            .update_only_files(&handle, &HashSet::from([file_idx]))
+            .await
+            .map_err(|e| format!("Не удалось обновить список файлов: {e}"))?;
+        return Ok(handle);
+    }
+
+    let opts = AddTorrentOptions {
+        only_files: Some(vec![file_idx]),
+        overwrite: true,
+        ..Default::default()
+    };
+    let added = session
+        .add_torrent(AddTorrent::from_url(magnet), Some(opts))
+        .await
+        .map_err(|e| format!("Не удалось добавить торрент: {e}"))?;
+
+    let handle = match added {
+        AddTorrentResponse::Added(_, h) => h,
+        AddTorrentResponse::AlreadyManaged(_, h) => {
+            session
+                .update_only_files(&h, &HashSet::from([file_idx]))
+                .await
+                .map_err(|e| format!("Не удалось обновить список файлов: {e}"))?;
+            h
+        }
+        AddTorrentResponse::ListOnly(_) => {
+            return Err("Не удалось открыть торрент (list_only)".into());
+        }
+    };
+
+    handle
+        .wait_until_initialized()
+        .await
+        .map_err(|e| format!("Инициализация торрента: {e}"))?;
+    Ok(handle)
+}
+
+async fn wait_until_selected_finished(
+    app: &AppHandle,
+    session: &Arc<Session>,
+    handle: &Arc<ManagedTorrent>,
+    ts: &TorrentStreamState,
+    queue_labels: &[String],
+    batch_index: usize,
+    batch_total: usize,
+    batch_label: &str,
+) -> Result<(), String> {
+    const MAX_WAIT: Duration = Duration::from_secs(7200);
+    const TICK: Duration = Duration::from_millis(350);
+    let started = Instant::now();
+
+    let mut unpaused_once = false;
+
+    loop {
+        if ts.export_cancel_triggered() {
+            pause_torrent(session, handle).await;
+            emit_cancelled(app, queue_labels);
+            return Err("Скачивание остановлено".into());
+        }
+
+        if started.elapsed() > MAX_WAIT {
+            return Err("Превышено время ожидания загрузки (2 ч). Проверьте сидов и сеть.".into());
+        }
+
+        let s = handle.stats();
+
+        let pct = if s.total_bytes > 0 {
+            (s.progress_bytes.min(s.total_bytes) as f64 / s.total_bytes as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let msg = match s.state {
+            TorrentStatsState::Initializing => "Получение метаданных торрента…",
+            TorrentStatsState::Live => "Загрузка через BitTorrent…",
+            TorrentStatsState::Paused => "Пауза — возобновляем загрузку…",
+            TorrentStatsState::Error => "Ошибка торрента",
+        };
+
+        emit_progress(
+            app,
+            ExportProgressPayload {
+                phase: "downloading".into(),
+                torrent_state: format!("{}", s.state),
+                progress_bytes: s.progress_bytes,
+                total_bytes: s.total_bytes,
+                pct,
+                queue_labels: queue_labels.to_vec(),
+                message: format!(
+                    "{} — трек {} из {}: {}",
+                    msg, batch_index, batch_total, batch_label
+                ),
+                copy_index: None,
+                copy_total: None,
+                copy_label: None,
+                batch_index: Some(batch_index),
+                batch_total: Some(batch_total),
+                batch_label: Some(batch_label.to_string()),
+            },
+        );
+
+        if matches!(s.state, TorrentStatsState::Error) {
+            return Err(s
+                .error
+                .unwrap_or_else(|| "Неизвестная ошибка торрента".into()));
+        }
+
+        if s.finished {
+            return Ok(());
+        }
+
+        if matches!(s.state, TorrentStatsState::Paused) && !unpaused_once {
+            session
+                .unpause(handle)
+                .await
+                .map_err(|e| format!("Не удалось возобновить загрузку: {e}"))?;
+            unpaused_once = true;
+        }
+
+        tokio::time::sleep(TICK).await;
+    }
+}
+
+#[tauri::command]
+pub async fn torrent_export_files(
+    app: AppHandle,
+    state: State<'_, TorrentStreamState>,
+    magnet: String,
+    file_indices: Vec<usize>,
+    dest_dir: String,
+    file_names: Vec<String>,
+) -> Result<TorrentExportResult, String> {
+    state.export_cancel_reset();
+
+    if magnet.trim().is_empty() {
+        return Err("Пустой magnet".into());
+    }
+    if file_indices.is_empty() {
+        return Err("Не выбраны файлы".into());
+    }
+
+    let dest_root = PathBuf::from(&dest_dir);
+    if !dest_root.is_dir() {
+        return Err("Указанная папка недоступна".into());
+    }
+
+    let queue_labels: Vec<String> = file_indices
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            file_names
+                .get(i)
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .unwrap_or_else(|| format!("Файл {}", i + 1))
+        })
+        .collect();
+
+    let batch_total = file_indices.len();
+    let session = state.torrent_session().await?;
+
+    let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+    let info_hash = m
+        .as_id20()
+        .ok_or_else(|| "В magnet нет BTIH".to_string())?;
+
+    emit_progress(
+        &app,
+        ExportProgressPayload {
+            phase: "preparing".into(),
+            torrent_state: "…".into(),
+            progress_bytes: 0,
+            total_bytes: 0,
+            pct: 0.0,
+            queue_labels: queue_labels.clone(),
+            message: "Подключение к торрент-сессии…".into(),
+            copy_index: None,
+            copy_total: None,
+            copy_label: None,
+            batch_index: None,
+            batch_total: None,
+            batch_label: None,
+        },
+    );
+
+    if state.export_cancel_triggered() {
+        emit_cancelled(&app, &queue_labels);
+        return Err("Скачивание остановлено".into());
+    }
+
+    let first_idx = file_indices[0];
+    let handle = ensure_torrent_with_single_file(&session, &magnet, first_idx).await?;
+
+    let api = Api::new(session.clone(), None);
+    let details = api
+        .api_torrent_details(TorrentIdOrHash::Hash(info_hash))
+        .map_err(|e| format!("Метаданные торрента: {e}"))?;
+
+    let output_folder = PathBuf::from(details.output_folder);
+    let file_list = details
+        .files
+        .ok_or_else(|| "Нет списка файлов в метаданных".to_string())?;
+
+    let mut copied = Vec::new();
+
+    for (ci, &idx) in file_indices.iter().enumerate() {
+        if state.export_cancel_triggered() {
+            pause_torrent(&session, &handle).await;
+            emit_cancelled(&app, &queue_labels);
+            return Err("Скачивание остановлено".into());
+        }
+
+        let label = queue_labels
+            .get(ci)
+            .cloned()
+            .unwrap_or_else(|| format!("Файл {}", idx + 1));
+
+        if ci > 0 {
+            session
+                .update_only_files(&handle, &HashSet::from([idx]))
+                .await
+                .map_err(|e| format!("Не удалось переключить файл: {e}"))?;
+        }
+
+        wait_until_selected_finished(
+            &app,
+            &session,
+            &handle,
+            &*state,
+            &queue_labels,
+            ci + 1,
+            batch_total,
+            &label,
+        )
+        .await?;
+
+        if state.export_cancel_triggered() {
+            pause_torrent(&session, &handle).await;
+            emit_cancelled(&app, &queue_labels);
+            return Err("Скачивание остановлено".into());
+        }
+
+        emit_progress(
+            &app,
+            ExportProgressPayload {
+                phase: "copying".into(),
+                torrent_state: "live".into(),
+                progress_bytes: 0,
+                total_bytes: 0,
+                pct: 100.0,
+                queue_labels: queue_labels.clone(),
+                message: format!("Сохранение на диск: {label}"),
+                copy_index: Some(ci + 1),
+                copy_total: Some(batch_total),
+                copy_label: Some(label.clone()),
+                batch_index: Some(ci + 1),
+                batch_total: Some(batch_total),
+                batch_label: Some(label.clone()),
+            },
+        );
+
+        if state.export_cancel_triggered() {
+            pause_torrent(&session, &handle).await;
+            emit_cancelled(&app, &queue_labels);
+            return Err("Скачивание остановлено".into());
+        }
+
+        let f = file_list
+            .get(idx)
+            .ok_or_else(|| format!("Неверный индекс файла: {idx}"))?;
+
+        let mut src = output_folder.clone();
+        for c in &f.components {
+            src.push(c);
+        }
+
+        if !src.is_file() {
+            return Err(format!(
+                "Файл отсутствует на диске: {}",
+                src.display()
+            ));
+        }
+
+        let base = Path::new(&f.name)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file");
+        let dest = unique_dest_path(&dest_root, base);
+
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("Не удалось создать каталог: {e}"))?;
+        }
+
+        tokio::fs::copy(&src, &dest)
+            .await
+            .map_err(|e| format!("Копирование {} → {}: {e}", src.display(), dest.display()))?;
+
+        copied.push(dest.to_string_lossy().into_owned());
+    }
+
+    emit_progress(
+        &app,
+        ExportProgressPayload {
+            phase: "done".into(),
+            torrent_state: "live".into(),
+            progress_bytes: 0,
+            total_bytes: 0,
+            pct: 100.0,
+            queue_labels: queue_labels.clone(),
+            message: format!("Готово: {} файл(ов)", copied.len()),
+            copy_index: None,
+            copy_total: None,
+            copy_label: None,
+            batch_index: None,
+            batch_total: None,
+            batch_label: None,
+        },
+    );
+
+    Ok(TorrentExportResult { copied })
+}
+
+#[tauri::command]
+pub fn torrent_export_cancel(state: State<'_, TorrentStreamState>) -> Result<(), String> {
+    state.export_cancel_trigger();
+    Ok(())
+}

@@ -1,9 +1,15 @@
 <script setup>
 import { ref, computed } from "vue";
-import CoverThumb from "./CoverThumb.vue";
+import CoverThumb from "../shared/CoverThumb.vue";
+import PlayingIndicator from "../shared/PlayingIndicator.vue";
+import { trackCoverFileIdxForLike } from "../../library/likesCover.js";
+import { trackDisplayBasename } from "../../lib/utils.js";
 
 const props = defineProps({
   likes: Array,
+  /** { magnet, fileIdx } — текущий трек из очереди или null */
+  nowPlaying: { type: Object, default: null },
+  playerPlaying: { type: Boolean, default: true },
 });
 
 const emit = defineEmits(["toggle-like", "play", "play-album", "open-torrent"]);
@@ -41,17 +47,22 @@ function albumsLabel(n) {
   return `${n} ${n === 1 ? "альбом" : n < 5 ? "альбома" : "альбомов"}`;
 }
 
-/** Индекс файла обложки в торренте: как у альбома, плюс запасной вариант из лайкнутого альбома той же раздачи. */
-function trackCoverFileIdx(like) {
-  if (like.coverFile?.origIdx != null) return like.coverFile.origIdx;
-  if (like.coverFileIdx != null) return like.coverFileIdx;
-  const album = props.likes.find(
-    (l) =>
-      l.type === "album" &&
-      String(l.torrentId) === String(like.torrentId) &&
-      l.audioFiles?.some((f) => f.origIdx === like.fileIdx)
+function isNowPlayingTrack(like) {
+  const np = props.nowPlaying;
+  if (!np || !like?.magnet) return false;
+  return (
+    String(like.magnet) === String(np.magnet) &&
+    Number(like.fileIdx) === Number(np.fileIdx)
   );
-  return album?.coverFile?.origIdx ?? null;
+}
+
+function likesTrackRowClass(like) {
+  if (!isNowPlayingTrack(like)) return [];
+  return ["playing", props.playerPlaying ? "playing--active" : "playing--paused"];
+}
+
+function trackCoverFileIdx(like) {
+  return trackCoverFileIdxForLike(like, props.likes);
 }
 </script>
 
@@ -98,12 +109,15 @@ function trackCoverFileIdx(like) {
         <div
           v-for="(like, i) in tracks"
           :key="like.id"
-          class="track-row likes-track-row"
+          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(like)]"
           @click="emit('play', like)"
         >
           <div class="track-num">
-            <span class="track-num-val">{{ i + 1 }}</span>
-            <span class="track-num-icon">▶</span>
+            <PlayingIndicator v-if="isNowPlayingTrack(like)" :live="playerPlaying" />
+            <template v-else>
+              <span class="track-num-val">{{ i + 1 }}</span>
+              <span class="track-num-icon">▶</span>
+            </template>
           </div>
           <div class="likes-track-main">
             <CoverThumb
@@ -115,7 +129,7 @@ function trackCoverFileIdx(like) {
               :radius="4"
             />
             <div class="track-info">
-              <div class="track-name">{{ like.fileName }}</div>
+              <div class="track-name">{{ trackDisplayBasename(like.fileName) }}</div>
               <button
                 class="likes-track-sub"
                 @click.stop="emit('open-torrent', like)"

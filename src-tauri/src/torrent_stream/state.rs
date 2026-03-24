@@ -1,7 +1,7 @@
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions};
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
@@ -32,6 +32,8 @@ pub(super) struct TorrentStreamInner {
     pub(super) server_addr: Mutex<Option<SocketAddr>>,
     pub(super) streams: Mutex<HashMap<String, Arc<Mutex<PreparedStream>>>>,
     pub(super) token_counter: AtomicU64,
+    /// Запрос остановки текущего `torrent_export_files` (из UI).
+    pub(super) export_cancel_requested: Arc<AtomicBool>,
 }
 
 impl TorrentStreamState {
@@ -43,6 +45,7 @@ impl TorrentStreamState {
                 server_addr: Mutex::new(None),
                 streams: Mutex::new(HashMap::new()),
                 token_counter: AtomicU64::new(1),
+                export_cancel_requested: Arc::new(AtomicBool::new(false)),
             }),
         }
     }
@@ -141,6 +144,28 @@ impl TorrentStreamState {
 
     pub(super) async fn dispose(&self) {
         self.inner.streams.lock().await.clear();
+    }
+
+    pub(crate) async fn torrent_session(&self) -> Result<Arc<Session>, String> {
+        self.inner.ensure_session().await
+    }
+
+    pub(crate) fn export_cancel_reset(&self) {
+        self.inner
+            .export_cancel_requested
+            .store(false, Ordering::SeqCst);
+    }
+
+    pub(crate) fn export_cancel_trigger(&self) {
+        self.inner
+            .export_cancel_requested
+            .store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn export_cancel_triggered(&self) -> bool {
+        self.inner
+            .export_cancel_requested
+            .load(Ordering::SeqCst)
     }
 }
 

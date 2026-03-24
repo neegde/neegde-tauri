@@ -55,7 +55,16 @@ export function detectAlbums(files) {
 
   const albums = [...dirs.values()];
   albums.sort((a, b) => a.dirPath.localeCompare(b.dirPath));
+  for (const a of albums) {
+    a.audioFiles = sortAudioFilesByTrackPrefix(a.audioFiles);
+  }
   return albums;
+}
+
+/** Все аудиофайлы в порядке альбомов (как в UI), а не в сыром порядке торрента. */
+export function orderedAudioFiles(files) {
+  if (!files?.length) return [];
+  return detectAlbums(files).flatMap((a) => a.audioFiles);
 }
 
 const TRACKERS = [
@@ -119,6 +128,48 @@ export function isAudio(path) {
 
 export function basename(path) {
   return path.replace(/\\/g, "/").split("/").pop() ?? path;
+}
+
+/**
+ * Leading track index in the basename (e.g. "01. Title.flac", "02 - Title.mp3").
+ * Returns { order, title } with `title` = rest of filename (incl. extension), or null.
+ */
+export function parseAudioTrackPrefix(basenameStr) {
+  const m = basenameStr.match(/^(\d{1,3})\s*[.\-–—]\s*(.+)$/);
+  if (!m) return null;
+  const title = m[2].trim();
+  if (!title) return null;
+  return { order: parseInt(m[1], 10), title };
+}
+
+function stripFilenameExtension(name) {
+  const dot = name.lastIndexOf(".");
+  if (dot < 1) return name;
+  return name.slice(0, dot);
+}
+
+/** Basename for UI: no leading "01. " / "02 - ", no file extension. */
+export function trackDisplayBasename(path) {
+  const base = basename(path);
+  const p = parseAudioTrackPrefix(base);
+  const withoutPrefix = p ? p.title : base;
+  return stripFilenameExtension(withoutPrefix);
+}
+
+function sortAudioFilesByTrackPrefix(audioFiles) {
+  if (audioFiles.length <= 1) return audioFiles;
+  const withIdx = audioFiles.map((f, i) => ({ f, i }));
+  const parsed = withIdx.map(({ f, i }) => ({
+    f,
+    i,
+    p: parseAudioTrackPrefix(basename(f.path)),
+  }));
+  if (!parsed.every((x) => x.p !== null)) return audioFiles;
+  parsed.sort((a, b) => {
+    if (a.p.order !== b.p.order) return a.p.order - b.p.order;
+    return a.i - b.i;
+  });
+  return parsed.map((x) => x.f);
 }
 
 export function buildTree(files) {

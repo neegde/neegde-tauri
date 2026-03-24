@@ -1,19 +1,24 @@
 <script setup>
 import { ref, computed, watch, onMounted } from "vue";
-import { isAudio, basename, detectAlbums } from "./utils.js";
-import { loadLikes, saveLikes } from "./libraryStorage.js";
+import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./lib/utils.js";
+import { trackCoverFileIdxForLike } from "./library/likesCover.js";
+import { loadLikes, saveLikes } from "./library/libraryStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
+import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
+import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
+import { exportTorrentFiles } from "./torrent/torrentExport.js";
 
-import SearchBar    from "./components/SearchBar.vue";
-import Results      from "./components/Results.vue";
-import TorrentView  from "./components/TorrentView.vue";
-import LikesView    from "./components/LikesView.vue";
-import SettingsView from "./components/SettingsView.vue";
-import Player       from "./components/Player.vue";
-import AppAuthPanel from "./components/AppAuthPanel.vue";
-import NavArrows    from "./components/NavArrows.vue";
+import SearchBar    from "./components/search/SearchBar.vue";
+import Results      from "./components/search/Results.vue";
+import TorrentView  from "./components/torrent/TorrentView.vue";
+import LikesView    from "./components/likes/LikesView.vue";
+import SettingsView from "./components/settings/SettingsView.vue";
+import Player       from "./components/player/Player.vue";
+import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
+import NavArrows    from "./components/shell/NavArrows.vue";
+import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
@@ -32,6 +37,7 @@ onMounted(async () => {
   }, RESTORE_UI_MAX_MS);
 
   try {
+    await resolveMirrorIfNeeded();
     const raw = await restoreSession();
     const s = normalizeLoginStatus(raw);
     if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
@@ -79,6 +85,15 @@ const torrentSelectedBeforeAlbumPreview = ref(null);
 /** Стек для кнопки «вперёд» (как в Spotify): снимки экранов при «назад». */
 const forwardStack = ref([]);
 
+/** Оверлей прогресса экспорта на диск (BitTorrent → копирование). */
+const downloadProgress = ref(null);
+/** false — компактная кнопка «Скачивание» в углу. */
+const downloadOverlayExpanded = ref(true);
+
+watch(downloadProgress, (v) => {
+  if (v == null) downloadOverlayExpanded.value = true;
+});
+
 // ── Likes (persisted locally) ────────────────────────────────────────────────
 const likes = ref(loadLikes());
 watch(likes, (v) => saveLikes(v), { deep: true });
@@ -87,6 +102,31 @@ watch(likes, (v) => saveLikes(v), { deep: true });
 const queue    = ref([]);
 const queuePos = ref(0);
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
+
+/** Состояние воспроизведения из плеера — подсветка и анимация в списках. */
+const playerPlaying = ref(true);
+
+const nowPlayingMatchForLikes = computed(() => {
+  const np = nowPlaying.value;
+  if (!np) return null;
+  return { magnet: np.magnet, fileIdx: np.fileIdx };
+});
+
+/** Подсветка «сейчас играет» только среди файлов текущего экрана (раздача / предпросмотр альбома). */
+const nowPlayingIdxForTorrentView = computed(() => {
+  const np = nowPlaying.value;
+  if (!np || np.magnet !== torrentMagnet.value) return null;
+  const fi = np.fileIdx;
+  if (fi == null || fi === "") return null;
+  const n = Number(fi);
+  if (!Number.isFinite(n)) return null;
+  const visible = files.value;
+  if (!visible?.length) return null;
+  const inVisible = visible.some(
+    (f) => Number(f.origIdx) === n && isAudio(f.path)
+  );
+  return inVisible ? n : null;
+});
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 const likesCount = computed(() => Object.keys(likes.value).length);
@@ -112,12 +152,16 @@ watch(
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function handleLogin(username, avatarUrl) {
+  markRutrackerHadAccount();
   rtLoggedIn.value  = true;
   rtUsername.value  = username || null;
   rtAvatarUrl.value = avatarUrl || null;
 }
 
-function handleLogout() {
+/** @param {{ forgetAccount?: boolean } | void} evt — forgetAccount: явный выход (настройки), сбрасываем «раньше входили». */
+function handleLogout(evt) {
+  const forgetAccount = Boolean(evt && typeof evt === "object" && evt.forgetAccount);
+  if (forgetAccount) clearRutrackerHadAccount();
   rtLoggedIn.value   = false;
   rtUsername.value   = null;
   rtAvatarUrl.value  = null;
@@ -210,7 +254,7 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
   return {
     magnet,
     fileIdx:     f.origIdx,
-    fileName:    basename(f.path),
+    fileName:    trackDisplayBasename(f.path),
     torrentName: torrent?.name    ?? "",
     torrentId:   torrent?.id      ?? "",
     source:      torrent?.source  ?? "rutracker",
@@ -223,14 +267,14 @@ function handlePlay(fileIdx) {
     (q) => q.fileIdx === fileIdx && q.magnet === torrentMagnet.value
   );
   if (existing !== -1) { queuePos.value = existing; return; }
-  const audioFiles = files.value.filter((f) => isAudio(f.path));
+  const audioFiles = orderedAudioFiles(files.value);
   const startIdx   = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
   queue.value    = audioFiles.slice(startIdx).map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
   queuePos.value = 0;
 }
 
 function handlePlayAll() {
-  const audioFiles = files.value.filter((f) => isAudio(f.path));
+  const audioFiles = orderedAudioFiles(files.value);
   if (!audioFiles.length) return;
   queue.value = audioFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
   queuePos.value = 0;
@@ -337,7 +381,7 @@ function handlePlayFromLike(like) {
   queue.value = likedTracks.slice(startIdx).map((l) => ({
     magnet: l.magnet, fileIdx: l.fileIdx, fileName: l.fileName,
     torrentName: l.torrentName, torrentId: l.torrentId, source: l.source,
-    coverFileIdx: l.coverFileIdx ?? null,
+    coverFileIdx: trackCoverFileIdxForLike(l, likes.value),
   }));
   queuePos.value = 0;
 }
@@ -345,11 +389,40 @@ function handlePlayFromLike(like) {
 function handlePlayAlbumFromLike(like) {
   if (!like.audioFiles?.length) return;
   queue.value = like.audioFiles.map((f) => ({
-    magnet: like.magnet, fileIdx: f.origIdx, fileName: basename(f.path),
+    magnet: like.magnet, fileIdx: f.origIdx, fileName: trackDisplayBasename(f.path),
     torrentName: like.torrentName, torrentId: like.torrentId, source: like.source,
     coverFileIdx: like.coverFile?.origIdx ?? null,
   }));
   queuePos.value = 0;
+}
+
+function handleDownloadTrack(origIdx) {
+  downloadOverlayExpanded.value = true;
+  const f = files.value.find((x) => x.origIdx === origIdx);
+  const label = f ? trackDisplayBasename(f.path) : `Файл ${origIdx}`;
+  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], (p) => {
+    downloadProgress.value = p;
+  });
+}
+
+function handleDownloadAll() {
+  downloadOverlayExpanded.value = true;
+  const audio = files.value.filter((f) => isAudio(f.path));
+  const idxs = audio.map((f) => f.origIdx);
+  const labels = audio.map((f) => trackDisplayBasename(f.path));
+  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
+    downloadProgress.value = p;
+  });
+}
+
+function handleDownloadAlbum(albumFiles) {
+  downloadOverlayExpanded.value = true;
+  const audio = (albumFiles ?? []).filter((f) => isAudio(f.path));
+  const idxs = audio.map((f) => f.origIdx);
+  const labels = audio.map((f) => trackDisplayBasename(f.path));
+  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
+    downloadProgress.value = p;
+  });
 }
 
 function handleNext() {
@@ -437,7 +510,7 @@ function handleNavBack() {
 </script>
 
 <template>
-  <div :class="['app', nowPlaying ? 'has-player' : '']">
+  <div class="app has-player">
 
     <!-- ── Sidebar ─────────────────────────────────────────────────── -->
     <aside class="sidebar">
@@ -503,6 +576,16 @@ function handleNavBack() {
         </button>
       </nav>
 
+      <div
+        v-if="restoringSession && !rtLoggedIn"
+        class="sidebar-rt-connecting"
+        aria-live="polite"
+        title="Проверяем доступность Rutracker"
+      >
+        <span class="spinner sidebar-rt-connecting-spinner" />
+        <span class="sidebar-rt-connecting-label">Проверяем доступность…</span>
+      </div>
+
       <!-- App account block -->
       <div class="sidebar-account">
         <button class="account-login-btn account-login-btn--wip" disabled title="В разработке">
@@ -530,6 +613,8 @@ function handleNavBack() {
         <LikesView
           v-if="view === 'likes'"
           :likes="Object.values(likes)"
+          :now-playing="nowPlayingMatchForLikes"
+          :player-playing="playerPlaying"
           @toggle-like="handleToggleLike"
           @play="handlePlayFromLike"
           @play-album="handlePlayAlbumFromLike"
@@ -555,15 +640,6 @@ function handleNavBack() {
         <!-- Search view -->
         <template v-else>
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
-
-          <!-- Session restore loading -->
-          <div v-if="restoringSession && !rtLoggedIn" class="session-restore-loading">
-            <span class="spinner" />
-            <div>
-              <div class="session-restore-text">Подключаемся к Rutracker…</div>
-              <div class="session-restore-sub">Поиск будет доступен через секунду</div>
-            </div>
-          </div>
 
           <!-- Onboarding: nudge to settings if not connected -->
           <div v-if="!restoringSession && !rtLoggedIn && !appUser && !results.length && !selected && !loading" class="onboarding">
@@ -601,14 +677,15 @@ function handleNavBack() {
             :loading="loadingFiles"
             :magnet="torrentMagnet"
             :cover="torrentCover"
-            :now-playing-idx="nowPlaying?.fileIdx ?? null"
+            :now-playing-idx="nowPlayingIdxForTorrentView"
+            :player-playing="playerPlaying"
             :likes="likes"
             @play="handlePlay"
             @play-all="handlePlayAll"
             @play-album="handlePlayAlbum"
-            @download-album="() => {}"
-            @download="() => {}"
-            @download-all="() => {}"
+            @download-album="handleDownloadAlbum"
+            @download="handleDownloadTrack"
+            @download-all="handleDownloadAll"
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
           />
@@ -619,14 +696,13 @@ function handleNavBack() {
 
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
-      v-if="nowPlaying"
-      :key="`${nowPlaying.magnet}:${nowPlaying.fileIdx}`"
       :track="nowPlaying"
       :has-prev="queuePos > 0"
       :has-next="queuePos < queue.length - 1"
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
+      @playing-change="playerPlaying = $event"
       @close="queue = []; queuePos = 0"
     />
 
@@ -636,6 +712,11 @@ function handleNavBack() {
       @login="handleAppLogin"
       @register="handleAppRegister"
       @close="authPanelOpen = false"
+    />
+
+    <DownloadProgressOverlay
+      v-model:expanded="downloadOverlayExpanded"
+      :progress="downloadProgress"
     />
 
   </div>
