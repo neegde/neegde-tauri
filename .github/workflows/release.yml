@@ -96,10 +96,12 @@ jobs:
           if [ "$REF_NAME" = "dev" ]; then
             TITLE="${VERSION}-dev"
             TAG="v${VERSION}-dev"
+            VER_LABEL="${VERSION}-dev"
             PRERELEASE=(--prerelease)
           else
             TITLE="${VERSION}"
             TAG="v${VERSION}"
+            VER_LABEL="${VERSION}"
             PRERELEASE=()
           fi
 
@@ -107,14 +109,28 @@ jobs:
           gh api --method DELETE -H "Accept: application/vnd.github+json" \
             "/repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || true
 
-          mapfile -t FILES < <(find release -type f \( \
+          mapfile -t FILES_RAW < <(find release -type f \( \
             -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' \
           \) | sort)
-          if [ ${#FILES[@]} -eq 0 ]; then
+          if [ ${#FILES_RAW[@]} -eq 0 ]; then
             echo "No installer files (.dmg/.exe/.msi/.deb) under release/"; exit 1
           fi
 
-          NOTES="Автоматическая сборка с ветки \`${REF_NAME}\`.\n\n**Версия:** \`${VERSION}\`\n**Коммит:** \`${{ github.sha }}\`"
+          mkdir -p release-upload
+          for f in "${FILES_RAW[@]}"; do
+            case "${f,,}" in
+              *.dmg) out="NeegdeMacOS${VER_LABEL}.dmg" ;;
+              *.exe) out="NeegdeWindows${VER_LABEL}.exe" ;;
+              *.msi) out="NeegdeWindows${VER_LABEL}.msi" ;;
+              *.deb) out="NeegdeLinux${VER_LABEL}.deb" ;;
+              *.appimage) out="NeegdeLinux${VER_LABEL}.AppImage" ;;
+              *) out="Neegde_${VER_LABEL}_$(basename "$f")" ;;
+            esac
+            cp "$f" "release-upload/$out"
+          done
+          mapfile -t FILES < <(find release-upload -maxdepth 1 -type f | sort)
+
+          NOTES="Здесь будет чейнджлог"
 
           gh release create "$TAG" \
             --repo "$REPO" \

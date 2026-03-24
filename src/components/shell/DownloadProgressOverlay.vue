@@ -142,13 +142,10 @@ async function requestStop() {
               <button
                 type="button"
                 class="dl-minimize"
-                title="Свернуть — прогресс останется в кнопке внизу"
                 aria-label="Свернуть"
                 @click="minimize"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="4" y="11" width="16" height="2.5" rx="1" />
-                </svg>
+                Свернуть
               </button>
             </div>
           </div>
@@ -354,22 +351,23 @@ async function requestStop() {
 
 .dl-minimize {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
+  padding: 8px 14px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
   color: var(--muted, #b3b3b3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .dl-minimize:hover {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text, #fff);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .dl-spinner {

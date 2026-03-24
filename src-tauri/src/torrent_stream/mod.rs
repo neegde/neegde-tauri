@@ -33,3 +33,9 @@ pub async fn torrent_dispose_preview(
     state.dispose().await;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn torrent_prepare_cancel(state: tauri::State<'_, TorrentStreamState>) -> Result<(), String> {
+    state.prepare_cancel_trigger();
+    Ok(())
+}

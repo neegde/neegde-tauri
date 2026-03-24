@@ -101,10 +101,11 @@ function trackCoverFileIdx(like) {
       <p v-if="tracks.length === 0" class="empty-msg">Нет понравившихся треков.</p>
       <template v-else>
         <div class="tracklist-header likes-tracklist-header">
-          <span>#</span>
-          <span>Название</span>
-          <span></span>
-          <span></span>
+          <span class="likes-th-num">#</span>
+          <div class="likes-th-main">
+            <span class="likes-th-name-label">Название</span>
+          </div>
+          <span class="likes-th-actions-head" aria-hidden="true" />
         </div>
         <div
           v-for="(like, i) in tracks"
@@ -136,7 +137,6 @@ function trackCoverFileIdx(like) {
               >{{ like.torrentName }}</button>
             </div>
           </div>
-          <div class="track-size"></div>
           <div class="track-actions">
             <button
               class="track-btn"
@@ -156,7 +156,7 @@ function trackCoverFileIdx(like) {
     <!-- Albums -->
     <div v-if="tab === 'albums'" class="likes-content">
       <p v-if="albums.length === 0" class="empty-msg">Нет понравившихся альбомов.</p>
-      <div v-else class="results-grid" style="margin-top: 8px">
+      <div v-else class="results-grid likes-albums-grid">
         <div
           v-for="like in albums"
           :key="like.id"
@@ -180,10 +180,8 @@ function trackCoverFileIdx(like) {
             >▶</button>
           </div>
           <div class="album-name">{{ like.albumName || like.torrentName }}</div>
-          <div class="album-meta" style="margin-top: 4px">
-            <span class="likes-track-sub" style="margin-top: 0">
-              {{ extractArtist(like.torrentName) }}
-            </span>
+          <div class="album-meta likes-album-artist">
+            <span class="likes-track-sub">{{ extractArtist(like.torrentName) }}</span>
           </div>
         </div>
       </div>
