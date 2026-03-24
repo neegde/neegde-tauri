@@ -31,6 +31,9 @@ const avatarImgFailed = ref(false);
 
 const emit = defineEmits(["login", "logout", "app-logout", "open-auth", "theme-change"]);
 
+/** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
+const appVersion = __APP_VERSION__;
+
 // ── Rutracker login form ───────────────────────────────────────────────────────
 const rtUsername = ref("");
 const rtPassword = ref("");
@@ -515,7 +518,7 @@ function doResetMirror() {
           <div class="settings-card-icon settings-card-icon--app">♫</div>
           <div class="settings-card-info">
             <div class="settings-card-name">Нигде</div>
-            <div class="settings-card-status">Версия 0.1.0 · Tauri + Vue 3</div>
+            <div class="settings-card-status">Версия {{ appVersion }} · Tauri + Vue 3</div>
           </div>
         </div>
       </div>
