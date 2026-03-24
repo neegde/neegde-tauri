@@ -429,6 +429,7 @@ onUnmounted(() => {
               :cover-file="wrap.raw.coverFile"
               :label="wrap.displayName"
               :cover="cover"
+              :enlargeable="false"
             />
           </div>
           <div class="album-section-info">
@@ -496,6 +497,7 @@ onUnmounted(() => {
               :cover-file="wrap.raw.coverFile"
               :label="wrap.displayName"
               :cover="cover"
+              :enlargeable="false"
             />
             <div class="gallery-card-overlay">
               <button

@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { isImage, basename, MAX_TORRENT_COVER_BYTES } from "../../lib/utils.js";
+import CoverLightbox from "../shared/CoverLightbox.vue";
 
 const props = defineProps({
   magnet:    { type: String, default: "" },
@@ -9,7 +10,11 @@ const props = defineProps({
   label:     { type: String, default: "" },
   /** Torrent-level cover data: URL — fallback when torrent image is unavailable. */
   cover:     { type: String, default: null },
+  /** Клик по обложке — просмотр крупно (в галерее останавливает всплытие к карточке). */
+  enlargeable: { type: Boolean, default: true },
 });
+
+const lightboxOpen = ref(false);
 
 const rootRef = ref(null);
 /** From BitTorrent fetch — when set, replaces post cover preview. */
@@ -148,10 +153,25 @@ const initial = computed(() => {
   const g = [...s].find((c) => /\S/u.test(c));
   return (g || "?").toUpperCase();
 });
+
+const canEnlarge = computed(
+  () => props.enlargeable && showImg.value && Boolean(displaySrc.value)
+);
+
+function onCoverClick(e) {
+  if (!canEnlarge.value) return;
+  e.stopPropagation();
+  lightboxOpen.value = true;
+}
 </script>
 
 <template>
-  <div ref="rootRef" class="album-folder-cover-root">
+  <div
+    ref="rootRef"
+    class="album-folder-cover-root"
+    :class="{ 'album-folder-cover-root--enlargeable': canEnlarge }"
+    @click="onCoverClick"
+  >
     <!-- Gradient placeholder — underneath; pulses while waiting for BT with no post preview -->
     <div
       class="album-folder-cover-placeholder"
@@ -170,6 +190,12 @@ const initial = computed(() => {
       alt=""
       @load="imgLoaded = true"
       @error="imgFailed = true"
+    />
+    <CoverLightbox
+      v-model:open="lightboxOpen"
+      :src="displaySrc || ''"
+      :alt="label || 'Обложка альбома'"
+      large
     />
   </div>
 </template>
@@ -212,5 +238,16 @@ const initial = computed(() => {
   font-weight: 800;
   color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.album-folder-cover-root--enlargeable {
+  cursor: zoom-in;
+}
+.album-folder-cover-root--enlargeable .album-folder-cover-img.visible {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.album-folder-cover-root--enlargeable:hover .album-folder-cover-img.visible {
+  transform: scale(1.02);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
 </style>

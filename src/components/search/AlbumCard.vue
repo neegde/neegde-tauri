@@ -82,6 +82,7 @@ watch(
   () => [props.torrent?.id, props.torrent?.source],
   () => setupCoverObserver()
 );
+
 </script>
 
 <template>

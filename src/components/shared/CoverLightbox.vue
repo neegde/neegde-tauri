@@ -1,0 +1,160 @@
+<script setup>
+import { watch, onMounted, onUnmounted } from "vue";
+
+const props = defineProps({
+  open: Boolean,
+  src: { type: String, default: null },
+  alt: { type: String, default: "" },
+  /** Крупное окно (просмотр обложки альбома в раздаче). В остальных местах — компактно, как раньше. */
+  large: { type: Boolean, default: false },
+});
+
+const emit = defineEmits(["update:open"]);
+
+function close() {
+  emit("update:open", false);
+}
+
+function onKeydown(e) {
+  if (e.key === "Escape" && props.open) {
+    e.preventDefault();
+    close();
+  }
+}
+
+watch(
+  () => props.open,
+  (v) => {
+    if (typeof document === "undefined") return;
+    document.documentElement.style.overflow = v ? "hidden" : "";
+  }
+);
+
+onMounted(() => window.addEventListener("keydown", onKeydown));
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKeydown);
+  if (typeof document !== "undefined") {
+    document.documentElement.style.overflow = "";
+  }
+});
+</script>
+
+<template>
+  <Teleport to="body">
+    <Transition name="cover-lb">
+      <div
+        v-if="open && src"
+        class="cover-lb-overlay"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="alt || 'Обложка альбома'"
+        @click.self="close"
+      >
+        <button type="button" class="cover-lb-close" aria-label="Закрыть" @click="close">
+          ×
+        </button>
+        <div class="cover-lb-frame" :class="{ 'cover-lb-frame--large': large }" @click.stop>
+          <img
+            :src="src"
+            :alt="alt"
+            class="cover-lb-img"
+            :class="{ 'cover-lb-img--large': large }"
+            decoding="async"
+          />
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+</template>
+
+<style scoped>
+.cover-lb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) 24px 24px;
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.cover-lb-close {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.12s;
+  z-index: 1;
+}
+.cover-lb-close:hover {
+  background: rgba(255, 255, 255, 0.22);
+  transform: scale(1.05);
+}
+
+.cover-lb-frame {
+  max-width: min(92vw, 420px);
+  max-height: min(85vh, 420px);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+.cover-lb-frame--large {
+  max-width: min(92vw, 760px);
+  max-height: min(85vh, 760px);
+}
+
+.cover-lb-img {
+  display: block;
+  max-width: min(92vw, 420px);
+  max-height: min(85vh, 420px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+.cover-lb-img--large {
+  max-width: min(92vw, 760px);
+  max-height: min(85vh, 760px);
+}
+
+.cover-lb-enter-active,
+.cover-lb-leave-active {
+  transition: opacity 0.28s ease;
+}
+.cover-lb-enter-active .cover-lb-frame,
+.cover-lb-leave-active .cover-lb-frame {
+  transition: transform 0.32s cubic-bezier(0.34, 1.15, 0.64, 1), opacity 0.28s ease;
+}
+.cover-lb-enter-from,
+.cover-lb-leave-to {
+  opacity: 0;
+}
+.cover-lb-enter-from .cover-lb-frame,
+.cover-lb-leave-to .cover-lb-frame {
+  transform: scale(0.9);
+  opacity: 0.85;
+}
+
+[data-theme="light"] .cover-lb-overlay {
+  background: rgba(18, 18, 18, 0.76);
+}
+[data-theme="light"] .cover-lb-close {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+</style>
