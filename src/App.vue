@@ -262,14 +262,20 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
 }
 
 function handlePlay(fileIdx) {
+  const audioFiles = orderedAudioFiles(files.value);
+  const startIdx = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
+  const fullQueue = audioFiles.map((f) =>
+    makeQueueItem(f, selected.value, torrentMagnet.value, files.value)
+  );
   const existing = queue.value.findIndex(
     (q) => q.fileIdx === fileIdx && q.magnet === torrentMagnet.value
   );
-  if (existing !== -1) { queuePos.value = existing; return; }
-  const audioFiles = orderedAudioFiles(files.value);
-  const startIdx   = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
-  queue.value    = audioFiles.slice(startIdx).map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
-  queuePos.value = 0;
+  if (existing !== -1 && queue.value.length === fullQueue.length) {
+    queuePos.value = existing;
+    return;
+  }
+  queue.value = fullQueue;
+  queuePos.value = startIdx;
 }
 
 function handlePlayAll() {
@@ -377,12 +383,20 @@ function handlePlayFromLike(like) {
   const likedTracks = Object.values(likes.value)
     .filter((l) => l.type === "track").sort((a, b) => b.addedAt - a.addedAt);
   const startIdx = Math.max(0, likedTracks.findIndex((l) => l.id === like.id));
-  queue.value = likedTracks.slice(startIdx).map((l) => ({
+  const fullQueue = likedTracks.map((l) => ({
     magnet: l.magnet, fileIdx: l.fileIdx, fileName: l.fileName,
     torrentName: l.torrentName, torrentId: l.torrentId, source: l.source,
     coverFileIdx: trackCoverFileIdxForLike(l, likes.value),
   }));
-  queuePos.value = 0;
+  const existing = queue.value.findIndex(
+    (q) => q.fileIdx === like.fileIdx && q.magnet === like.magnet && q.torrentId === like.torrentId
+  );
+  if (existing !== -1 && queue.value.length === fullQueue.length) {
+    queuePos.value = existing;
+    return;
+  }
+  queue.value = fullQueue;
+  queuePos.value = startIdx;
 }
 
 function handlePlayAlbumFromLike(like) {

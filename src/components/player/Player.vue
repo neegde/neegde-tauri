@@ -285,6 +285,7 @@ onUnmounted(() => {
       <audio
         v-if="src"
         ref="audioRef"
+        class="player-audio"
         :src="src"
         :autoplay="Boolean(src)"
         @loadstart="streamPhase = 'buffering'"
@@ -329,6 +330,24 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* Без controls у <audio> часто остаётся большая интрисическая ширина (~300px) и второй ряд в grid —
+   невидимый прямоугольник перекрывает центр плеера и съедает клики по ⏮ / перемотке. */
+.player {
+  position: relative;
+}
+.player-audio {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .progress-track {
   position: relative;
   overflow: hidden;
