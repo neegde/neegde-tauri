@@ -1430,23 +1430,24 @@ body {
 .likes-hero {
   display: flex;
   align-items: flex-end;
-  gap: 32px;
+  gap: clamp(18px, 3vw, 28px);
   margin: -28px -32px 0;
-  padding: 52px 32px 36px;
-  background: linear-gradient(180deg, #4a2a8a 0%, #2a1060 60%, transparent 100%);
+  padding: clamp(36px, 5vw, 48px) clamp(20px, 3vw, 32px) clamp(24px, 3.5vw, 32px);
+  background: linear-gradient(180deg, #4a2a8a 0%, #2a1060 58%, transparent 100%);
 }
 
 .likes-hero-icon {
-  width: 192px;
-  height: 192px;
+  width: clamp(112px, 20vw, 168px);
+  height: clamp(112px, 20vw, 168px);
+  aspect-ratio: 1;
   background: linear-gradient(135deg, #7040c8 0%, #3a1878 100%);
-  border-radius: 6px;
+  border-radius: 8px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 88px;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+  font-size: clamp(40px, 7vw, 68px);
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
   color: #fff;
   line-height: 1;
   user-select: none;
@@ -1455,24 +1456,24 @@ body {
 .likes-hero-info {
   flex: 1;
   min-width: 0;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
 .likes-hero-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1.2px;
-  color: var(--text);
-  margin-bottom: 10px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.82);
+  margin-bottom: 8px;
 }
 
 .likes-hero-title {
-  font-size: clamp(44px, 7vw, 96px);
+  font-size: clamp(26px, 4.5vw, 48px);
   font-weight: 900;
-  letter-spacing: -3px;
-  line-height: 0.95;
-  margin-bottom: 22px;
+  letter-spacing: -0.045em;
+  line-height: 1.08;
+  margin-bottom: clamp(10px, 1.8vw, 16px);
   color: var(--text);
   word-break: break-word;
 }
@@ -1480,18 +1481,19 @@ body {
 .likes-hero-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: rgba(255,255,255,0.7);
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 13px;
+  color: rgba(255,255,255,0.72);
   font-weight: 500;
 }
-.likes-hero-dot { opacity: 0.5; }
+.likes-hero-dot { opacity: 0.45; }
 
 /* ── Likes Tabs ───────────────────────────────────────────────────────── */
 .likes-tabs {
   display: flex;
   gap: 8px;
-  padding: 24px 0 16px;
+  padding: 20px 0 14px;
 }
 
 .likes-tab {
@@ -1510,6 +1512,17 @@ body {
 .likes-tab.active { background: var(--text); color: #000; }
 
 .likes-content { }
+
+.likes-albums-grid {
+  margin-top: 6px;
+}
+
+.likes-album-artist {
+  margin-top: 6px;
+}
+.likes-album-artist .likes-track-sub {
+  margin-top: 0;
+}
 
 /* ── CoverThumb ───────────────────────────────────────────────────────── */
 .cover-thumb {
@@ -1537,13 +1550,81 @@ body {
   line-height: 1;
 }
 
-/* track row in likes: num + [thumb + info] + size + actions */
-.likes-tracklist-header {
-  grid-template-columns: 44px 1fr 0 48px !important;
-}
+/* Likes: 3 колонки — # (узко, вправо) | обложка + название | действия */
+.likes-tracklist-header,
 .likes-track-row {
-  grid-template-columns: 44px 1fr 0 48px !important;
+  grid-template-columns: 44px minmax(0, 1fr) 96px !important;
 }
+
+.likes-tracklist-header {
+  align-items: center;
+}
+
+/* Слабее глобальный letter-spacing: 1px у .tracklist-header */
+.tracklist-header.likes-tracklist-header {
+  letter-spacing: 0.06em;
+}
+
+.likes-th-num {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 10px;
+  box-sizing: border-box;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  line-height: 1;
+}
+
+.likes-th-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+.likes-th-name-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted2);
+}
+
+.likes-th-actions-head {
+  display: block;
+}
+
+/* Номер строки — тот же край колонки, что и # в шапке */
+.likes-view .likes-track-row .track-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  justify-content: flex-end;
+  align-items: center;
+  padding-right: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  height: auto;
+}
+
+.likes-view .likes-track-row .track-num-icon {
+  left: auto;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.likes-track-row .track-actions {
+  gap: 6px;
+  justify-content: flex-end;
+}
+.likes-track-row .track-btn {
+  padding: 6px 8px;
+}
+
 .likes-track-main {
   display: flex;
   align-items: center;
@@ -1918,7 +1999,7 @@ body {
 }
 [data-theme="light"] .likes-hero-icon {
   background: linear-gradient(135deg, #9878d8 0%, #7050b8 100%);
-  box-shadow: 0 24px 64px rgba(112,80,184,0.3);
+  box-shadow: 0 12px 36px rgba(112,80,184,0.22);
 }
 [data-theme="light"] .likes-hero-label { color: rgba(0,0,0,0.7); }
 [data-theme="light"] .likes-hero-title { color: var(--text); }
