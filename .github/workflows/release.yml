@@ -1,10 +1,8 @@
-# Сборка Windows + macOS и один общий релиз при каждом пуше в main (без ручных тегов).
-# Релиз с тегом latest-main обновляется на каждый пуш (prerelease).
 name: Desktop release
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
 
 permissions:
   contents: write
@@ -48,17 +46,34 @@ jobs:
         env:
           CI: true
 
-      - name: Upload bundle
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-${{ matrix.os }}
-          path: src-tauri/target/release/bundle/
+          name: tauri-windows
+          path: src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: error
+
+      - name: Upload macOS DMG
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-macos
+          path: src-tauri/target/release/bundle/**/*.dmg
           if-no-files-found: error
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
       - name: Download bundles
         uses: actions/download-artifact@v4
         with:
@@ -69,27 +84,42 @@ jobs:
       - name: List files
         run: find release -type f
 
-      - name: Publish rolling release (latest-main)
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -e
-          TAG=latest-main
           REPO="${{ github.repository }}"
+
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$REF_NAME" = "dev" ]; then
+            TITLE="${VERSION}-dev"
+            TAG="v${VERSION}-dev"
+            PRERELEASE=(--prerelease)
+          else
+            TITLE="${VERSION}"
+            TAG="v${VERSION}"
+            PRERELEASE=()
+          fi
 
           gh release delete "$TAG" --repo "$REPO" --yes 2>/dev/null || true
           gh api --method DELETE -H "Accept: application/vnd.github+json" \
             "/repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || true
 
-          mapfile -t FILES < <(find release -type f)
+          mapfile -t FILES < <(find release -type f \( \
+            -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' \
+          \) | sort)
           if [ ${#FILES[@]} -eq 0 ]; then
-            echo "No files under release/"; exit 1
+            echo "No installer files (.dmg/.exe/.msi/.deb) under release/"; exit 1
           fi
+
+          NOTES="Автоматическая сборка с ветки \`${REF_NAME}\`.\n\n**Версия:** \`${VERSION}\`\n**Коммит:** \`${{ github.sha }}\`"
 
           gh release create "$TAG" \
             --repo "$REPO" \
             --target "${{ github.sha }}" \
-            --title "нигде. · сборка с main" \
-            --notes "Автоматическая сборка с ветки \`main\`.\n\n**Коммит:** \`${{ github.sha }}\`" \
-            --prerelease \
+            --title "$TITLE" \
+            --notes "$NOTES" \
+            "${PRERELEASE[@]}" \
             "${FILES[@]}"
