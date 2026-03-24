@@ -2,6 +2,7 @@
 import { ref, computed } from "vue";
 import CoverThumb from "./CoverThumb.vue";
 import PlayingIndicator from "./PlayingIndicator.vue";
+import { trackCoverFileIdxForLike } from "../likesCover.js";
 
 const props = defineProps({
   likes: Array,
@@ -59,17 +60,8 @@ function likesTrackRowClass(like) {
   return ["playing", props.playerPlaying ? "playing--active" : "playing--paused"];
 }
 
-/** Индекс файла обложки в торренте: как у альбома, плюс запасной вариант из лайкнутого альбома той же раздачи. */
 function trackCoverFileIdx(like) {
-  if (like.coverFile?.origIdx != null) return like.coverFile.origIdx;
-  if (like.coverFileIdx != null) return like.coverFileIdx;
-  const album = props.likes.find(
-    (l) =>
-      l.type === "album" &&
-      String(l.torrentId) === String(like.torrentId) &&
-      l.audioFiles?.some((f) => f.origIdx === like.fileIdx)
-  );
-  return album?.coverFile?.origIdx ?? null;
+  return trackCoverFileIdxForLike(like, props.likes);
 }
 </script>
 

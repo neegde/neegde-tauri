@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from "vue";
 import { isAudio, basename, detectAlbums } from "./utils.js";
+import { trackCoverFileIdxForLike } from "./likesCover.js";
 import { loadLikes, saveLikes } from "./libraryStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
@@ -364,7 +365,7 @@ function handlePlayFromLike(like) {
   queue.value = likedTracks.slice(startIdx).map((l) => ({
     magnet: l.magnet, fileIdx: l.fileIdx, fileName: l.fileName,
     torrentName: l.torrentName, torrentId: l.torrentId, source: l.source,
-    coverFileIdx: l.coverFileIdx ?? null,
+    coverFileIdx: trackCoverFileIdxForLike(l, likes.value),
   }));
   queuePos.value = 0;
 }
@@ -464,7 +465,7 @@ function handleNavBack() {
 </script>
 
 <template>
-  <div :class="['app', nowPlaying ? 'has-player' : '']">
+  <div class="app has-player">
 
     <!-- ── Sidebar ─────────────────────────────────────────────────── -->
     <aside class="sidebar">
@@ -649,8 +650,6 @@ function handleNavBack() {
 
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
-      v-if="nowPlaying"
-      :key="`${nowPlaying.magnet}:${nowPlaying.fileIdx}`"
       :track="nowPlaying"
       :has-prev="queuePos > 0"
       :has-next="queuePos < queue.length - 1"

@@ -15,15 +15,17 @@ function fmtTime(secs) {
 }
 
 const props = defineProps({
-  track: Object,
+  track: { type: Object, default: null },
   hasPrev: Boolean,
   hasNext: Boolean,
 });
 
 const emit = defineEmits(["prev", "next", "ended", "close", "playing-change"]);
 
+const hasTrack = computed(() => Boolean(props.track?.magnet));
+
 const audioRef = ref(null);
-const playing = ref(true);
+const playing = ref(false);
 const current = ref(0);
 const duration = ref(0);
 const src = ref("");
@@ -40,6 +42,7 @@ const loadingProgress = computed(() => {
 });
 
 function togglePlay() {
+  if (!hasTrack.value) return;
   const a = audioRef.value;
   if (!a) return;
   if (a.paused) {
@@ -62,7 +65,7 @@ function seek(e) {
 function onKey(e) {
   const tag = e.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return;
-  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+  if (e.code === "Space" && hasTrack.value) { e.preventDefault(); togglePlay(); }
   if (e.code === "ArrowRight" && props.hasNext) { e.preventDefault(); emit("next"); }
   if (e.code === "ArrowLeft" && props.hasPrev) { e.preventDefault(); emit("prev"); }
 }
@@ -115,9 +118,41 @@ function onAudioError() {
 
 watch(playing, (v) => emit("playing-change", v), { immediate: true });
 
+let bufferPollRaf = 0;
+function stopBufferPoll() {
+  if (bufferPollRaf) {
+    cancelAnimationFrame(bufferPollRaf);
+    bufferPollRaf = 0;
+  }
+}
+function bufferPollTick() {
+  bufferPollRaf = 0;
+  updateBufferStats();
+  if (
+    isLoading.value &&
+    streamPhase.value !== "error" &&
+    streamPhase.value !== "idle" &&
+    audioRef.value
+  ) {
+    bufferPollRaf = requestAnimationFrame(bufferPollTick);
+  }
+}
+
 watch(
   () => [props.track?.magnet, props.track?.fileIdx],
   async ([magnet, fileIdx], _, onCleanup) => {
+    if (!props.track || !magnet) {
+      stopBufferPoll();
+      playing.value = false;
+      src.value = "";
+      current.value = 0;
+      duration.value = 0;
+      bufferedPercent.value = 0;
+      streamError.value = "";
+      streamPhase.value = "idle";
+      return;
+    }
+
     playing.value = true;
     src.value = "";
     current.value = 0;
@@ -161,26 +196,6 @@ watch(
   { immediate: true }
 );
 
-let bufferPollRaf = 0;
-function stopBufferPoll() {
-  if (bufferPollRaf) {
-    cancelAnimationFrame(bufferPollRaf);
-    bufferPollRaf = 0;
-  }
-}
-function bufferPollTick() {
-  bufferPollRaf = 0;
-  updateBufferStats();
-  if (
-    isLoading.value &&
-    streamPhase.value !== "error" &&
-    streamPhase.value !== "idle" &&
-    audioRef.value
-  ) {
-    bufferPollRaf = requestAnimationFrame(bufferPollTick);
-  }
-}
-
 watch(
   isLoading,
   (loading) => {
@@ -199,95 +214,120 @@ onUnmounted(() => {
 
 <template>
   <div class="player">
-    <!-- Left: track info -->
-    <div class="player-left">
-      <CoverThumb
-        :torrent-id="track.torrentId"
-        :source="track.source"
-        :magnet="track.magnet"
-        :cover-file-idx="track.coverFileIdx ?? null"
-        :size="56"
-        :radius="4"
-        fallback="♪"
-      />
-      <div class="player-track-info">
-        <span class="player-name">{{ basename(track.fileName) }}</span>
-        <span class="player-artist">{{ track.torrentName }}</span>
-      </div>
-    </div>
-
-    <!-- Center: controls + progress -->
-    <div class="player-center">
-      <div class="player-controls">
-        <button
-          class="ctrl-btn"
-          :disabled="!hasPrev"
-          title="Предыдущий (←)"
-          @click="emit('prev')"
-        >⏮</button>
-
-        <button
-          class="ctrl-btn ctrl-btn-play"
-          :title="playing ? 'Пауза (Пробел)' : 'Играть (Пробел)'"
-          @click="togglePlay"
-        >
-          {{ playing ? "⏸" : "▶" }}
-        </button>
-
-        <button
-          class="ctrl-btn"
-          :disabled="!hasNext"
-          title="Следующий (→)"
-          @click="emit('next')"
-        >⏭</button>
-      </div>
-
-      <div class="player-progress">
-        <span class="progress-time">{{ fmtTime(current) }}</span>
-        <div :class="['progress-track', isLoading ? 'progress-track-loading' : '']" title="Перемотка" @click="seek">
-          <div
-            v-if="streamPhase !== 'error'"
-            :class="[
-              'progress-buffer',
-              isLoading && duration <= 0 ? 'progress-buffer-indeterminate' : '',
-            ]"
-            :style="
-              isLoading && duration <= 0
-                ? {}
-                : { width: `${loadingProgress}%` }
-            "
-          />
-          <div class="progress-fill" :style="{ width: `${progress * 100}%` }" />
+    <template v-if="hasTrack">
+      <!-- Left: track info -->
+      <div class="player-left">
+        <CoverThumb
+          :torrent-id="track.torrentId"
+          :source="track.source"
+          :magnet="track.magnet"
+          :cover-file-idx="track.coverFileIdx ?? null"
+          :size="56"
+          :radius="4"
+          fallback="♪"
+        />
+        <div class="player-track-info">
+          <span class="player-name">{{ basename(track.fileName) }}</span>
+          <span class="player-artist">{{ track.torrentName }}</span>
         </div>
-        <span class="progress-time">{{ fmtTime(duration) }}</span>
       </div>
-      <div v-if="streamPhase === 'error' && streamError" class="stream-inline-error">{{ streamError }}</div>
-    </div>
 
-    <!-- Right: close -->
-    <div class="player-right">
-      <button class="player-close" title="Закрыть" @click="emit('close')">✕</button>
-    </div>
+      <!-- Center: controls + progress -->
+      <div class="player-center">
+        <div class="player-controls">
+          <button
+            class="ctrl-btn"
+            :disabled="!hasPrev"
+            title="Предыдущий (←)"
+            @click="emit('prev')"
+          >⏮</button>
 
-    <audio
-      v-if="src"
-      ref="audioRef"
-      :src="src"
-      :autoplay="Boolean(src)"
-      @loadstart="streamPhase = 'buffering'"
-      @play="playing = true"
-      @playing="streamPhase = 'ready'"
-      @pause="playing = false"
-      @progress="updateBufferStats"
-      @canplay="updateBufferStats"
-      @loadedmetadata="duration = audioRef?.duration ?? 0; updateBufferStats()"
-      @durationchange="duration = audioRef?.duration ?? 0; updateBufferStats()"
-      @waiting="streamPhase = 'buffering'"
-      @stalled="streamPhase = 'buffering'"
-      @error="onAudioError"
-      @timeupdate="current = audioRef?.currentTime ?? 0"
-      @ended="emit('ended')"
-    />
+          <button
+            class="ctrl-btn ctrl-btn-play"
+            :title="playing ? 'Пауза (Пробел)' : 'Играть (Пробел)'"
+            @click="togglePlay"
+          >
+            {{ playing ? "⏸" : "▶" }}
+          </button>
+
+          <button
+            class="ctrl-btn"
+            :disabled="!hasNext"
+            title="Следующий (→)"
+            @click="emit('next')"
+          >⏭</button>
+        </div>
+
+        <div class="player-progress">
+          <span class="progress-time">{{ fmtTime(current) }}</span>
+          <div :class="['progress-track', isLoading ? 'progress-track-loading' : '']" title="Перемотка" @click="seek">
+            <div
+              v-if="streamPhase !== 'error'"
+              :class="[
+                'progress-buffer',
+                isLoading && duration <= 0 ? 'progress-buffer-indeterminate' : '',
+              ]"
+              :style="
+                isLoading && duration <= 0
+                  ? {}
+                  : { width: `${loadingProgress}%` }
+              "
+            />
+            <div class="progress-fill" :style="{ width: `${progress * 100}%` }" />
+          </div>
+          <span class="progress-time">{{ fmtTime(duration) }}</span>
+        </div>
+        <div v-if="streamPhase === 'error' && streamError" class="stream-inline-error">{{ streamError }}</div>
+      </div>
+
+      <!-- Right: close -->
+      <div class="player-right">
+        <button class="player-close" title="Закрыть" @click="emit('close')">✕</button>
+      </div>
+
+      <audio
+        v-if="src"
+        ref="audioRef"
+        :src="src"
+        :autoplay="Boolean(src)"
+        @loadstart="streamPhase = 'buffering'"
+        @play="playing = true"
+        @playing="streamPhase = 'ready'"
+        @pause="playing = false"
+        @progress="updateBufferStats"
+        @canplay="updateBufferStats"
+        @loadedmetadata="duration = audioRef?.duration ?? 0; updateBufferStats()"
+        @durationchange="duration = audioRef?.duration ?? 0; updateBufferStats()"
+        @waiting="streamPhase = 'buffering'"
+        @stalled="streamPhase = 'buffering'"
+        @error="onAudioError"
+        @timeupdate="current = audioRef?.currentTime ?? 0"
+        @ended="emit('ended')"
+      />
+    </template>
+
+    <template v-else>
+      <div class="player-left">
+        <div class="player-art player-art--idle" aria-hidden="true">♪</div>
+        <div class="player-track-info">
+          <span class="player-name">Ничего не играет</span>
+          <span class="player-artist">Выберите трек в раздаче</span>
+        </div>
+      </div>
+      <div class="player-center">
+        <div class="player-controls">
+          <button class="ctrl-btn" disabled title="Предыдущий">⏮</button>
+          <button class="ctrl-btn ctrl-btn-play" disabled title="Воспроизведение">▶</button>
+          <button class="ctrl-btn" disabled title="Следующий">⏭</button>
+        </div>
+        <div class="player-progress">
+          <span class="progress-time">0:00</span>
+          <div class="progress-track progress-track--idle" />
+          <span class="progress-time">0:00</span>
+        </div>
+      </div>
+      <div class="player-right" />
+    </template>
   </div>
 </template>
 
@@ -349,5 +389,16 @@ onUnmounted(() => {
   50% {
     opacity: 0.48;
   }
+}
+.player-art--idle {
+  flex-shrink: 0;
+}
+.progress-track--idle {
+  cursor: default;
+  opacity: 0.45;
+  pointer-events: none;
+}
+.progress-track--idle:hover {
+  height: 4px;
 }
 </style>
