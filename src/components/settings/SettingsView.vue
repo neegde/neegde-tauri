@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, watch } from "vue";
-import { login, logout } from "../../rutracker/auth.js";
+import { login, logout, restoreSession } from "../../rutracker/auth.js";
+import { normalizeLoginStatus } from "../../rutracker/sessionStatus.js";
 import {
   getMirror,
   setMirror,
@@ -44,6 +45,7 @@ async function handleRtLogin(e) {
   try {
     const result = await login(rtUsername.value.trim(), rtPassword.value);
     if (result.success) {
+      rtCredentialsHiddenUntilLogout.value = false;
       emit("login", result.username, result.avatar_url || null);
       rtUsername.value = "";
       rtPassword.value = "";
@@ -59,8 +61,46 @@ async function handleRtLogin(e) {
 }
 
 async function handleRtLogout() {
+  rtReconnectMsg.value = null;
+  rtCredentialsHiddenUntilLogout.value = false;
+  rtError.value = null;
   try { await logout(); } catch (_) { /* ignore */ }
-  emit("logout");
+  emit("logout", { forgetAccount: true });
+}
+
+const rtReconnectBusy = ref(false);
+const rtReconnectMsg = ref(null);
+/** После неуспеха переподключения скрываем текст и форму ввода до «Выйти из аккаунта» (или успешного входа). */
+const rtCredentialsHiddenUntilLogout = ref(false);
+
+/** Повторная проверка сохранённых cookies на сервере (без пароля). */
+async function handleRtReconnect() {
+  rtError.value = null;
+  rtReconnectBusy.value = true;
+  try {
+    const raw = await restoreSession();
+    const s = normalizeLoginStatus(raw);
+    if (s.loggedIn) {
+      rtReconnectMsg.value = null;
+      rtCredentialsHiddenUntilLogout.value = false;
+      emit("login", s.username, s.avatarUrl);
+      avatarImgFailed.value = false;
+    } else {
+      emit("logout");
+      rtCredentialsHiddenUntilLogout.value = true;
+      rtReconnectMsg.value =
+        "Сессия недействительна. Нажмите «Выйти из аккаунта», затем появится форма входа.";
+    }
+  } catch (e) {
+    rtCredentialsHiddenUntilLogout.value = true;
+    const t = e?.toString?.() ?? String(e);
+    rtReconnectMsg.value =
+      /сетев|network|timed out|dns/i.test(t)
+        ? "Не удалось связаться с Rutracker — проверьте интернет и зеркало."
+        : t;
+  } finally {
+    rtReconnectBusy.value = false;
+  }
 }
 
 // ── Параметры для задротов ────────────────────────────────────────────────────
@@ -183,91 +223,116 @@ function doResetMirror() {
       <div class="settings-section-label">Источники музыки</div>
 
       <div class="settings-card">
-        <div class="settings-card-header">
+        <!-- ── Logged in: user card + выход ── -->
+        <div v-if="rtLoggedIn" class="settings-card-header">
+          <div class="rt-avatar">
+            <img
+              v-if="props.rtAvatarUrl && !avatarImgFailed"
+              :src="props.rtAvatarUrl"
+              :alt="props.rtUsername || 'R'"
+              @error="avatarImgFailed = true"
+            />
+            <span v-else>{{ (props.rtUsername || 'R').charAt(0).toUpperCase() }}</span>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">{{ props.rtUsername }}</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-on" />
+              Подключено · Rutracker
+            </div>
+          </div>
+          <button
+            type="button"
+            class="settings-action-btn settings-action-btn--ghost"
+            @click="handleRtLogout"
+          >
+            Выйти
+          </button>
+        </div>
 
-          <!-- ── Logged in: Spotify-style user card ── -->
-          <template v-if="rtLoggedIn">
-            <div class="rt-avatar">
-              <img
-                v-if="props.rtAvatarUrl && !avatarImgFailed"
-                :src="props.rtAvatarUrl"
-                :alt="props.rtUsername || 'R'"
-                @error="avatarImgFailed = true"
-              />
-              <span v-else>{{ (props.rtUsername || 'R').charAt(0).toUpperCase() }}</span>
+        <!-- ── Restoring session: loading skeleton ── -->
+        <div v-else-if="restoringSession" class="settings-card-header">
+          <div class="settings-card-icon rt-loading-icon">
+            <span class="spinner" style="width:20px;height:20px;" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Rutracker</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-loading" />
+              Проверяем доступность…
             </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">{{ props.rtUsername }}</div>
-              <div class="settings-card-status">
-                <span class="settings-status-dot status-on" />
-                Подключено · Rutracker
-              </div>
-            </div>
-            <button
-              class="settings-action-btn settings-action-btn--ghost"
-              @click="handleRtLogout"
-            >
-              Отключить
-            </button>
-          </template>
+          </div>
+        </div>
 
-          <!-- ── Restoring session: loading skeleton ── -->
-          <template v-else-if="restoringSession">
-            <div class="settings-card-icon rt-loading-icon">
-              <span class="spinner" style="width:20px;height:20px;" />
+        <!-- ── Not logged in: generic icon ── -->
+        <div v-else class="settings-card-header">
+          <div class="settings-card-icon">🔗</div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Rutracker</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-off" />
+              Не подключено
             </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Rutracker</div>
-              <div class="settings-card-status">
-                <span class="settings-status-dot status-loading" />
-                Проверяем сессию…
-              </div>
-            </div>
-          </template>
-
-          <!-- ── Not logged in: generic icon ── -->
-          <template v-else>
-            <div class="settings-card-icon">🔗</div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Rutracker</div>
-              <div class="settings-card-status">
-                <span class="settings-status-dot status-off" />
-                Не подключено
-              </div>
-            </div>
-          </template>
-
+          </div>
         </div>
 
         <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
-          <p class="settings-card-desc">
-            Введите данные аккаунта Rutracker, чтобы искать и слушать музыку.
+          <p v-if="rtReconnectMsg" class="rt-reconnect-msg rt-reconnect-msg--error">
+            {{ rtReconnectMsg }}
           </p>
-          <form class="settings-login-form" @submit="handleRtLogin">
-            <input
-              class="login-input"
-              type="text"
-              placeholder="Логин"
-              v-model="rtUsername"
-              autocomplete="username"
-            />
-            <input
-              class="login-input"
-              type="password"
-              placeholder="Пароль"
-              v-model="rtPassword"
-              autocomplete="current-password"
-            />
-            <p v-if="rtError" class="login-error">{{ rtError }}</p>
+          <p v-else class="settings-card-desc rt-session-desc">
+            Уже входили в этом приложении? Можно восстановить сессию без пароля.
+          </p>
+          <div class="rt-session-actions rt-session-actions--failure">
             <button
-              class="login-btn"
-              type="submit"
-              :disabled="rtLoading || !rtUsername.trim() || !rtPassword"
+              type="button"
+              class="settings-action-btn settings-action-btn--primary"
+              :disabled="rtReconnectBusy"
+              @click="handleRtReconnect"
             >
-              <span v-if="rtLoading" class="spinner" />
-              <template v-else>Войти в Rutracker</template>
+              <span v-if="rtReconnectBusy" class="spinner" />
+              <template v-else>{{ rtCredentialsHiddenUntilLogout ? "Попробовать снова" : "Переподключиться" }}</template>
             </button>
-          </form>
+            <button
+              type="button"
+              class="settings-action-btn settings-action-btn--ghost"
+              :disabled="rtReconnectBusy"
+              @click="handleRtLogout"
+            >
+              Выйти из аккаунта
+            </button>
+          </div>
+
+          <template v-if="!rtCredentialsHiddenUntilLogout">
+            <p class="settings-card-desc settings-card-desc--after-reconnect">
+              Введите данные аккаунта Rutracker, чтобы искать и слушать музыку.
+            </p>
+            <form class="settings-login-form" @submit="handleRtLogin">
+              <input
+                class="login-input"
+                type="text"
+                placeholder="Логин"
+                v-model="rtUsername"
+                autocomplete="username"
+              />
+              <input
+                class="login-input"
+                type="password"
+                placeholder="Пароль"
+                v-model="rtPassword"
+                autocomplete="current-password"
+              />
+              <p v-if="rtError" class="login-error">{{ rtError }}</p>
+              <button
+                class="login-btn"
+                type="submit"
+                :disabled="rtLoading || !rtUsername.trim() || !rtPassword"
+              >
+                <span v-if="rtLoading" class="spinner" />
+                <template v-else>Войти в Rutracker</template>
+              </button>
+            </form>
+          </template>
         </div>
       </div>
     </div>
@@ -480,6 +545,36 @@ function doResetMirror() {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.rt-session-desc {
+  margin-bottom: 12px;
+}
+.rt-session-actions--failure {
+  margin-top: 4px;
+  margin-bottom: 12px;
+}
+.rt-reconnect-msg--error {
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.settings-card-desc--after-reconnect {
+  margin-top: 4px;
+  margin-bottom: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.rt-session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.rt-reconnect-msg {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 /* ── Параметры для задротов ───────────────────────────────────────────────── */

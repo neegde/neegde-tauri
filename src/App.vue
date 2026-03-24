@@ -4,6 +4,7 @@ import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "
 import { trackCoverFileIdxForLike } from "./library/likesCover.js";
 import { loadLikes, saveLikes } from "./library/libraryStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
+import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
@@ -151,12 +152,16 @@ watch(
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function handleLogin(username, avatarUrl) {
+  markRutrackerHadAccount();
   rtLoggedIn.value  = true;
   rtUsername.value  = username || null;
   rtAvatarUrl.value = avatarUrl || null;
 }
 
-function handleLogout() {
+/** @param {{ forgetAccount?: boolean } | void} evt — forgetAccount: явный выход (настройки), сбрасываем «раньше входили». */
+function handleLogout(evt) {
+  const forgetAccount = Boolean(evt && typeof evt === "object" && evt.forgetAccount);
+  if (forgetAccount) clearRutrackerHadAccount();
   rtLoggedIn.value   = false;
   rtUsername.value   = null;
   rtAvatarUrl.value  = null;
@@ -575,10 +580,10 @@ function handleNavBack() {
         v-if="restoringSession && !rtLoggedIn"
         class="sidebar-rt-connecting"
         aria-live="polite"
-        title="Проверяем сохранённый вход в Rutracker"
+        title="Проверяем доступность Rutracker"
       >
         <span class="spinner sidebar-rt-connecting-spinner" />
-        <span class="sidebar-rt-connecting-label">Вход в Rutracker…</span>
+        <span class="sidebar-rt-connecting-label">Проверяем доступность…</span>
       </div>
 
       <!-- App account block -->
