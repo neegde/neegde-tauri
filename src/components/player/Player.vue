@@ -26,6 +26,7 @@ import {
   clearMediaSessionPresentation,
   reaffirmTrackSkipHandlers,
 } from "../../audio/mediaSession.js";
+import { appDebugLog } from "../../appDebugLog.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -161,7 +162,23 @@ const loadingProgress = computed(() => {
   return isLoading.value ? 0 : 100;
 });
 
+/**
+ * Logs HTMLMediaElement.play() rejection to app debug (e.g. NotAllowedError).
+ *
+ * Args:
+ *     context: Caller label (e.g. togglePlay, mediaSession).
+ *     err: Rejection value from the play() promise.
+ */
+function logPlayRejected(context, err) {
+  void appDebugLog("player", "audio.play() rejected", {
+    context,
+    name: err?.name,
+    message: err?.message ?? String(err ?? ""),
+  });
+}
+
 function cancelLoad() {
+  void appDebugLog("player", "cancelLoad", { source: "user" });
   loadCancelledByUser.value = true;
   void torrentPrepareCancel();
   void disposeTorrentPreview();
@@ -199,7 +216,8 @@ function togglePlay() {
     return;
   }
   if (a.paused) {
-    void a.play().catch(() => {
+    void a.play().catch((err) => {
+      logPlayRejected("togglePlay", err);
       playing.value = !a.paused;
     });
   } else {
@@ -272,11 +290,17 @@ function onAudioError() {
   streamPhase.value = "error";
   const err = audioRef.value?.error;
   const srcUrl = src.value;
+  const mediaErr = err ? describeMediaError(err.code) : null;
   console.error("[player/audio element error]", {
     code: err?.code,
     message: err?.message,
-    mediaError: err ? describeMediaError(err.code) : null,
+    mediaError: mediaErr,
     src: srcUrl?.slice?.(0, 120),
+  });
+  void appDebugLog("player", "audio element error", {
+    code: err?.code,
+    mediaError: mediaErr,
+    srcPreview: srcUrl?.slice?.(0, 160),
   });
   streamError.value = err
     ? `Ошибка воспроизведения: ${describeMediaError(err.code)}`
@@ -289,6 +313,14 @@ watch(playing, (v) => {
   if (v) reaffirmTrackSkipHandlers();
 }, { immediate: true });
 
+watch(streamPhase, (phase, prev) => {
+  void appDebugLog("player", "streamPhase", {
+    phase,
+    from: prev,
+    fileIdx: props.track?.fileIdx,
+  });
+});
+
 watchEffect(() => {
   void props.hasPrev;
   void props.hasNext;
@@ -299,7 +331,11 @@ watchEffect(() => {
         return;
       }
       const a = audioRef.value;
-      if (a) void a.play().catch(() => {});
+      if (a) {
+        void a.play().catch((err) => {
+          logPlayRejected("mediaSession", err);
+        });
+      }
     },
     pause: () => audioRef.value?.pause(),
     prev: () => {
@@ -473,8 +509,20 @@ watch(
 
     let cancelled = false;
     onCleanup(() => { cancelled = true; });
+    void appDebugLog("player", "stream prepare started", {
+      fileIdx,
+      magnetLen: typeof magnet === "string" ? magnet.length : 0,
+      suppressAutoplay: props.suppressAutoplay,
+    });
     try {
       const nextSrc = await streamUrl(magnet, fileIdx);
+      void appDebugLog("player", "stream prepare await done", {
+        fileIdx,
+        hasUrl: Boolean(nextSrc),
+        urlPreview: nextSrc ? nextSrc.slice(0, 120) : "",
+        cancelled,
+        loadCancelledByUser: loadCancelledByUser.value,
+      });
       if (!cancelled && !loadCancelledByUser.value) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
@@ -488,6 +536,13 @@ watch(
       const isUserCancel =
         loadCancelledByUser.value ||
         (typeof msg === "string" && msg.includes("отмен"));
+      void appDebugLog("player", "stream prepare error", {
+        fileIdx,
+        message: msg,
+        cancelled,
+        loadCancelledByUser: loadCancelledByUser.value,
+        isUserCancel,
+      });
       if (!cancelled && !isUserCancel) {
         console.error("[player/stream] torrent_prepare_stream failed", {
           magnetLen: magnet?.length,

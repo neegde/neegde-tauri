@@ -6,13 +6,17 @@ use std::time::{Duration, Instant};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::Id20;
 use librqbit::Session;
+use serde_json::json;
 use tokio::sync::RwLock;
 
 use crate::cache_settings::UserCacheSettings;
 
+use super::debug_log::AppDebugLog;
+
 pub struct StreamCache {
     inner: tokio::sync::Mutex<StreamCacheState>,
     user_settings: Arc<RwLock<UserCacheSettings>>,
+    debug_log: Arc<AppDebugLog>,
 }
 
 struct StreamCacheState {
@@ -25,7 +29,10 @@ struct StreamCacheState {
 
 impl StreamCache {
     /// Builds bookkeeping with shared user-tunable limits.
-    pub fn new(user_settings: Arc<RwLock<UserCacheSettings>>) -> Self {
+    pub fn new(
+        user_settings: Arc<RwLock<UserCacheSettings>>,
+        debug_log: Arc<AppDebugLog>,
+    ) -> Self {
         Self {
             inner: tokio::sync::Mutex::new(StreamCacheState {
                 last_access: HashMap::new(),
@@ -35,6 +42,7 @@ impl StreamCache {
                 export_hash: None,
             }),
             user_settings,
+            debug_log,
         }
     }
 
@@ -131,6 +139,14 @@ impl StreamCache {
                 let mut g = self.inner.lock().await;
                 g.last_access.remove(&hash);
                 g.ref_count.remove(&hash);
+                self.debug_log.push(
+                    "cache",
+                    format!("evicted {}", hash.as_string()),
+                    Some(json!({
+                        "step": step,
+                        "dirSizeMiB": directory_size_bytes(base_dir) / (1024 * 1024),
+                    })),
+                );
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "[stream_cache] evicted info_hash={} step={} dir_size≈{} MiB",

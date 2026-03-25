@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::net::{TcpListener, TcpStream};
 
+use super::debug_log::AppDebugLog;
 use super::state::TorrentStreamInner;
 use super::types::ParsedRequest;
 use super::{COPY_CHUNK_BYTES, MAX_HTTP_HEADER_BYTES};
@@ -24,12 +26,19 @@ impl TorrentStreamInner {
 
     async fn handle_connection(self: Arc<Self>, mut socket: TcpStream) -> Result<(), String> {
         let req = read_request(&mut socket).await?;
+        let dbg = &self.debug_log;
         if !req.path.starts_with("/stream/") {
+            dbg.push(
+                "http",
+                format!("404 not /stream: {}", req.path),
+                None,
+            );
             write_response_head(&mut socket, 404, "text/plain", 0, None).await?;
             return Ok(());
         }
         let token = req.path.trim_start_matches("/stream/").to_string();
         if token.is_empty() {
+            dbg.push("http", "404 empty token", None);
             write_response_head(&mut socket, 404, "text/plain", 0, None).await?;
             return Ok(());
         }
@@ -39,12 +48,26 @@ impl TorrentStreamInner {
             map.get(&token).cloned()
         };
         let Some(stream_entry) = stream_entry else {
+            dbg.push(
+                "http",
+                format!("404 unknown token {}", &token[..token.len().min(24)]),
+                None,
+            );
             write_response_head(&mut socket, 404, "text/plain", 0, None).await?;
             return Ok(());
         };
 
         let mut prepared = stream_entry.lock().await;
-        serve_stream(&mut socket, &mut prepared, req.range).await
+        dbg.push(
+            "http",
+            "request",
+            Some(json!({
+                "token": &token,
+                "range": req.range.map(|(a, b)| format!("{a}-{b:?}")),
+                "totalLen": prepared.total_len,
+            })),
+        );
+        serve_stream(&mut socket, &mut prepared, req.range, Some(dbg)).await
     }
 }
 
@@ -142,8 +165,16 @@ async fn serve_stream(
     socket: &mut TcpStream,
     prepared: &mut super::types::PreparedStream,
     range: Option<(u64, Option<u64>)>,
+    debug: Option<&AppDebugLog>,
 ) -> Result<(), String> {
     if prepared.total_len == 0 {
+        if let Some(d) = debug {
+            d.push(
+                "http",
+                "response 200 empty body (totalLen 0)",
+                Some(json!({ "mime": &prepared.mime })),
+            );
+        }
         write_response_head(socket, 200, &prepared.mime, 0, None).await?;
         return Ok(());
     }
@@ -151,6 +182,16 @@ async fn serve_stream(
     let (start, end, status) = match range {
         Some((start, end)) => {
             if start >= prepared.total_len {
+                if let Some(d) = debug {
+                    d.push(
+                        "http",
+                        "response 416 range not satisfiable",
+                        Some(json!({
+                            "rangeStart": start,
+                            "totalLen": prepared.total_len,
+                        })),
+                    );
+                }
                 write_response_head(socket, 416, &prepared.mime, 0, None).await?;
                 return Ok(());
             }
@@ -171,6 +212,7 @@ async fn serve_stream(
     write_response_head(socket, status, &prepared.mime, content_len, content_range).await?;
 
     let pre_len = prepared.prebuffer.len() as u64;
+    let content_len_start = content_len;
     let mut cursor = start;
     let mut remaining = content_len;
 
@@ -188,6 +230,17 @@ async fn serve_stream(
     }
 
     if remaining == 0 {
+        if let Some(d) = debug {
+            d.push(
+                "http",
+                format!("response {status} sent 0 B (prebuffer only)"),
+                Some(json!({
+                    "mime": &prepared.mime,
+                    "rangeStart": start,
+                    "rangeEnd": end,
+                })),
+            );
+        }
         return Ok(());
     }
 
@@ -217,6 +270,20 @@ async fn serve_stream(
             .map_err(|e| format!("Ошибка отправки стрима: {e}"))?;
         prepared.stream_pos += n as u64;
         remaining = remaining.saturating_sub(n as u64);
+    }
+
+    let sent = content_len_start.saturating_sub(remaining);
+    if let Some(d) = debug {
+        d.push(
+            "http",
+            format!("response {status} sent {sent} B"),
+            Some(json!({
+                "mime": &prepared.mime,
+                "rangeStart": start,
+                "rangeEnd": end,
+                "plannedLen": content_len_start,
+            })),
+        );
     }
 
     Ok(())

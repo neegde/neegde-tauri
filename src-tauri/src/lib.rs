@@ -8,7 +8,7 @@ mod torrent_stream;
 
 use tauri::{Manager, RunEvent};
 
-use torrent_stream::TorrentStreamState;
+use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
 
 /// librqbit opens every file in a torrent on disk at once; large discographies exceed the default
 /// macOS soft `RLIMIT_NOFILE` (~256) → "Too many open files (os error 24)".
@@ -73,6 +73,7 @@ pub fn run() {
             let startup = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(ts) = startup.try_state::<TorrentStreamState>() {
+                    apply_app_debug_from_disk(&startup, &ts);
                     let _ = ts.load_cache_settings_from_disk().await;
                     ts.reclaim_stream_cache_best_effort().await;
                 }
@@ -100,6 +101,11 @@ pub fn run() {
             cache_commands::set_user_cache_settings,
             cache_commands::purge_streaming_cache,
             cache_commands::purge_cover_torrent_cache,
+            torrent_stream::debug_api::get_app_debug_enabled,
+            torrent_stream::debug_api::set_app_debug_enabled,
+            torrent_stream::debug_api::get_app_debug_log,
+            torrent_stream::debug_api::clear_app_debug_log,
+            torrent_stream::debug_api::app_debug_push,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

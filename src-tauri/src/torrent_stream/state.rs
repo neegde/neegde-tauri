@@ -4,12 +4,13 @@ use librqbit::{
     TorrentStats, TorrentStatsState,
 };
 use serde::Serialize;
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 use tauri::Manager;
 use tokio::io::AsyncReadExt;
@@ -19,7 +20,8 @@ use tokio::time::MissedTickBehavior;
 
 use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 
-use super::stream_cache::StreamCache;
+use super::debug_log::AppDebugLog;
+use super::stream_cache::{directory_size_bytes, StreamCache};
 use super::types::{PreparedStream, StreamReady};
 use super::PREBUFFER_BYTES;
 
@@ -71,6 +73,35 @@ impl Drop for PrepareStopGuard {
     fn drop(&mut self) {
         self.0.poller_stop.store(true, Ordering::SeqCst);
     }
+}
+
+/// Serializes librqbit torrent stats for the streaming debug log (compact JSON).
+fn torrent_stats_for_debug(s: &TorrentStats) -> serde_json::Value {
+    let peers = s.live.as_ref().map(|l| {
+        let p = &l.snapshot.peer_stats;
+        json!({
+            "queued": p.queued,
+            "connecting": p.connecting,
+            "live": p.live,
+            "seen": p.seen,
+            "dead": p.dead,
+        })
+    });
+    let live = s.live.as_ref().map(|l| {
+        json!({
+            "downloadMbps": l.download_speed.mbps,
+            "uploadMbps": l.upload_speed.mbps,
+            "eta": l.time_remaining.as_ref().map(|t| format!("{}", t)),
+        })
+    });
+    json!({
+        "state": format!("{}", s.state),
+        "progressBytes": s.progress_bytes,
+        "totalBytes": s.total_bytes,
+        "peers": peers,
+        "live": live,
+        "error": s.error,
+    })
 }
 
 fn build_prepare_progress_payload(
@@ -145,6 +176,7 @@ pub(super) struct TorrentStreamInner {
     pub(super) token_counter: AtomicU64,
     pub(super) stream_cache: Arc<StreamCache>,
     pub(super) cache_settings: Arc<RwLock<UserCacheSettings>>,
+    pub(super) debug_log: Arc<AppDebugLog>,
     /// Запрос остановки текущего `torrent_export_files` (из UI).
     pub(super) export_cancel_requested: Arc<AtomicBool>,
     /// Отмена долгого `torrent_prepare_stream` (prebuffer и т.д.).
@@ -154,6 +186,7 @@ pub(super) struct TorrentStreamInner {
 impl TorrentStreamState {
     pub fn new(app: tauri::AppHandle) -> Self {
         let cache_settings = Arc::new(RwLock::new(UserCacheSettings::default()));
+        let debug_log = AppDebugLog::new(app.clone());
         Self {
             inner: Arc::new(TorrentStreamInner {
                 app,
@@ -161,8 +194,12 @@ impl TorrentStreamState {
                 server_addr: Mutex::new(None),
                 streams: Mutex::new(HashMap::new()),
                 token_counter: AtomicU64::new(1),
-                stream_cache: Arc::new(StreamCache::new(cache_settings.clone())),
+                stream_cache: Arc::new(StreamCache::new(
+                    cache_settings.clone(),
+                    debug_log.clone(),
+                )),
                 cache_settings,
+                debug_log,
                 export_cancel_requested: Arc::new(AtomicBool::new(false)),
                 prepare_cancel_requested: Arc::new(AtomicBool::new(false)),
             }),
@@ -247,8 +284,21 @@ impl TorrentStreamState {
         let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
 
         self.inner.stream_cache.begin_prepare(info_hash).await;
+        let magnet_for_log = magnet.clone();
         let result = self.prepare_inner(magnet, file_idx, info_hash).await;
         self.inner.stream_cache.end_prepare(info_hash).await;
+        if let Err(ref e) = result {
+            self.inner.debug_log.push(
+                "prepare",
+                "failed",
+                Some(json!({
+                    "error": e,
+                    "fileIdx": file_idx,
+                    "infoHash": info_hash.as_string(),
+                    "magnet": magnet_for_log,
+                })),
+            );
+        }
         result
     }
 
@@ -258,13 +308,40 @@ impl TorrentStreamState {
         file_idx: usize,
         info_hash: Id20,
     ) -> Result<StreamReady, String> {
+        self.inner.debug_log.push(
+            "prepare",
+            "start",
+            Some(json!({
+                "fileIdx": file_idx,
+                "infoHash": info_hash.as_string(),
+                "magnet": &magnet,
+            })),
+        );
         let addr = self.inner.ensure_http_server().await?;
         let session = self.inner.ensure_session().await?;
         let base_dir = self.inner.stream_torrents_base()?;
+        let t_reclaim = Instant::now();
+        let reclaim_before_mb = if self.inner.debug_log.is_enabled() {
+            Some(directory_size_bytes(&base_dir) / (1024 * 1024))
+        } else {
+            None
+        };
         self.inner
             .stream_cache
             .maybe_reclaim(&session, &base_dir)
             .await;
+        if let Some(before) = reclaim_before_mb {
+            let after = directory_size_bytes(&base_dir) / (1024 * 1024);
+            self.inner.debug_log.push(
+                "prepare",
+                "maybe_reclaim done",
+                Some(json!({
+                    "ms": t_reclaim.elapsed().as_millis(),
+                    "dirSizeMiBBefore": before,
+                    "dirSizeMiBAfter": after,
+                })),
+            );
+        }
 
         let opts = AddTorrentOptions {
             only_files: Some(vec![file_idx]),
@@ -272,23 +349,91 @@ impl TorrentStreamState {
             ..Default::default()
         };
 
+        self.inner.debug_log.push(
+            "prepare",
+            "add_torrent (magnet + only_files)",
+            Some(json!({
+                "fileIdx": file_idx,
+                "magnetLen": magnet.len(),
+                "magnet": &magnet,
+            })),
+        );
+        let t_add = Instant::now();
+        let add_torrent_await_done = Arc::new(AtomicBool::new(false));
+        if self.inner.debug_log.is_enabled() {
+            let dbg_hb = self.inner.debug_log.clone();
+            let done_flag = Arc::clone(&add_torrent_await_done);
+            let info_hash_str = info_hash.as_string();
+            let magnet_hb = magnet.clone();
+            let t0 = t_add;
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if done_flag.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    dbg_hb.push(
+                        "prepare",
+                        "add_torrent still awaiting (inside librqbit)",
+                        Some(json!({
+                            "infoHash": info_hash_str,
+                            "fileIdx": file_idx,
+                            "msInAwait": t0.elapsed().as_millis(),
+                            "magnet": magnet_hb,
+                        })),
+                    );
+                }
+            });
+        }
         let added = session
             .add_torrent(AddTorrent::from_url(&magnet), Some(opts))
             .await
             .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?;
+        add_torrent_await_done.store(true, Ordering::SeqCst);
+        self.inner.debug_log.push(
+            "prepare",
+            "add_torrent finished",
+            Some(json!({ "ms": t_add.elapsed().as_millis() })),
+        );
 
         self.check_prepare_cancel()?;
 
         let handle = match added {
-            AddTorrentResponse::Added(_, handle) => handle,
-            AddTorrentResponse::AlreadyManaged(_, handle) => handle,
+            AddTorrentResponse::Added(_, handle) => {
+                self.inner.debug_log.push(
+                    "prepare",
+                    "add_torrent response",
+                    Some(json!({ "kind": "Added" })),
+                );
+                handle
+            }
+            AddTorrentResponse::AlreadyManaged(_, handle) => {
+                self.inner.debug_log.push(
+                    "prepare",
+                    "add_torrent response",
+                    Some(json!({ "kind": "AlreadyManaged" })),
+                );
+                handle
+            }
             AddTorrentResponse::ListOnly(_) => {
+                self.inner.debug_log.push(
+                    "prepare",
+                    "add_torrent response",
+                    Some(json!({ "kind": "ListOnly" })),
+                );
                 return Err("Не удалось открыть торрент для стриминга".into());
             }
         };
 
+        self.inner.debug_log.push(
+            "prepare",
+            "stats before wait_until_initialized",
+            Some(torrent_stats_for_debug(&handle.stats())),
+        );
+
         let prep_shared = Arc::new(PrepareProgressShared::new());
         let app_handle = self.inner.app.clone();
+        let dbg = self.inner.debug_log.clone();
         let h_poll = handle.clone();
         let prep_for_task = Arc::clone(&prep_shared);
         tokio::spawn(async move {
@@ -304,14 +449,64 @@ impl TorrentStreamState {
                 let pt = prep_for_task.prebuffer_target.load(Ordering::Relaxed);
                 let payload = build_prepare_progress_payload(&s, pf, pt);
                 let _ = app_handle.emit("torrent-prepare-progress", &payload);
+                if dbg.is_enabled() {
+                    dbg.push(
+                        "prepare",
+                        "stats (poller)",
+                        Some(json!({
+                            "torrent": torrent_stats_for_debug(&s),
+                            "prebufferFilled": if pt > 0 { Some(pf) } else { None },
+                            "prebufferTarget": if pt > 0 { Some(pt) } else { None },
+                        })),
+                    );
+                }
             }
         });
         let _prep_stop_guard = PrepareStopGuard(Arc::clone(&prep_shared));
 
+        self.inner.debug_log.push(
+            "prepare",
+            "wait_until_initialized started (metadata + peers; often the slow step)",
+            Some(json!({
+                "hint": "If this hangs, check peers/state below (tick every 1s until ready)",
+            })),
+        );
+        let wait_done = Arc::new(AtomicBool::new(false));
+        let h_wait_log = handle.clone();
+        let dbg_wait = self.inner.debug_log.clone();
+        let wd = wait_done.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if wd.load(Ordering::SeqCst) {
+                    break;
+                }
+                dbg_wait.push(
+                    "prepare",
+                    "still waiting for torrent init",
+                    Some(torrent_stats_for_debug(&h_wait_log.stats())),
+                );
+            }
+        });
+        let t_wait = Instant::now();
         handle
             .wait_until_initialized()
             .await
             .map_err(|e| format!("Ошибка инициализации торрента: {e:#}"))?;
+        wait_done.store(true, Ordering::SeqCst);
+        let wait_ms = t_wait.elapsed().as_millis();
+        self.inner.debug_log.push(
+            "prepare",
+            "torrent initialized",
+            Some(json!({
+                "infoHash": info_hash.as_string(),
+                "waitMs": wait_ms,
+                "statsAfterWait": torrent_stats_for_debug(&handle.stats()),
+            })),
+        );
 
         self.check_prepare_cancel()?;
 
@@ -322,6 +517,11 @@ impl TorrentStreamState {
             .update_only_files(&handle, &only)
             .await
             .map_err(|e| format!("Ошибка настройки sequential-режима: {e:#}"))?;
+        self.inner.debug_log.push(
+            "prepare",
+            "update_only_files done",
+            Some(json!({ "fileIdx": file_idx })),
+        );
 
         self.check_prepare_cancel()?;
 
@@ -349,23 +549,75 @@ impl TorrentStreamState {
             .store(target as u64, Ordering::Relaxed);
         let mut prebuffer = vec![0u8; target];
         let mut filled = 0usize;
+        const PREBUFFER_LOG_STEP: usize = 64 * 1024;
+        self.inner.debug_log.push(
+            "prepare",
+            "prebuffer loop starting",
+            Some(json!({
+                "targetBytes": target,
+                "totalLen": total_len,
+            })),
+        );
+        let t_pre = Instant::now();
         while filled < target {
             self.check_prepare_cancel()?;
+            let before = filled;
             let n = stream
                 .read(&mut prebuffer[filled..target])
                 .await
                 .map_err(|e| format!("Ошибка предварительной буферизации: {e:#}"))?;
             if n == 0 {
+                self.inner.debug_log.push(
+                    "prepare",
+                    "prebuffer read returned 0 (EOF)",
+                    Some(json!({
+                        "filled": filled,
+                        "target": target,
+                        "msSoFar": t_pre.elapsed().as_millis(),
+                    })),
+                );
                 break;
             }
             filled += n;
             prep_shared
                 .prebuffer_filled
                 .store(filled as u64, Ordering::Relaxed);
+            if (before / PREBUFFER_LOG_STEP) != (filled / PREBUFFER_LOG_STEP) || filled >= target {
+                self.inner.debug_log.push(
+                    "prepare",
+                    "prebuffer progress",
+                    Some(json!({
+                        "filled": filled,
+                        "target": target,
+                        "lastRead": n,
+                        "msSoFar": t_pre.elapsed().as_millis(),
+                    })),
+                );
+            }
         }
         prebuffer.truncate(filled);
 
+        self.inner.debug_log.push(
+            "prepare",
+            "prebuffer done",
+            Some(json!({
+                "filled": filled,
+                "target": target,
+                "totalLen": total_len,
+                "prebufferMs": t_pre.elapsed().as_millis(),
+            })),
+        );
+
         let token = make_token(self.inner.token_counter.fetch_add(1, Ordering::Relaxed));
+        self.inner.debug_log.push(
+            "prepare",
+            "ready",
+            Some(json!({
+                "urlToken": &token,
+                "mime": &mime,
+                "totalLen": total_len,
+            })),
+        );
         let prepared = Arc::new(Mutex::new(PreparedStream {
             stream_pos: filled as u64,
             stream: Box::new(stream),
@@ -390,6 +642,9 @@ impl TorrentStreamState {
     }
 
     pub(super) async fn dispose(&self) {
+        self.inner
+            .debug_log
+            .push("lifecycle", "dispose preview (clear streams)", None);
         self.inner.stream_cache.clear_stream_tokens().await;
         self.inner.streams.lock().await.clear();
     }
@@ -451,6 +706,7 @@ impl TorrentStreamState {
 
     /// Запрос отмены из UI (кнопка «стоп» во время подготовки потока).
     pub fn prepare_cancel_trigger(&self) {
+        self.inner.debug_log.push("prepare", "cancel requested", None);
         self.inner
             .prepare_cancel_requested
             .store(true, Ordering::SeqCst);
@@ -471,6 +727,11 @@ impl TorrentStreamInner {
     pub(super) async fn ensure_session(&self) -> Result<Arc<Session>, String> {
         let mut guard = self.session.lock().await;
         if let Some(existing) = &*guard {
+            self.debug_log.push(
+                "session",
+                "reuse existing librqbit session",
+                None,
+            );
             return Ok(existing.clone());
         }
 
@@ -480,6 +741,7 @@ impl TorrentStreamInner {
             .app_data_dir()
             .map_err(|e| format!("Не удалось получить app_data_dir: {e}"))?
             .join(super::torrent_streams_dir_label());
+        let session_dir_log = base_dir.to_string_lossy().to_string();
         std::fs::create_dir_all(&base_dir)
             .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;
 
@@ -495,6 +757,11 @@ impl TorrentStreamInner {
         )
         .await
         .map_err(|e| format!("Не удалось создать torrent session: {e}"))?;
+        self.debug_log.push(
+            "session",
+            "new librqbit session",
+            Some(json!({ "dir": session_dir_log })),
+        );
         *guard = Some(session.clone());
         Ok(session)
     }
@@ -502,6 +769,11 @@ impl TorrentStreamInner {
     pub(super) async fn ensure_http_server(self: &Arc<Self>) -> Result<SocketAddr, String> {
         let mut guard = self.server_addr.lock().await;
         if let Some(addr) = *guard {
+            self.debug_log.push(
+                "prepare",
+                "http server (reuse)",
+                Some(json!({ "addr": addr.to_string() })),
+            );
             return Ok(addr);
         }
 
@@ -512,6 +784,11 @@ impl TorrentStreamInner {
             .local_addr()
             .map_err(|e| format!("Не удалось определить адрес стримера: {e}"))?;
         *guard = Some(addr);
+        self.debug_log.push(
+            "prepare",
+            "http server started",
+            Some(json!({ "addr": addr.to_string() })),
+        );
 
         let inner = self.clone();
         tauri::async_runtime::spawn(async move {

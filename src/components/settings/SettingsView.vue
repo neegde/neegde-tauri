@@ -19,6 +19,7 @@ import {
 } from "../../rutracker/config.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
+import { openAppDebugWindow } from "../../appDebugWindow.js";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -27,12 +28,21 @@ const props = defineProps({
   restoringSession: { type: Boolean, default: false },
   appUser:          Object,
   theme:            { type: String, default: "dark" },
+  /** Полный журнал отладки приложения (UI, плеер, торрент-стриминг). */
+  appDebugEnabled: { type: Boolean, default: false },
 });
 
 // avatar image error fallback
 const avatarImgFailed = ref(false);
 
-const emit = defineEmits(["login", "logout", "app-logout", "open-auth", "theme-change"]);
+const emit = defineEmits([
+  "login",
+  "logout",
+  "app-logout",
+  "open-auth",
+  "theme-change",
+  "update:appDebugEnabled",
+]);
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
 const appVersion = __APP_VERSION__;
@@ -332,6 +342,16 @@ async function confirmClearStreaming() {
   } finally {
     cacheClearBusy.value = false;
   }
+}
+
+async function onAppDebugChange(e) {
+  const enabled = Boolean(e.target.checked);
+  await invoke("set_app_debug_enabled", { enabled });
+  emit("update:appDebugEnabled", enabled);
+}
+
+async function openAppDebugLogWindow() {
+  await openAppDebugWindow().catch(() => {});
 }
 
 async function confirmClearCoverTorrents() {
@@ -702,6 +722,25 @@ watch(nerdOpen, (open) => {
               >
                 <span v-if="cacheSaveBusy" class="spinner" />
                 <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
+              </button>
+            </div>
+
+            <div class="nerd-app-debug">
+              <label class="nerd-app-debug-row">
+                <input
+                  type="checkbox"
+                  :checked="appDebugEnabled"
+                  @change="onAppDebugChange"
+                />
+                <span>Журнал отладки: клики, экраны, плеер, торренты — только в отдельном окне</span>
+              </label>
+              <button
+                v-if="appDebugEnabled"
+                type="button"
+                class="login-btn nerd-save-btn nerd-app-debug-open-btn"
+                @click="openAppDebugLogWindow"
+              >
+                Открыть журнал отладки
               </button>
             </div>
 
@@ -1097,6 +1136,30 @@ watch(nerdOpen, (open) => {
 }
 .nerd-cache-actions {
   margin-top: 12px;
+}
+.nerd-app-debug {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+}
+.nerd-app-debug-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text, #ddd);
+  cursor: pointer;
+  user-select: none;
+}
+.nerd-app-debug-row input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.nerd-app-debug-open-btn {
+  align-self: flex-start;
 }
 .nerd-cache-divider {
   margin: 18px 0 12px;

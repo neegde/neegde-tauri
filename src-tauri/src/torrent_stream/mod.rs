@@ -1,8 +1,12 @@
 pub mod export;
+pub mod debug_api;
+mod debug_log;
 mod http;
 mod state;
 mod stream_cache;
 mod types;
+
+pub use debug_api::apply_app_debug_from_disk;
 
 pub use stream_cache::{directory_size_bytes, purge_session_torrents};
 
@@ -20,6 +24,7 @@ pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 pub(super) const COPY_CHUNK_BYTES: usize = 64 * 1024;
 
 pub use state::TorrentStreamState;
+use serde_json::json;
 use types::StreamReady;
 
 #[tauri::command]
@@ -28,8 +33,26 @@ pub async fn torrent_prepare_stream(
     magnet: String,
     file_idx: usize,
 ) -> Result<StreamReady, String> {
+    state.inner.debug_log.push(
+        "ipc",
+        "torrent_prepare_stream enter",
+        Some(json!({
+            "fileIdx": file_idx,
+            "magnetLen": magnet.len(),
+            "magnet": &magnet,
+        })),
+    );
     let result = state.prepare(magnet.clone(), file_idx).await;
-    if let Err(ref err) = result {
+    if let Ok(ref ready) = result {
+        state.inner.debug_log.push(
+            "ipc",
+            "torrent_prepare_stream ok",
+            Some(json!({
+                "fileIdx": file_idx,
+                "urlPreview": ready.url.chars().take(120).collect::<String>(),
+            })),
+        );
+    } else if let Err(ref err) = result {
         eprintln!(
             "[torrent_prepare_stream] file_idx={file_idx} magnet_len={} err={err}",
             magnet.len()
