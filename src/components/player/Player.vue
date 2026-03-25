@@ -97,12 +97,22 @@ const prepareAttempt = ref(0);
 const prepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
 
-function fmtBytes(n) {
-  if (n == null || !Number.isFinite(Number(n))) return "—";
-  const x = Number(n);
-  if (x < 1024) return `${Math.round(x)} B`;
-  if (x < 1024 * 1024) return `${(x / 1024).toFixed(1)} KiB`;
-  return `${(x / 1024 / 1024).toFixed(1)} MiB`;
+/**
+ * Formats estimated wait time in seconds as a short Russian phrase.
+ *
+ * Args:
+ *     sec: Duration in seconds.
+ *
+ * Returns:
+ *     String like "~45 с" or "~3 мин", or null if not meaningful.
+ */
+function fmtEtaHuman(sec) {
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  if (sec < 60) return `~${Math.max(1, Math.round(sec))} с`;
+  if (sec < 3600) return `~${Math.round(sec / 60)} мин`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return m ? `~${h} ч ${m} мин` : `~${h} ч`;
 }
 
 const prepareDotClass = computed(() => {
@@ -120,31 +130,32 @@ const prepareDotClass = computed(() => {
 
 const prepareHintDetail = computed(() => {
   const p = prepareProgress.value;
-  if (!p) {
-    return "Подключение к пирам и загрузка начального буфера.\nПодождите — скорость зависит от сидов и сети.";
+  const track = props.track;
+  let etaLine = "До старта: —";
+  if (p) {
+    const pt = p.prebufferTarget;
+    const pf = p.prebufferFilled ?? 0;
+    const dl = p.downloadMbps ?? 0;
+    if (pt != null && pt > 0 && pf < pt && dl > 1e-6) {
+      const remaining = pt - pf;
+      const bytesPerSec = dl * 1024 * 1024;
+      const sec = remaining / bytesPerSec;
+      const h = fmtEtaHuman(sec);
+      if (h) etaLine = `До старта: ${h}`;
+    } else if (p.etaHuman) {
+      etaLine = `До старта: ~${p.etaHuman}`;
+    }
   }
-  const lines = [p.message, ""];
-  lines.push(
-    `Файл: ${fmtBytes(p.progressBytes)} / ${fmtBytes(p.totalBytes)} (${p.pct?.toFixed?.(1) ?? "?"}%)`
-  );
-  if (p.downloadMbps != null || p.uploadMbps != null) {
-    const dl = p.downloadMbps != null ? `${p.downloadMbps.toFixed(2)} MiB/s` : "—";
-    const ul = p.uploadMbps != null ? `${p.uploadMbps.toFixed(2)} MiB/s` : "—";
-    lines.push(`Скорость: ↓ ${dl}  ↑ ${ul}`);
-  }
-  lines.push(
-    `Пиры: активных ${p.peersLive ?? 0}, подключаются ${p.peersConnecting ?? 0}, в очереди ${p.peersQueued ?? 0}, видели ${p.peersSeen ?? 0}, отвалилось ${p.peersDead ?? 0}`
-  );
-  if (p.prebufferTarget != null && p.prebufferTarget > 0) {
-    const f = p.prebufferFilled ?? 0;
-    lines.push(`Стартовый буфер для воспроизведения: ${fmtBytes(f)} / ${fmtBytes(p.prebufferTarget)}`);
-  }
-  if (p.etaHuman) lines.push(`Оценка времени до полной загрузки торрента: ${p.etaHuman}`);
-  lines.push("");
-  lines.push(
-    "Пока мало пиров или низкая скорость — ожидание нормально. Закройте VPN или попробуйте позже, если так часто."
-  );
-  return lines.join("\n");
+  const live = p?.peersLive ?? null;
+  const peersPart =
+    live != null ? `Пиры: ${live}` : "Пиры: —";
+  const seeds = track?.seeders;
+  const seedsPart =
+    seeds != null && Number.isFinite(Number(seeds))
+      ? `Сиды: ${Number(seeds)}`
+      : null;
+  const second = seedsPart ? `${peersPart} · ${seedsPart}` : peersPart;
+  return `${etaLine}\n${second}`;
 });
 
 watch(

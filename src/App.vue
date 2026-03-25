@@ -403,6 +403,11 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
       }
     }
   }
+  const rawSeeds = torrent?.seeders;
+  const seeders =
+    rawSeeds != null && rawSeeds !== "?" && Number.isFinite(Number(rawSeeds))
+      ? Number(rawSeeds)
+      : null;
   return {
     magnet,
     fileIdx:     f.origIdx,
@@ -411,6 +416,7 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
     torrentId:   torrent?.id      ?? "",
     source:      torrent?.source  ?? "rutracker",
     coverFileIdx,
+    seeders,
   };
 }
 
