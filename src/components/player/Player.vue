@@ -2,7 +2,7 @@
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
-import { streamUrl } from "../../torrent/api.js";
+import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
@@ -37,6 +37,8 @@ function fmtTime(secs) {
 
 const props = defineProps({
   track: { type: Object, default: null },
+  /** Следующий трек в очереди — для фоновой предзагрузки. */
+  nextTrack: { type: Object, default: null },
   hasPrev: Boolean,
   hasNext: Boolean,
   /** После восстановления сессии: не использовать HTML autoplay при появлении src. */
@@ -96,6 +98,44 @@ const prepareAttempt = ref(0);
 /** Последняя статистика BitTorrent с бэкенда (событие torrent-prepare-progress). */
 const prepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
+
+/** URL из `torrent_prefetch_next_track` (другой торрент), пока не переключились на этот трек. */
+const prefetchedStream = ref({ url: "", forKey: "" });
+/** Успешный prefetch для пары текущий→следующий (не повторять до смены трека). */
+const prefetchOkFingerprint = ref("");
+let prefetchInFlight = false;
+
+const PREFETCH_MIN_SEC = 30;
+const PREFETCH_MIN_RATIO = 0.22;
+
+/**
+ * Stable key for matching a queue item to a prepared stream URL.
+ *
+ * Args:
+ *     t: Queue item with magnet and fileIdx.
+ *
+ * Returns:
+ *     String key or empty when invalid.
+ */
+function queueTrackKey(t) {
+  if (!t?.magnet || t.fileIdx == null) return "";
+  return `${t.magnet}\0${t.fileIdx}`;
+}
+
+/**
+ * Fingerprint for current→next prefetch attempt.
+ *
+ * Args:
+ *     cur: Current queue item.
+ *     next: Next queue item.
+ *
+ * Returns:
+ *     Non-empty string when both are valid, else empty.
+ */
+function prefetchFingerprint(cur, next) {
+  if (!cur?.magnet || next?.magnet == null || next.fileIdx == null) return "";
+  return `${cur.magnet}\0${cur.fileIdx}\0${next.magnet}\0${next.fileIdx}`;
+}
 
 /**
  * Formats estimated wait time in seconds as a short Russian phrase.
@@ -162,6 +202,15 @@ watch(
   () => [props.track?.magnet, props.track?.fileIdx],
   () => {
     prepareAttempt.value = 0;
+    prefetchOkFingerprint.value = "";
+    const nk = props.track ? queueTrackKey(props.track) : "";
+    if (prefetchedStream.value.url && prefetchedStream.value.forKey !== nk) {
+      void releaseTorrentStreamUrl(prefetchedStream.value.url);
+      prefetchedStream.value = { url: "", forKey: "" };
+    }
+    if (prefetchInFlight) {
+      void torrentPrepareCancel();
+    }
   }
 );
 
@@ -472,6 +521,62 @@ function bufferPollTick() {
   }
 }
 
+/**
+ * Starts background prefetch of the next queue item after enough playback time.
+ *
+ * Triggers when playback is stable (`ready`), position is past ~30s or ~22% of duration,
+ * and the current→next pair has not been prefetched yet this track.
+ */
+async function maybeTriggerPrefetch() {
+  if (!props.nextTrack || !props.track) return;
+  if (!playing.value) return;
+  if (streamPhase.value !== "ready") return;
+  if (isLoading.value) return;
+  const d = duration.value;
+  const c = current.value;
+  if (!Number.isFinite(d) || d <= 0) return;
+  if (c < PREFETCH_MIN_SEC && c / d < PREFETCH_MIN_RATIO) return;
+
+  const fp = prefetchFingerprint(props.track, props.nextTrack);
+  if (!fp || fp === prefetchOkFingerprint.value) return;
+  if (prefetchInFlight) return;
+
+  prefetchInFlight = true;
+  void appDebugLog("player", "prefetch next start", { fpPreview: fp.slice(0, 96) });
+  try {
+    const result = await prefetchNextInQueue(props.track, props.nextTrack);
+    if (result?.kind === "streamReady" && result.url) {
+      prefetchedStream.value = {
+        url: result.url,
+        forKey: queueTrackKey(props.nextTrack),
+      };
+    }
+  } catch (e) {
+    void appDebugLog("player", "prefetch next error", {
+      message: e?.message ?? String(e ?? ""),
+    });
+  } finally {
+    prefetchOkFingerprint.value = fp;
+    prefetchInFlight = false;
+  }
+}
+
+watch(
+  () => [
+    playing.value,
+    current.value,
+    duration.value,
+    streamPhase.value,
+    isLoading.value,
+    props.nextTrack,
+    props.track?.magnet,
+    props.track?.fileIdx,
+  ],
+  () => {
+    void maybeTriggerPrefetch();
+  }
+);
+
 watch(
   () => [
     props.track?.magnet,
@@ -529,10 +634,18 @@ watch(
       suppressAutoplay: props.suppressAutoplay,
     });
     try {
-      const nextSrc = await streamUrl(magnet, fileIdx, {
-        source: props.track?.source,
-        torrentId: props.track?.torrentId,
-      });
+      const preparedKey = queueTrackKey(props.track);
+      let nextSrc = "";
+      if (prefetchedStream.value.url && prefetchedStream.value.forKey === preparedKey) {
+        nextSrc = prefetchedStream.value.url;
+        prefetchedStream.value = { url: "", forKey: "" };
+        void appDebugLog("player", "stream prepare used prefetched URL", { fileIdx });
+      } else {
+        nextSrc = await streamUrl(magnet, fileIdx, {
+          source: props.track?.source,
+          torrentId: props.track?.torrentId,
+        });
+      }
       void appDebugLog("player", "stream prepare await done", {
         fileIdx,
         hasUrl: Boolean(nextSrc),
@@ -607,6 +720,10 @@ onMounted(async () => {
   }
 });
 onUnmounted(() => {
+  if (prefetchedStream.value.url) {
+    void releaseTorrentStreamUrl(prefetchedStream.value.url);
+    prefetchedStream.value = { url: "", forKey: "" };
+  }
   stopBufferPoll();
   unlistenPrepareProgress();
   clearMediaSessionHandlers();

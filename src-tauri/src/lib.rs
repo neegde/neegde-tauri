@@ -91,6 +91,7 @@ pub fn run() {
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
             torrent_stream::torrent_prepare_stream,
+            torrent_stream::torrent_prefetch_next_track,
             torrent_stream::torrent_prepare_cancel,
             torrent_stream::torrent_dispose_preview,
             torrent_stream::torrent_release_stream,

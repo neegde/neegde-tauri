@@ -25,7 +25,7 @@ use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
-use super::types::{PreparedStream, StreamReady};
+use super::types::{PrefetchNextResponse, PreparedStream, StreamReady};
 use super::{PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
 
 /// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
@@ -105,6 +105,35 @@ fn torrent_stats_for_debug(s: &TorrentStats) -> serde_json::Value {
         "live": live,
         "error": s.error,
     })
+}
+
+fn resolve_info_hash_from_magnet_or_file(
+    magnet: &str,
+    torrent_file: Option<&[u8]>,
+) -> Result<Id20, String> {
+    if let Some(tf) = torrent_file {
+        if tf.is_empty() {
+            return resolve_info_hash_from_magnet_or_file(magnet, None);
+        }
+        let parsed = torrent_from_bytes_ext::<ByteBuf>(tf)
+            .map_err(|e| format!("Неверный .torrent: {e:#}"))?;
+        let ih = parsed.meta.info_hash;
+        if !magnet.trim().is_empty() {
+            let m = Magnet::parse(magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+            if let Some(mh) = m.as_id20() {
+                if mh != ih {
+                    return Err("Magnet и .torrent: разный info hash".into());
+                }
+            }
+        }
+        Ok(ih)
+    } else if magnet.trim().is_empty() {
+        Err("Пустой magnet".into())
+    } else {
+        let m = Magnet::parse(magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+        m.as_id20()
+            .ok_or_else(|| "В magnet нет BTIH".to_string())
+    }
 }
 
 fn build_prepare_progress_payload(
@@ -277,38 +306,25 @@ impl TorrentStreamState {
         magnet: String,
         file_idx: usize,
         torrent_file: Option<Vec<u8>>,
+        emit_prepare_progress: bool,
     ) -> Result<StreamReady, String> {
         self.inner
             .prepare_cancel_requested
             .store(false, Ordering::SeqCst);
         let torrent_file = torrent_file.filter(|b| !b.is_empty());
 
-        let info_hash = if let Some(ref tf) = torrent_file {
-            let parsed = torrent_from_bytes_ext::<ByteBuf>(tf.as_slice())
-                .map_err(|e| format!("Неверный .torrent: {e:#}"))?;
-            let ih = parsed.meta.info_hash;
-            if !magnet.trim().is_empty() {
-                let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
-                if let Some(mh) = m.as_id20() {
-                    if mh != ih {
-                        return Err("Magnet и .torrent: разный info hash".into());
-                    }
-                }
-            }
-            ih
-        } else {
-            if magnet.trim().is_empty() {
-                return Err("Пустой magnet".into());
-            }
-            let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
-            m.as_id20()
-                .ok_or_else(|| "В magnet нет BTIH".to_string())?
-        };
+        let info_hash = resolve_info_hash_from_magnet_or_file(&magnet, torrent_file.as_deref())?;
 
         self.inner.stream_cache.begin_prepare(info_hash).await;
         let magnet_for_log = magnet.clone();
         let result = self
-            .prepare_inner(magnet, file_idx, info_hash, torrent_file)
+            .prepare_inner(
+                magnet,
+                file_idx,
+                info_hash,
+                torrent_file,
+                emit_prepare_progress,
+            )
             .await;
         self.inner.stream_cache.end_prepare(info_hash).await;
         if let Err(ref e) = result {
@@ -326,12 +342,55 @@ impl TorrentStreamState {
         result
     }
 
+    pub(super) async fn prefetch_next_track(
+        &self,
+        current_magnet: String,
+        current_file_idx: usize,
+        next_magnet: String,
+        next_file_idx: usize,
+        next_torrent_file: Option<Vec<u8>>,
+    ) -> Result<PrefetchNextResponse, String> {
+        let next_tf = next_torrent_file.filter(|b| !b.is_empty());
+        let ih_cur = resolve_info_hash_from_magnet_or_file(&current_magnet, None)?;
+        let ih_next = resolve_info_hash_from_magnet_or_file(&next_magnet, next_tf.as_deref())?;
+        if ih_cur == ih_next {
+            let session = self.inner.ensure_session().await?;
+            let handle = session
+                .get(TorrentIdOrHash::Hash(ih_cur))
+                .ok_or_else(|| {
+                    "Предзагрузка: торрент ещё не в сессии стриминга".to_string()
+                })?;
+            let mut only = HashSet::new();
+            only.insert(current_file_idx);
+            only.insert(next_file_idx);
+            session
+                .update_only_files(&handle, &only)
+                .await
+                .map_err(|e| format!("Предзагрузка: {e:#}"))?;
+            self.inner.debug_log.push(
+                "prefetch",
+                "same_torrent_merge",
+                Some(json!({
+                    "currentFileIdx": current_file_idx,
+                    "nextFileIdx": next_file_idx,
+                })),
+            );
+            Ok(PrefetchNextResponse::SameTorrentMerged)
+        } else {
+            let ready = self
+                .prepare(next_magnet, next_file_idx, next_tf, false)
+                .await?;
+            Ok(PrefetchNextResponse::StreamReady { url: ready.url })
+        }
+    }
+
     async fn prepare_inner(
         &self,
         magnet: String,
         file_idx: usize,
         info_hash: Id20,
         torrent_file: Option<Vec<u8>>,
+        emit_prepare_progress: bool,
     ) -> Result<StreamReady, String> {
         self.inner.debug_log.push(
             "prepare",
@@ -490,36 +549,38 @@ impl TorrentStreamState {
         );
 
         let prep_shared = Arc::new(PrepareProgressShared::new());
-        let app_handle = self.inner.app.clone();
-        let dbg = self.inner.debug_log.clone();
-        let h_poll = handle.clone();
-        let prep_for_task = Arc::clone(&prep_shared);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(380));
-            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            loop {
-                interval.tick().await;
-                if prep_for_task.poller_stop.load(Ordering::SeqCst) {
-                    break;
+        if emit_prepare_progress {
+            let app_handle = self.inner.app.clone();
+            let dbg = self.inner.debug_log.clone();
+            let h_poll = handle.clone();
+            let prep_for_task = Arc::clone(&prep_shared);
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(380));
+                interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                loop {
+                    interval.tick().await;
+                    if prep_for_task.poller_stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let s = h_poll.stats();
+                    let pf = prep_for_task.prebuffer_filled.load(Ordering::Relaxed);
+                    let pt = prep_for_task.prebuffer_target.load(Ordering::Relaxed);
+                    let payload = build_prepare_progress_payload(&s, pf, pt);
+                    let _ = app_handle.emit("torrent-prepare-progress", &payload);
+                    if dbg.is_enabled() {
+                        dbg.push(
+                            "prepare",
+                            "stats (poller)",
+                            Some(json!({
+                                "torrent": torrent_stats_for_debug(&s),
+                                "prebufferFilled": if pt > 0 { Some(pf) } else { None },
+                                "prebufferTarget": if pt > 0 { Some(pt) } else { None },
+                            })),
+                        );
+                    }
                 }
-                let s = h_poll.stats();
-                let pf = prep_for_task.prebuffer_filled.load(Ordering::Relaxed);
-                let pt = prep_for_task.prebuffer_target.load(Ordering::Relaxed);
-                let payload = build_prepare_progress_payload(&s, pf, pt);
-                let _ = app_handle.emit("torrent-prepare-progress", &payload);
-                if dbg.is_enabled() {
-                    dbg.push(
-                        "prepare",
-                        "stats (poller)",
-                        Some(json!({
-                            "torrent": torrent_stats_for_debug(&s),
-                            "prebufferFilled": if pt > 0 { Some(pf) } else { None },
-                            "prebufferTarget": if pt > 0 { Some(pt) } else { None },
-                        })),
-                    );
-                }
-            }
-        });
+            });
+        }
         let _prep_stop_guard = PrepareStopGuard(Arc::clone(&prep_shared));
 
         self.inner.debug_log.push(

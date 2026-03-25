@@ -33,7 +33,7 @@ pub(super) const COPY_CHUNK_BYTES: usize = 64 * 1024;
 pub use state::TorrentStreamState;
 use base64::Engine;
 use serde_json::json;
-use types::StreamReady;
+use types::{PrefetchNextResponse, StreamReady};
 
 #[tauri::command]
 pub async fn torrent_prepare_stream(
@@ -61,7 +61,7 @@ pub async fn torrent_prepare_stream(
         })),
     );
     let result = state
-        .prepare(magnet.clone(), file_idx, torrent_file)
+        .prepare(magnet.clone(), file_idx, torrent_file, true)
         .await;
     if let Ok(ref ready) = result {
         state.inner.debug_log.push(
@@ -104,4 +104,34 @@ pub async fn torrent_prepare_cancel(
 ) -> Result<(), String> {
     state.prepare_cancel_trigger();
     Ok(())
+}
+
+/// Warms the next track while the current one plays: merges `only_files` for the same torrent,
+/// or runs a silent `prepare` (no UI progress events) for another magnet.
+#[tauri::command]
+pub async fn torrent_prefetch_next_track(
+    state: tauri::State<'_, TorrentStreamState>,
+    current_magnet: String,
+    current_file_idx: usize,
+    next_magnet: String,
+    next_file_idx: usize,
+    next_torrent_file_b64: Option<String>,
+) -> Result<PrefetchNextResponse, String> {
+    let next_torrent_file: Option<Vec<u8>> = match next_torrent_file_b64.as_deref() {
+        None | Some("") => None,
+        Some(s) => Some(
+            base64::engine::general_purpose::STANDARD
+                .decode(s.trim())
+                .map_err(|e| format!("Неверный base64 торрент-файла: {e}"))?,
+        ),
+    };
+    state
+        .prefetch_next_track(
+            current_magnet,
+            current_file_idx,
+            next_magnet,
+            next_file_idx,
+            next_torrent_file,
+        )
+        .await
 }

@@ -6,6 +6,14 @@ pub struct StreamReady {
     pub url: String,
 }
 
+/// Result of background prefetch for the next queue item (`torrent_prefetch_next_track`).
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PrefetchNextResponse {
+    SameTorrentMerged,
+    StreamReady { url: String },
+}
+
 pub(super) struct PreparedStream {
     pub(super) stream: Box<dyn AsyncReadSeek>,
     pub(super) prebuffer: Vec<u8>,

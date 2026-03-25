@@ -39,6 +39,10 @@ const queuePos = ref(
     : 0
 );
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
+const nextInQueue = computed(() => {
+  if (queuePos.value >= queue.value.length - 1) return null;
+  return queue.value[queuePos.value + 1];
+});
 
 watch(
   [queue, queuePos],
@@ -928,6 +932,7 @@ function handleNavBack() {
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
       :track="nowPlaying"
+      :next-track="nextInQueue"
       :suppress-autoplay="suppressAutoplayAfterSessionRestore"
       :has-prev="queuePos > 0"
       :has-next="queuePos < queue.length - 1"
