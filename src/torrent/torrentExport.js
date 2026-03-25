@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, message } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 
 /**
  * @typedef {Object} ExportProgress
@@ -63,7 +64,7 @@ export async function exportTorrentFiles(magnet, fileIndices, fileNames, onProgr
     });
 
     const result = await invoke("torrent_export_files", {
-      magnet,
+      magnet: enrichMagnetWithOpenTrackers(magnet),
       fileIndices: indices,
       destDir,
       fileNames: names,

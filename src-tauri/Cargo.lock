@@ -2664,6 +2664,7 @@ name = "neegde"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bytes",
  "encoding_rs",
  "librqbit",
  "reqwest 0.12.28",

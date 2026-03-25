@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 
 /** @type {Map<string, Promise<string | null>>} */
 const pending = new Map();
@@ -25,7 +26,10 @@ export async function getTorrentImageDataUrl(magnet, fileIdx) {
 
   let p = pending.get(key);
   if (!p) {
-    p = invoke("torrent_fetch_image", { magnet, fileIdx })
+    p = invoke("torrent_fetch_image", {
+      magnet: enrichMagnetWithOpenTrackers(magnet),
+      fileIdx,
+    })
       .then((u) => {
         const v = u ?? null;
         if (v) cache.set(key, v);

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onUnmounted } from "vue";
+import { ref, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import {
   isAudio,
@@ -11,8 +11,8 @@ import {
   detectAlbums,
   sumFileSizes,
   MAX_TORRENT_COVER_BYTES,
+  enrichMagnetWithOpenTrackers,
 } from "../../lib/utils.js";
-import { disposeTorrentPreview } from "../../torrent/torrentSession.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 
@@ -187,13 +187,6 @@ const spotifyArtist = computed(() => {
   return "Неизвестный исполнитель";
 });
 
-watch(
-  () => props.magnet,
-  () => {
-    disposeTorrentPreview();
-  }
-);
-
 function prefetchAlbumCovers() {
   const m = props.magnet?.trim();
   if (!m || props.loading || !props.files?.length) return;
@@ -217,8 +210,9 @@ function prefetchAlbumCovers() {
   if (key === lastCoverPrefetchKey.value) return;
   lastCoverPrefetchKey.value = key;
 
+  const magnetEnriched = enrichMagnetWithOpenTrackers(m);
   for (const fileIdx of indices) {
-    invoke("torrent_fetch_image", { magnet: m, fileIdx }).catch(() => {});
+    invoke("torrent_fetch_image", { magnet: magnetEnriched, fileIdx }).catch(() => {});
   }
 }
 
@@ -230,9 +224,6 @@ watch(
   { flush: "post" }
 );
 
-onUnmounted(() => {
-  disposeTorrentPreview();
-});
 </script>
 
 <template>

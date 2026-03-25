@@ -79,6 +79,31 @@ export function makeMagnet(hash, name) {
   return `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(name)}&${tr}`;
 }
 
+/**
+ * Appends public UDP trackers to a magnet from an indexer page so clients can find peers when
+ * the page only listed a single announce URL (e.g. Rutracker HTML magnet).
+ *
+ * Args:
+ *     magnet: Raw magnet string.
+ *
+ * Returns:
+ *     Magnet with extra `&tr=` params, or the input if not a btih magnet.
+ */
+export function enrichMagnetWithOpenTrackers(magnet) {
+  if (!magnet || typeof magnet !== "string" || !magnet.includes("btih:")) {
+    return magnet;
+  }
+  let out = magnet.trim();
+  for (const tr of TRACKERS) {
+    const enc = encodeURIComponent(tr);
+    if (out.includes(`tr=${enc}`) || out.includes(tr)) {
+      continue;
+    }
+    out += `&tr=${enc}`;
+  }
+  return out;
+}
+
 export function fmtSize(bytes) {
   const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
   let n = Number(bytes);

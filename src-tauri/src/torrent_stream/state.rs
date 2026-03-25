@@ -1,6 +1,9 @@
+use bytes::Bytes;
+use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::Id20;
+use librqbit::torrent_from_bytes_ext;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Magnet, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ByteBuf, Magnet, Session, SessionOptions,
     TorrentStats, TorrentStatsState,
 };
 use serde::Serialize;
@@ -23,7 +26,7 @@ use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
 use super::types::{PreparedStream, StreamReady};
-use super::PREBUFFER_BYTES;
+use super::{PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
 
 /// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
 #[derive(Serialize, Clone)]
@@ -273,19 +276,40 @@ impl TorrentStreamState {
         &self,
         magnet: String,
         file_idx: usize,
+        torrent_file: Option<Vec<u8>>,
     ) -> Result<StreamReady, String> {
         self.inner
             .prepare_cancel_requested
             .store(false, Ordering::SeqCst);
-        if magnet.trim().is_empty() {
-            return Err("Пустой magnet".into());
-        }
-        let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
-        let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
+        let torrent_file = torrent_file.filter(|b| !b.is_empty());
+
+        let info_hash = if let Some(ref tf) = torrent_file {
+            let parsed = torrent_from_bytes_ext::<ByteBuf>(tf.as_slice())
+                .map_err(|e| format!("Неверный .torrent: {e:#}"))?;
+            let ih = parsed.meta.info_hash;
+            if !magnet.trim().is_empty() {
+                let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+                if let Some(mh) = m.as_id20() {
+                    if mh != ih {
+                        return Err("Magnet и .torrent: разный info hash".into());
+                    }
+                }
+            }
+            ih
+        } else {
+            if magnet.trim().is_empty() {
+                return Err("Пустой magnet".into());
+            }
+            let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+            m.as_id20()
+                .ok_or_else(|| "В magnet нет BTIH".to_string())?
+        };
 
         self.inner.stream_cache.begin_prepare(info_hash).await;
         let magnet_for_log = magnet.clone();
-        let result = self.prepare_inner(magnet, file_idx, info_hash).await;
+        let result = self
+            .prepare_inner(magnet, file_idx, info_hash, torrent_file)
+            .await;
         self.inner.stream_cache.end_prepare(info_hash).await;
         if let Err(ref e) = result {
             self.inner.debug_log.push(
@@ -307,6 +331,7 @@ impl TorrentStreamState {
         magnet: String,
         file_idx: usize,
         info_hash: Id20,
+        torrent_file: Option<Vec<u8>>,
     ) -> Result<StreamReady, String> {
         self.inner.debug_log.push(
             "prepare",
@@ -349,47 +374,80 @@ impl TorrentStreamState {
             ..Default::default()
         };
 
-        self.inner.debug_log.push(
-            "prepare",
-            "add_torrent (magnet + only_files)",
-            Some(json!({
-                "fileIdx": file_idx,
-                "magnetLen": magnet.len(),
-                "magnet": &magnet,
-            })),
-        );
         let t_add = Instant::now();
         let add_torrent_await_done = Arc::new(AtomicBool::new(false));
-        if self.inner.debug_log.is_enabled() {
-            let dbg_hb = self.inner.debug_log.clone();
-            let done_flag = Arc::clone(&add_torrent_await_done);
-            let info_hash_str = info_hash.as_string();
-            let magnet_hb = magnet.clone();
-            let t0 = t_add;
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    if done_flag.load(Ordering::SeqCst) {
-                        break;
+
+        // `session.add_torrent` resolves metadata before noticing AlreadyManaged; `get` avoids repeat work.
+        let added = if let Some(existing) = session.get(TorrentIdOrHash::Hash(info_hash)) {
+            add_torrent_await_done.store(true, Ordering::SeqCst);
+            self.inner.debug_log.push(
+                "prepare",
+                "reuse managed torrent (skip add_torrent)",
+                Some(json!({
+                    "fileIdx": file_idx,
+                    "infoHash": info_hash.as_string(),
+                    "magnet": &magnet,
+                })),
+            );
+            AddTorrentResponse::AlreadyManaged(existing.id(), existing)
+        } else {
+            let from_bytes = torrent_file.is_some();
+            self.inner.debug_log.push(
+                "prepare",
+                if from_bytes {
+                    "add_torrent (.torrent bytes + only_files)"
+                } else {
+                    "add_torrent (magnet + only_files)"
+                },
+                Some(json!({
+                    "fileIdx": file_idx,
+                    "magnetLen": magnet.len(),
+                    "magnet": &magnet,
+                    "fromTorrentBytes": from_bytes,
+                })),
+            );
+            if self.inner.debug_log.is_enabled() && !from_bytes {
+                let dbg_hb = self.inner.debug_log.clone();
+                let done_flag = Arc::clone(&add_torrent_await_done);
+                let info_hash_str = info_hash.as_string();
+                let magnet_hb = magnet.clone();
+                let t0 = t_add;
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        if done_flag.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        dbg_hb.push(
+                            "prepare",
+                            "add_torrent still awaiting (inside librqbit)",
+                            Some(json!({
+                                "infoHash": info_hash_str,
+                                "fileIdx": file_idx,
+                                "msInAwait": t0.elapsed().as_millis(),
+                                "magnet": magnet_hb,
+                            })),
+                        );
                     }
-                    dbg_hb.push(
-                        "prepare",
-                        "add_torrent still awaiting (inside librqbit)",
-                        Some(json!({
-                            "infoHash": info_hash_str,
-                            "fileIdx": file_idx,
-                            "msInAwait": t0.elapsed().as_millis(),
-                            "magnet": magnet_hb,
-                        })),
-                    );
-                }
-            });
-        }
-        let added = session
-            .add_torrent(AddTorrent::from_url(&magnet), Some(opts))
-            .await
-            .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?;
-        add_torrent_await_done.store(true, Ordering::SeqCst);
+                });
+            }
+            let result = match torrent_file {
+                Some(tf) => session
+                    .add_torrent(
+                        AddTorrent::TorrentFileBytes(Bytes::from(tf)),
+                        Some(opts),
+                    )
+                    .await
+                    .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?,
+                None => session
+                    .add_torrent(AddTorrent::from_url(&magnet), Some(opts))
+                    .await
+                    .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?,
+            };
+            add_torrent_await_done.store(true, Ordering::SeqCst);
+            result
+        };
+
         self.inner.debug_log.push(
             "prepare",
             "add_torrent finished",
@@ -550,22 +608,59 @@ impl TorrentStreamState {
         let mut prebuffer = vec![0u8; target];
         let mut filled = 0usize;
         const PREBUFFER_LOG_STEP: usize = 64 * 1024;
-        self.inner.debug_log.push(
-            "prepare",
-            "prebuffer loop starting",
-            Some(json!({
-                "targetBytes": target,
-                "totalLen": total_len,
-            })),
-        );
+        if target == 0 {
+            self.inner.debug_log.push(
+                "prepare",
+                "prebuffer skipped (0 B target — first bytes via HTTP)",
+                Some(json!({ "totalLen": total_len })),
+            );
+        } else {
+            self.inner.debug_log.push(
+                "prepare",
+                "prebuffer loop starting",
+                Some(json!({
+                    "targetBytes": target,
+                    "totalLen": total_len,
+                })),
+            );
+        }
         let t_pre = Instant::now();
+        let read_timeout = Duration::from_secs(PREBUFFER_READ_TIMEOUT_SECS);
+        let wall_limit = Duration::from_secs(PREBUFFER_MAX_WALL_SECS);
         while filled < target {
+            if t_pre.elapsed() >= wall_limit {
+                self.inner.debug_log.push(
+                    "prepare",
+                    "prebuffer wall time limit",
+                    Some(json!({
+                        "filled": filled,
+                        "target": target,
+                        "msSoFar": t_pre.elapsed().as_millis(),
+                    })),
+                );
+                break;
+            }
             self.check_prepare_cancel()?;
             let before = filled;
-            let n = stream
-                .read(&mut prebuffer[filled..target])
-                .await
-                .map_err(|e| format!("Ошибка предварительной буферизации: {e:#}"))?;
+            let read_fut = stream.read(&mut prebuffer[filled..target]);
+            let n = match tokio::time::timeout(read_timeout, read_fut).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => {
+                    return Err(format!("Ошибка предварительной буферизации: {e:#}"));
+                }
+                Err(_) => {
+                    self.inner.debug_log.push(
+                        "prepare",
+                        "prebuffer stalled (read timeout)",
+                        Some(json!({
+                            "filled": filled,
+                            "target": target,
+                            "msSoFar": t_pre.elapsed().as_millis(),
+                        })),
+                    );
+                    break;
+                }
+            };
             if n == 0 {
                 self.inner.debug_log.push(
                     "prepare",
@@ -647,6 +742,24 @@ impl TorrentStreamState {
             .push("lifecycle", "dispose preview (clear streams)", None);
         self.inner.stream_cache.clear_stream_tokens().await;
         self.inner.streams.lock().await.clear();
+    }
+
+    /// Removes one prepared HTTP stream so its token stops resolving (LRU can evict the torrent).
+    pub(super) async fn release_stream_token(&self, token: &str) {
+        let removed = {
+            let mut map = self.inner.streams.lock().await;
+            map.remove(token).is_some()
+        };
+        if removed {
+            self.inner.stream_cache.unregister_stream_token(token).await;
+            self.inner.debug_log.push(
+                "lifecycle",
+                "release stream token",
+                Some(json!({
+                    "token": token.chars().take(32).collect::<String>(),
+                })),
+            );
+        }
     }
 
     /// Removes all torrents and their files when the app process exits.

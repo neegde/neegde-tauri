@@ -5,7 +5,7 @@ import CoverThumb from "../shared/CoverThumb.vue";
 import { streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename } from "../../lib/utils.js";
 import {
-  disposeTorrentPreview,
+  releaseTorrentStreamUrl,
   torrentPrepareCancel,
 } from "../../torrent/torrentSession.js";
 import {
@@ -181,7 +181,7 @@ function cancelLoad() {
   void appDebugLog("player", "cancelLoad", { source: "user" });
   loadCancelledByUser.value = true;
   void torrentPrepareCancel();
-  void disposeTorrentPreview();
+  void releaseTorrentStreamUrl(src.value);
   stopBufferPoll();
   src.value = "";
   current.value = 0;
@@ -473,6 +473,7 @@ watch(
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
+      void releaseTorrentStreamUrl(src.value);
       src.value = "";
       current.value = 0;
       duration.value = 0;
@@ -487,6 +488,7 @@ watch(
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
+      void releaseTorrentStreamUrl(src.value);
       src.value = "";
       current.value = 0;
       duration.value = 0;
@@ -500,6 +502,7 @@ watch(
     loadCancelledByUser.value = false;
     prepareProgress.value = null;
     playing.value = false;
+    void releaseTorrentStreamUrl(src.value);
     src.value = "";
     current.value = 0;
     duration.value = 0;
@@ -515,7 +518,10 @@ watch(
       suppressAutoplay: props.suppressAutoplay,
     });
     try {
-      const nextSrc = await streamUrl(magnet, fileIdx);
+      const nextSrc = await streamUrl(magnet, fileIdx, {
+        source: props.track?.source,
+        torrentId: props.track?.torrentId,
+      });
       void appDebugLog("player", "stream prepare await done", {
         fileIdx,
         hasUrl: Boolean(nextSrc),

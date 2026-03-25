@@ -1,7 +1,12 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { isImage, basename, MAX_TORRENT_COVER_BYTES } from "../../lib/utils.js";
+import {
+  isImage,
+  basename,
+  MAX_TORRENT_COVER_BYTES,
+  enrichMagnetWithOpenTrackers,
+} from "../../lib/utils.js";
 import CoverLightbox from "../shared/CoverLightbox.vue";
 
 const props = defineProps({
@@ -76,7 +81,7 @@ async function loadCover() {
     fetching.value = true;
     try {
       const url = await invoke("torrent_fetch_image", {
-        magnet:  props.magnet,
+        magnet: enrichMagnetWithOpenTrackers(props.magnet),
         fileIdx: f.origIdx,
       });
       if (gen !== loadGen) return;

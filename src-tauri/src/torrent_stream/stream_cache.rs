@@ -107,6 +107,20 @@ impl StreamCache {
         }
     }
 
+    /// Drops one HTTP token from ref bookkeeping (call after removing the stream from `streams`).
+    pub async fn unregister_stream_token(&self, token: &str) {
+        let mut g = self.inner.lock().await;
+        let Some(h) = g.token_to_hash.remove(token) else {
+            return;
+        };
+        if let Some(c) = g.ref_count.get_mut(&h) {
+            *c = c.saturating_sub(1);
+            if *c == 0 {
+                g.ref_count.remove(&h);
+            }
+        }
+    }
+
     /// Evicts least-recently-used idle torrents when over budget or past TTL.
     ///
     /// Args:

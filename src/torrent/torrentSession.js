@@ -1,11 +1,25 @@
 /**
- * Reserved for cleaning up torrent streaming / preview state when leaving a release
- * or switching magnet.
+ * Torrent HTTP stream tokens (local player URL). Prefer `releaseTorrentStreamUrl` when clearing
+ * `src` — do not call `torrent_dispose_preview` from navigation; it clears all tokens and breaks
+ * background playback.
  */
 import { invoke } from "@tauri-apps/api/core";
 
+/** Clears every registered stream (e.g. cache purge). Not for normal navigation. */
 export function disposeTorrentPreview() {
   return invoke("torrent_dispose_preview").catch(() => {});
+}
+
+/** Frees one stream by URL path token so LRU can evict the torrent. */
+export function releaseTorrentStreamUrl(url) {
+  if (!url || typeof url !== "string") return Promise.resolve();
+  const marker = "/stream/";
+  const i = url.indexOf(marker);
+  if (i < 0) return Promise.resolve();
+  const rest = url.slice(i + marker.length);
+  const token = rest.split(/[/?#]/)[0];
+  if (!token) return Promise.resolve();
+  return invoke("torrent_release_stream", { token }).catch(() => {});
 }
 
 /** Просит бэкенд прервать долгий `torrent_prepare_stream` (prebuffer). */
