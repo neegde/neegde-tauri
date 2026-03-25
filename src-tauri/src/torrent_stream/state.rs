@@ -1,10 +1,12 @@
+use librqbit::dht::Id20;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, TorrentStats,
-    TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Magnet, Session, SessionOptions,
+    TorrentStats, TorrentStatsState,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -12,9 +14,12 @@ use tauri::Emitter;
 use tauri::Manager;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::MissedTickBehavior;
 
+use crate::cache_settings::{cache_settings_path, UserCacheSettings};
+
+use super::stream_cache::StreamCache;
 use super::types::{PreparedStream, StreamReady};
 use super::PREBUFFER_BYTES;
 
@@ -91,9 +96,7 @@ fn build_prepare_progress_payload(
         (
             Some(live.download_speed.mbps),
             Some(live.upload_speed.mbps),
-            live.time_remaining
-                .as_ref()
-                .map(|t| format!("{}", t)),
+            live.time_remaining.as_ref().map(|t| format!("{}", t)),
         )
     } else {
         (None, None, None)
@@ -130,16 +133,6 @@ fn build_prepare_progress_payload(
     }
 }
 
-/// Dev (`tauri dev`) and release (installed `.app`) must not share the same on-disk torrent tree:
-/// two processes would fight over the same files (`error opening … in read/write mode`).
-fn torrent_streams_dir_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        "torrent_streams_dev"
-    } else {
-        "torrent_streams"
-    }
-}
-
 pub struct TorrentStreamState {
     pub(super) inner: Arc<TorrentStreamInner>,
 }
@@ -150,6 +143,8 @@ pub(super) struct TorrentStreamInner {
     pub(super) server_addr: Mutex<Option<SocketAddr>>,
     pub(super) streams: Mutex<HashMap<String, Arc<Mutex<PreparedStream>>>>,
     pub(super) token_counter: AtomicU64,
+    pub(super) stream_cache: Arc<StreamCache>,
+    pub(super) cache_settings: Arc<RwLock<UserCacheSettings>>,
     /// Запрос остановки текущего `torrent_export_files` (из UI).
     pub(super) export_cancel_requested: Arc<AtomicBool>,
     /// Отмена долгого `torrent_prepare_stream` (prebuffer и т.д.).
@@ -158,6 +153,7 @@ pub(super) struct TorrentStreamInner {
 
 impl TorrentStreamState {
     pub fn new(app: tauri::AppHandle) -> Self {
+        let cache_settings = Arc::new(RwLock::new(UserCacheSettings::default()));
         Self {
             inner: Arc::new(TorrentStreamInner {
                 app,
@@ -165,18 +161,69 @@ impl TorrentStreamState {
                 server_addr: Mutex::new(None),
                 streams: Mutex::new(HashMap::new()),
                 token_counter: AtomicU64::new(1),
+                stream_cache: Arc::new(StreamCache::new(cache_settings.clone())),
+                cache_settings,
                 export_cancel_requested: Arc::new(AtomicBool::new(false)),
                 prepare_cancel_requested: Arc::new(AtomicBool::new(false)),
             }),
         }
     }
 
+    /// Returns the current user cache limits (RAM limits are not included).
+    pub async fn user_cache_settings(&self) -> UserCacheSettings {
+        self.inner.cache_settings.read().await.clone()
+    }
+
+    /// Returns `(max_bytes, ttl_secs)` for diagnostics without exposing `inner`.
+    pub async fn stream_cache_policy_limits(&self) -> (u64, u64) {
+        let g = self.inner.cache_settings.read().await;
+        (g.stream_cache_max_bytes, g.stream_cache_ttl_secs)
+    }
+
+    /// Validates, persists, and applies new cache limits.
+    pub async fn apply_user_cache_settings(
+        &self,
+        settings: UserCacheSettings,
+    ) -> Result<(), String> {
+        settings.validate()?;
+        let path = cache_settings_path(&self.inner.app)?;
+        settings.save_to_disk(&path)?;
+        *self.inner.cache_settings.write().await = settings;
+        self.reclaim_stream_cache_best_effort().await;
+        Ok(())
+    }
+
+    /// Loads `cache_settings.json` or keeps defaults when missing or invalid.
+    pub async fn load_cache_settings_from_disk(&self) -> Result<(), String> {
+        let path = cache_settings_path(&self.inner.app)?;
+        let mut s = UserCacheSettings::load_from_disk(&path);
+        if s.validate().is_err() {
+            s = UserCacheSettings::default();
+        }
+        *self.inner.cache_settings.write().await = s;
+        Ok(())
+    }
+
+    /// Clears streaming sessions, removes all torrent payload under the stream folder, and recreates it.
+    pub async fn purge_streaming_cache_disk(&self) -> Result<(), String> {
+        self.dispose().await;
+        let mut guard = self.inner.session.lock().await;
+        if let Some(s) = guard.take() {
+            super::stream_cache::purge_session_torrents(&s).await;
+        }
+        drop(guard);
+        let base = self.inner.stream_torrents_base()?;
+        if base.exists() {
+            std::fs::remove_dir_all(&base)
+                .map_err(|e| format!("Не удалось очистить каталог стриминга: {e}"))?;
+        }
+        std::fs::create_dir_all(&base)
+            .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;
+        Ok(())
+    }
+
     fn check_prepare_cancel(&self) -> Result<(), String> {
-        if self
-            .inner
-            .prepare_cancel_requested
-            .load(Ordering::SeqCst)
-        {
+        if self.inner.prepare_cancel_requested.load(Ordering::SeqCst) {
             self.inner
                 .prepare_cancel_requested
                 .store(false, Ordering::SeqCst);
@@ -185,15 +232,39 @@ impl TorrentStreamState {
         Ok(())
     }
 
-    pub(super) async fn prepare(&self, magnet: String, file_idx: usize) -> Result<StreamReady, String> {
+    pub(super) async fn prepare(
+        &self,
+        magnet: String,
+        file_idx: usize,
+    ) -> Result<StreamReady, String> {
         self.inner
             .prepare_cancel_requested
             .store(false, Ordering::SeqCst);
         if magnet.trim().is_empty() {
             return Err("Пустой magnet".into());
         }
+        let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+        let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
+
+        self.inner.stream_cache.begin_prepare(info_hash).await;
+        let result = self.prepare_inner(magnet, file_idx, info_hash).await;
+        self.inner.stream_cache.end_prepare(info_hash).await;
+        result
+    }
+
+    async fn prepare_inner(
+        &self,
+        magnet: String,
+        file_idx: usize,
+        info_hash: Id20,
+    ) -> Result<StreamReady, String> {
         let addr = self.inner.ensure_http_server().await?;
         let session = self.inner.ensure_session().await?;
+        let base_dir = self.inner.stream_torrents_base()?;
+        self.inner
+            .stream_cache
+            .maybe_reclaim(&session, &base_dir)
+            .await;
 
         let opts = AddTorrentOptions {
             only_files: Some(vec![file_idx]),
@@ -308,6 +379,10 @@ impl TorrentStreamState {
         // (e.g. preview images + player). Clearing here can invalidate the URL that
         // was just returned to the player before <audio> makes its first HTTP request.
         map.insert(token.clone(), prepared);
+        self.inner
+            .stream_cache
+            .register_stream_token(token.clone(), info_hash)
+            .await;
 
         Ok(StreamReady {
             url: format!("http://{addr}/stream/{token}"),
@@ -315,7 +390,43 @@ impl TorrentStreamState {
     }
 
     pub(super) async fn dispose(&self) {
+        self.inner.stream_cache.clear_stream_tokens().await;
         self.inner.streams.lock().await.clear();
+    }
+
+    /// Removes all torrents and their files when the app process exits.
+    pub async fn purge_torrent_data_on_exit(&self) {
+        let session = self.inner.session.lock().await;
+        if let Some(s) = session.as_ref() {
+            super::stream_cache::purge_session_torrents(s.as_ref()).await;
+        }
+    }
+
+    /// Returns how many torrents are registered in the streaming session (0 if not started).
+    ///
+    /// Returns:
+    ///     Count of torrents in the librqbit session, or 0 if the session was never created.
+    pub async fn streaming_torrent_count(&self) -> u32 {
+        let guard = self.inner.session.lock().await;
+        if let Some(s) = guard.as_ref() {
+            s.with_torrents(|iter| iter.count() as u32)
+        } else {
+            0
+        }
+    }
+
+    /// Triggers cache eviction if the session exists; ignores errors.
+    ///
+    /// Used after export and on app startup so TTL and the byte cap apply to torrents
+    /// that survived in the librqbit session (for example after a crash before exit purge).
+    pub async fn reclaim_stream_cache_best_effort(&self) {
+        let Ok(session) = self.torrent_session().await else {
+            return;
+        };
+        let Ok(base) = self.inner.stream_torrents_base() else {
+            return;
+        };
+        self.inner.stream_cache.maybe_reclaim(&session, &base).await;
     }
 
     pub(crate) async fn torrent_session(&self) -> Result<Arc<Session>, String> {
@@ -335,9 +446,7 @@ impl TorrentStreamState {
     }
 
     pub(crate) fn export_cancel_triggered(&self) -> bool {
-        self.inner
-            .export_cancel_requested
-            .load(Ordering::SeqCst)
+        self.inner.export_cancel_requested.load(Ordering::SeqCst)
     }
 
     /// Запрос отмены из UI (кнопка «стоп» во время подготовки потока).
@@ -349,6 +458,16 @@ impl TorrentStreamState {
 }
 
 impl TorrentStreamInner {
+    /// Returns the filesystem directory used for the streaming librqbit session.
+    pub(super) fn stream_torrents_base(&self) -> Result<PathBuf, String> {
+        Ok(self
+            .app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Не удалось получить app_data_dir: {e}"))?
+            .join(super::torrent_streams_dir_label()))
+    }
+
     pub(super) async fn ensure_session(&self) -> Result<Arc<Session>, String> {
         let mut guard = self.session.lock().await;
         if let Some(existing) = &*guard {
@@ -360,7 +479,7 @@ impl TorrentStreamInner {
             .path()
             .app_data_dir()
             .map_err(|e| format!("Не удалось получить app_data_dir: {e}"))?
-            .join(torrent_streams_dir_name());
+            .join(super::torrent_streams_dir_label());
         std::fs::create_dir_all(&base_dir)
             .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;
 
@@ -370,6 +489,7 @@ impl TorrentStreamInner {
             base_dir,
             SessionOptions {
                 disable_dht_persistence: true,
+                defer_writes_up_to: Some(32),
                 ..Default::default()
             },
         )

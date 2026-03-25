@@ -249,7 +249,10 @@ fn parse_val(data: &[u8], pos: usize) -> Result<(BVal, usize), String> {
         Some(b'l') => parse_list(data, pos),
         Some(b'd') => parse_dict(data, pos),
         Some(b'0'..=b'9') => parse_bytes(data, pos),
-        Some(b) => Err(format!("Unknown bencode byte 0x{:02x} at offset {}", b, pos)),
+        Some(b) => Err(format!(
+            "Unknown bencode byte 0x{:02x} at offset {}",
+            b, pos
+        )),
         None => Err("Unexpected end of torrent data".into()),
     }
 }

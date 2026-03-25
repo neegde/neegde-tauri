@@ -24,6 +24,7 @@ base64 = "0.22"
 librqbit = "8.1.1"
 rlimit = "0.10"
 tokio = { version = "1.50.0", features = ["net", "io-util", "sync", "time"] }
+sysinfo = "0.32"
 
 [profile.release]
 panic = "abort"

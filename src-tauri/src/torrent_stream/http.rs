@@ -94,16 +94,14 @@ fn parse_range_header(v: &str) -> Option<(u64, Option<u64>)> {
     let bytes = value.strip_prefix("bytes=")?;
     let mut parts = bytes.splitn(2, '-');
     let start = parts.next()?.trim().parse::<u64>().ok()?;
-    let end = parts
-        .next()
-        .and_then(|s| {
-            let t = s.trim();
-            if t.is_empty() {
-                None
-            } else {
-                t.parse::<u64>().ok()
-            }
-        });
+    let end = parts.next().and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            t.parse::<u64>().ok()
+        }
+    });
     Some((start, end))
 }
 

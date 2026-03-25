@@ -1,7 +1,19 @@
 pub mod export;
 mod http;
 mod state;
+mod stream_cache;
 mod types;
+
+pub use stream_cache::{directory_size_bytes, purge_session_torrents};
+
+/// Subfolder under app data for the streaming librqbit session (debug vs release).
+pub fn torrent_streams_dir_label() -> &'static str {
+    if cfg!(debug_assertions) {
+        "torrent_streams_dev"
+    } else {
+        "torrent_streams"
+    }
+}
 
 pub(super) const PREBUFFER_BYTES: usize = 512 * 1024;
 pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
@@ -35,7 +47,9 @@ pub async fn torrent_dispose_preview(
 }
 
 #[tauri::command]
-pub async fn torrent_prepare_cancel(state: tauri::State<'_, TorrentStreamState>) -> Result<(), String> {
+pub async fn torrent_prepare_cancel(
+    state: tauri::State<'_, TorrentStreamState>,
+) -> Result<(), String> {
     state.prepare_cancel_trigger();
     Ok(())
 }

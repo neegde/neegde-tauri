@@ -81,10 +81,7 @@ fn unique_dest_path(dest_dir: &Path, base_name: &str) -> PathBuf {
         return dest;
     }
     let path = Path::new(base_name);
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("file");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -112,9 +109,7 @@ async fn ensure_torrent_with_single_file(
     file_idx: usize,
 ) -> Result<Arc<ManagedTorrent>, String> {
     let m = Magnet::parse(magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
-    let info_hash = m
-        .as_id20()
-        .ok_or_else(|| "В magnet нет BTIH".to_string())?;
+    let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
     let id = TorrentIdOrHash::Hash(info_hash);
 
     if let Some(handle) = session.get(id) {
@@ -281,9 +276,7 @@ pub async fn torrent_export_files(
     let session = state.torrent_session().await?;
 
     let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
-    let info_hash = m
-        .as_id20()
-        .ok_or_else(|| "В magnet нет BTIH".to_string())?;
+    let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
 
     emit_progress(
         &app,
@@ -309,138 +302,149 @@ pub async fn torrent_export_files(
         return Err("Скачивание остановлено".into());
     }
 
-    let first_idx = file_indices[0];
-    let handle = ensure_torrent_with_single_file(&session, &magnet, first_idx).await?;
+    state.inner.stream_cache.begin_export(info_hash).await;
 
-    let api = Api::new(session.clone(), None);
-    let details = api
-        .api_torrent_details(TorrentIdOrHash::Hash(info_hash))
-        .map_err(|e| format!("Метаданные торрента: {e}"))?;
-
-    let output_folder = PathBuf::from(details.output_folder);
-    let file_list = details
-        .files
-        .ok_or_else(|| "Нет списка файлов в метаданных".to_string())?;
-
-    let mut copied = Vec::new();
-
-    for (ci, &idx) in file_indices.iter().enumerate() {
+    let export_out = async {
         if state.export_cancel_triggered() {
-            pause_torrent(&session, &handle).await;
             emit_cancelled(&app, &queue_labels);
             return Err("Скачивание остановлено".into());
         }
 
-        let label = queue_labels
-            .get(ci)
-            .cloned()
-            .unwrap_or_else(|| format!("Файл {}", idx + 1));
+        let first_idx = file_indices[0];
+        let handle = ensure_torrent_with_single_file(&session, &magnet, first_idx).await?;
 
-        if ci > 0 {
-            session
-                .update_only_files(&handle, &HashSet::from([idx]))
+        let api = Api::new(session.clone(), None);
+        let details = api
+            .api_torrent_details(TorrentIdOrHash::Hash(info_hash))
+            .map_err(|e| format!("Метаданные торрента: {e}"))?;
+
+        let output_folder = PathBuf::from(details.output_folder);
+        let file_list = details
+            .files
+            .ok_or_else(|| "Нет списка файлов в метаданных".to_string())?;
+
+        let mut copied = Vec::new();
+
+        for (ci, &idx) in file_indices.iter().enumerate() {
+            if state.export_cancel_triggered() {
+                pause_torrent(&session, &handle).await;
+                emit_cancelled(&app, &queue_labels);
+                return Err("Скачивание остановлено".into());
+            }
+
+            let label = queue_labels
+                .get(ci)
+                .cloned()
+                .unwrap_or_else(|| format!("Файл {}", idx + 1));
+
+            if ci > 0 {
+                session
+                    .update_only_files(&handle, &HashSet::from([idx]))
+                    .await
+                    .map_err(|e| format!("Не удалось переключить файл: {e}"))?;
+            }
+
+            wait_until_selected_finished(
+                &app,
+                &session,
+                &handle,
+                &*state,
+                &queue_labels,
+                ci + 1,
+                batch_total,
+                &label,
+            )
+            .await?;
+
+            if state.export_cancel_triggered() {
+                pause_torrent(&session, &handle).await;
+                emit_cancelled(&app, &queue_labels);
+                return Err("Скачивание остановлено".into());
+            }
+
+            emit_progress(
+                &app,
+                ExportProgressPayload {
+                    phase: "copying".into(),
+                    torrent_state: "live".into(),
+                    progress_bytes: 0,
+                    total_bytes: 0,
+                    pct: 100.0,
+                    queue_labels: queue_labels.clone(),
+                    message: format!("Сохранение на диск: {label}"),
+                    copy_index: Some(ci + 1),
+                    copy_total: Some(batch_total),
+                    copy_label: Some(label.clone()),
+                    batch_index: Some(ci + 1),
+                    batch_total: Some(batch_total),
+                    batch_label: Some(label.clone()),
+                },
+            );
+
+            if state.export_cancel_triggered() {
+                pause_torrent(&session, &handle).await;
+                emit_cancelled(&app, &queue_labels);
+                return Err("Скачивание остановлено".into());
+            }
+
+            let f = file_list
+                .get(idx)
+                .ok_or_else(|| format!("Неверный индекс файла: {idx}"))?;
+
+            let mut src = output_folder.clone();
+            for c in &f.components {
+                src.push(c);
+            }
+
+            if !src.is_file() {
+                return Err(format!("Файл отсутствует на диске: {}", src.display()));
+            }
+
+            let base = Path::new(&f.name)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file");
+            let dest = unique_dest_path(&dest_root, base);
+
+            if let Some(parent) = dest.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| format!("Не удалось создать каталог: {e}"))?;
+            }
+
+            tokio::fs::copy(&src, &dest)
                 .await
-                .map_err(|e| format!("Не удалось переключить файл: {e}"))?;
-        }
+                .map_err(|e| format!("Копирование {} → {}: {e}", src.display(), dest.display()))?;
 
-        wait_until_selected_finished(
-            &app,
-            &session,
-            &handle,
-            &*state,
-            &queue_labels,
-            ci + 1,
-            batch_total,
-            &label,
-        )
-        .await?;
-
-        if state.export_cancel_triggered() {
-            pause_torrent(&session, &handle).await;
-            emit_cancelled(&app, &queue_labels);
-            return Err("Скачивание остановлено".into());
+            copied.push(dest.to_string_lossy().into_owned());
         }
 
         emit_progress(
             &app,
             ExportProgressPayload {
-                phase: "copying".into(),
+                phase: "done".into(),
                 torrent_state: "live".into(),
                 progress_bytes: 0,
                 total_bytes: 0,
                 pct: 100.0,
                 queue_labels: queue_labels.clone(),
-                message: format!("Сохранение на диск: {label}"),
-                copy_index: Some(ci + 1),
-                copy_total: Some(batch_total),
-                copy_label: Some(label.clone()),
-                batch_index: Some(ci + 1),
-                batch_total: Some(batch_total),
-                batch_label: Some(label.clone()),
+                message: format!("Готово: {} файл(ов)", copied.len()),
+                copy_index: None,
+                copy_total: None,
+                copy_label: None,
+                batch_index: None,
+                batch_total: None,
+                batch_label: None,
             },
         );
 
-        if state.export_cancel_triggered() {
-            pause_torrent(&session, &handle).await;
-            emit_cancelled(&app, &queue_labels);
-            return Err("Скачивание остановлено".into());
-        }
-
-        let f = file_list
-            .get(idx)
-            .ok_or_else(|| format!("Неверный индекс файла: {idx}"))?;
-
-        let mut src = output_folder.clone();
-        for c in &f.components {
-            src.push(c);
-        }
-
-        if !src.is_file() {
-            return Err(format!(
-                "Файл отсутствует на диске: {}",
-                src.display()
-            ));
-        }
-
-        let base = Path::new(&f.name)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("file");
-        let dest = unique_dest_path(&dest_root, base);
-
-        if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| format!("Не удалось создать каталог: {e}"))?;
-        }
-
-        tokio::fs::copy(&src, &dest)
-            .await
-            .map_err(|e| format!("Копирование {} → {}: {e}", src.display(), dest.display()))?;
-
-        copied.push(dest.to_string_lossy().into_owned());
+        Ok(TorrentExportResult { copied })
     }
+    .await;
 
-    emit_progress(
-        &app,
-        ExportProgressPayload {
-            phase: "done".into(),
-            torrent_state: "live".into(),
-            progress_bytes: 0,
-            total_bytes: 0,
-            pct: 100.0,
-            queue_labels: queue_labels.clone(),
-            message: format!("Готово: {} файл(ов)", copied.len()),
-            copy_index: None,
-            copy_total: None,
-            copy_label: None,
-            batch_index: None,
-            batch_total: None,
-            batch_label: None,
-        },
-    );
-
-    Ok(TorrentExportResult { copied })
+    state.inner.stream_cache.end_export().await;
+    state.reclaim_stream_cache_best_effort().await;
+    export_out
 }
 
 #[tauri::command]

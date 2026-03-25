@@ -19,11 +19,7 @@ struct MbRelease {
 
 /// Fetch per-album cover art via MusicBrainz search + Cover Art Archive.
 /// Returns a base64 data: URL or None if not found.
-pub async fn fetch_album_cover(
-    client: &Client,
-    artist: &str,
-    album: &str,
-) -> Option<String> {
+pub async fn fetch_album_cover(client: &Client, artist: &str, album: &str) -> Option<String> {
     if artist.trim().is_empty() && album.trim().is_empty() {
         return None;
     }
@@ -37,7 +33,11 @@ async fn search_release(client: &Client, artist: &str, album: &str) -> Option<St
 
     let resp = client
         .get(format!("{}/release", MB_API))
-        .query(&[("query", &query), ("limit", &"3".to_string()), ("fmt", &"json".to_string())])
+        .query(&[
+            ("query", &query),
+            ("limit", &"3".to_string()),
+            ("fmt", &"json".to_string()),
+        ])
         .header(header::USER_AGENT, USER_AGENT)
         .send()
         .await

@@ -1,9 +1,14 @@
+mod cache_commands;
+mod cache_settings;
 mod cover_art;
+mod nerd_stats;
 mod rutracker;
 mod torrent_image;
 mod torrent_stream;
 
 use tauri::{Manager, RunEvent};
+
+use torrent_stream::TorrentStreamState;
 
 /// librqbit opens every file in a torrent on disk at once; large discographies exceed the default
 /// macOS soft `RLIMIT_NOFILE` (~256) → "Too many open files (os error 24)".
@@ -61,8 +66,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));
-            app.manage(torrent_stream::TorrentStreamState::new(app.handle().clone()));
+            app.manage(torrent_stream::TorrentStreamState::new(
+                app.handle().clone(),
+            ));
             app.manage(torrent_image::TorrentImageState::new(app.handle()));
+            let startup = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(ts) = startup.try_state::<TorrentStreamState>() {
+                    let _ = ts.load_cache_settings_from_disk().await;
+                    ts.reclaim_stream_cache_best_effort().await;
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -81,12 +95,23 @@ pub fn run() {
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,
             fetch_album_cover,
+            nerd_stats::get_nerd_diagnostics,
+            cache_commands::get_user_cache_settings,
+            cache_commands::set_user_cache_settings,
+            cache_commands::purge_streaming_cache,
+            cache_commands::purge_cover_torrent_cache,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|_app_handle, event| {
+    app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
+            let h = app_handle.clone();
+            tauri::async_runtime::block_on(async move {
+                if let Some(ts) = h.try_state::<TorrentStreamState>() {
+                    ts.purge_torrent_data_on_exit().await;
+                }
+            });
             kill_vite_dev_server();
         }
     });
