@@ -295,7 +295,7 @@ watch(
           type="button"
           class="spotify-tool-btn"
           title="Скачать альбом"
-          @click="emit('download-all')"
+          @click="emit('download-album', singleAlbumWrap.raw.audioFiles, singleAlbumWrap.displayName)"
         >
           ↓
         </button>
@@ -434,7 +434,7 @@ watch(
             @click="emit('toggle-like', makeAlbumLike(torrent, magnet, wrap.raw, wrap.displayName))"
           >{{ likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? "♥" : "♡" }}</button>
           <button class="btn-play-album" title="Слушать альбом" @click="emit('play-album', wrap.raw.audioFiles)">▶</button>
-          <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles)">↓</button>
+          <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles, wrap.displayName)">↓</button>
         </div>
 
         <div class="tracklist-header">

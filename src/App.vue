@@ -585,7 +585,7 @@ function handleDownloadTrack(origIdx) {
   downloadOverlayExpanded.value = true;
   const f = files.value.find((x) => x.origIdx === origIdx);
   const label = f ? trackDisplayBasename(f.path) : `Файл ${origIdx}`;
-  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], (p) => {
+  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], null, (p) => {
     downloadProgress.value = p;
   });
 }
@@ -595,19 +595,25 @@ function handleDownloadAll() {
   const audio = files.value.filter((f) => isAudio(f.path));
   const idxs = audio.map((f) => f.origIdx);
   const labels = audio.map((f) => trackDisplayBasename(f.path));
-  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
+  exportTorrentFiles(torrentMagnet.value, idxs, labels, null, (p) => {
     downloadProgress.value = p;
   });
 }
 
-function handleDownloadAlbum(albumFiles) {
+function handleDownloadAlbum(albumFiles, albumName = "") {
   downloadOverlayExpanded.value = true;
   const audio = (albumFiles ?? []).filter((f) => isAudio(f.path));
   const idxs = audio.map((f) => f.origIdx);
   const labels = audio.map((f) => trackDisplayBasename(f.path));
-  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
-    downloadProgress.value = p;
-  });
+  exportTorrentFiles(
+    torrentMagnet.value,
+    idxs,
+    labels,
+    { albumDirName: albumName || selected.value?.name || "Альбом" },
+    (p) => {
+      downloadProgress.value = p;
+    }
+  );
 }
 
 function handleNext() {

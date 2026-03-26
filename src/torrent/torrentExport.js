@@ -22,9 +22,10 @@ import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
  * @param {string} magnet
  * @param {number[]} fileIndices — origIdx
  * @param {string[]} fileNames — подписи для очереди (тот же порядок)
+ * @param {{ albumDirName?: string | null }} [opts]
  * @param {(p: ExportProgress) => void} [onProgress]
  */
-export async function exportTorrentFiles(magnet, fileIndices, fileNames, onProgress) {
+export async function exportTorrentFiles(magnet, fileIndices, fileNames, opts, onProgress) {
   if (!magnet?.trim()) {
     await message("Нет magnet-ссылки. Откройте раздачу заново.", {
       title: "Скачивание",
@@ -38,6 +39,11 @@ export async function exportTorrentFiles(magnet, fileIndices, fileNames, onProgr
   if (!indices.length) return;
 
   const names = indices.map((_, i) => String(fileNames?.[i] ?? ""));
+  const albumDirNameRaw = opts?.albumDirName;
+  const albumDirName =
+    typeof albumDirNameRaw === "string" && albumDirNameRaw.trim()
+      ? albumDirNameRaw.trim()
+      : null;
 
   const picked = await open({
     directory: true,
@@ -68,6 +74,7 @@ export async function exportTorrentFiles(magnet, fileIndices, fileNames, onProgr
       fileIndices: indices,
       destDir,
       fileNames: names,
+      albumDirName,
     });
     const n = result?.copied?.length ?? 0;
     await message(`Сохранено файлов: ${n}.`, { title: "Скачивание" });

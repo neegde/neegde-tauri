@@ -102,6 +102,24 @@ fn unique_dest_path(dest_dir: &Path, base_name: &str) -> PathBuf {
     ))
 }
 
+fn sanitize_folder_name(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.trim().chars() {
+        let bad = matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|');
+        if bad || ch.is_control() {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    let normalized = out.trim().trim_matches('.').trim();
+    if normalized.is_empty() {
+        "Альбом".to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
 /// Добавить торрент в сессию или взять существующий и оставить только один файл в загрузке.
 async fn ensure_torrent_with_single_file(
     session: &Arc<Session>,
@@ -245,6 +263,7 @@ pub async fn torrent_export_files(
     file_indices: Vec<usize>,
     dest_dir: String,
     file_names: Vec<String>,
+    album_dir_name: Option<String>,
 ) -> Result<TorrentExportResult, String> {
     state.export_cancel_reset();
 
@@ -255,9 +274,18 @@ pub async fn torrent_export_files(
         return Err("Не выбраны файлы".into());
     }
 
-    let dest_root = PathBuf::from(&dest_dir);
+    let mut dest_root = PathBuf::from(&dest_dir);
     if !dest_root.is_dir() {
         return Err("Указанная папка недоступна".into());
+    }
+    if let Some(album_dir_name_raw) = album_dir_name {
+        if !album_dir_name_raw.trim().is_empty() {
+            let folder_name = sanitize_folder_name(&album_dir_name_raw);
+            dest_root = dest_root.join(folder_name);
+            tokio::fs::create_dir_all(&dest_root)
+                .await
+                .map_err(|e| format!("Не удалось создать каталог альбома: {e}"))?;
+        }
     }
 
     let queue_labels: Vec<String> = file_indices
