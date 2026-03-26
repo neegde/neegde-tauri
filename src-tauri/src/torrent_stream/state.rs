@@ -801,7 +801,7 @@ impl TorrentStreamState {
             download_mode: Arc::new(AtomicU64::new(0)),
             mime,
         });
-        self.spawn_priority_worker(prepared.clone(), handle.clone(), token.clone());
+        self.spawn_priority_worker(prepared.clone(), handle.clone());
 
         // Keep existing tokens alive: the UI may trigger multiple parallel prepare calls
         // (e.g. preview images + player). Clearing here can invalidate the URL that
@@ -824,9 +824,7 @@ impl TorrentStreamState {
         &self,
         prepared: Arc<PreparedStream>,
         torrent: Arc<ManagedTorrent>,
-        token: String,
     ) {
-        let dbg = self.inner.debug_log.clone();
         tauri::async_runtime::spawn(async move {
             let mut scheduler_stream = match torrent.clone().stream(prepared.file_idx) {
                 Ok(s) => s,
@@ -881,18 +879,6 @@ impl TorrentStreamState {
                             scheduler_pos = scheduler_pos.saturating_add(n as u64);
                         }
                     }
-                }
-                if dbg.is_enabled() {
-                    dbg.push(
-                        "priority",
-                        "window updated",
-                        Some(json!({
-                            "token": token,
-                            "offset": current_offset,
-                            "bufferedAhead": buffered_ahead,
-                            "mode": prepared.mode(),
-                        })),
-                    );
                 }
             }
         });

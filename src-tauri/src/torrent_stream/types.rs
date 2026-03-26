@@ -119,14 +119,6 @@ pub(super) struct PreparedStream {
 }
 
 impl PreparedStream {
-    pub(super) fn mode(&self) -> DownloadMode {
-        if self.download_mode.load(Ordering::Relaxed) == 1 {
-            DownloadMode::HybridStreaming
-        } else {
-            DownloadMode::SequentialStartup
-        }
-    }
-
     pub(super) fn set_mode(&self, mode: DownloadMode) {
         let v = match mode {
             DownloadMode::SequentialStartup => 0,

@@ -1,7 +1,8 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::debug_log::AppDebugLog;
@@ -12,6 +13,9 @@ use super::{COPY_CHUNK_BYTES, MAX_HTTP_HEADER_BYTES};
 pub(super) const STREAM_MEMORY_CACHE_CAP_BYTES: usize = 256 * 1024 * 1024;
 pub(super) const READAHEAD_TARGET_BYTES: u64 = 128 * 1024 * 1024;
 pub(super) const INITIAL_FAST_START_BYTES: u64 = 1 * 1024 * 1024;
+const HTTP_STREAM_READ_TIMEOUT_MS: u64 = 8_000;
+const HTTP_STREAM_MAX_IDLE_READS: u32 = 6;
+const HTTP_STREAM_IDLE_BACKOFF_MS: u64 = 120;
 
 impl TorrentStreamInner {
     pub(super) async fn run_server(self: Arc<Self>, listener: TcpListener) {
@@ -277,11 +281,9 @@ async fn serve_stream(
         .clone()
         .stream(prepared.file_idx)
         .map_err(|e| format!("Ошибка открытия потока для HTTP: {e:#}"))?;
-    stream
-        .seek(SeekFrom::Start(cursor))
-        .await
-        .map_err(|e| format!("Ошибка seek в потоке: {e}"))?;
+    align_stream_to_offset(&mut stream, cursor).await?;
     let mut buf = vec![0u8; COPY_CHUNK_BYTES];
+    let mut idle_reads: u32 = 0;
     while remaining > 0 {
         let from_mem = write_from_memory_cache(socket, prepared, cursor, remaining).await?;
         if from_mem > 0 {
@@ -290,13 +292,55 @@ async fn serve_stream(
             continue;
         }
         let to_read = remaining.min(COPY_CHUNK_BYTES as u64) as usize;
-        let n = stream
-            .read(&mut buf[..to_read])
-            .await
-            .map_err(|e| format!("Ошибка чтения из torrent stream: {e}"))?;
+        let read_fut = stream.read(&mut buf[..to_read]);
+        let n = match tokio::time::timeout(
+            Duration::from_millis(HTTP_STREAM_READ_TIMEOUT_MS),
+            read_fut,
+        )
+        .await
+        {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => return Err(format!("Ошибка чтения из torrent stream: {e}")),
+            Err(_) => {
+                idle_reads = idle_reads.saturating_add(1);
+                if let Some(d) = debug {
+                    d.push(
+                        "http",
+                        "stream read timeout",
+                        Some(json!({
+                            "cursor": cursor,
+                            "remaining": remaining,
+                            "idleReads": idle_reads,
+                        })),
+                    );
+                }
+                if idle_reads >= HTTP_STREAM_MAX_IDLE_READS {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(HTTP_STREAM_IDLE_BACKOFF_MS)).await;
+                continue;
+            }
+        };
         if n == 0 {
-            break;
+            idle_reads = idle_reads.saturating_add(1);
+            if let Some(d) = debug {
+                d.push(
+                    "http",
+                    "stream read returned 0",
+                    Some(json!({
+                        "cursor": cursor,
+                        "remaining": remaining,
+                        "idleReads": idle_reads,
+                    })),
+                );
+            }
+            if idle_reads >= HTTP_STREAM_MAX_IDLE_READS {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(HTTP_STREAM_IDLE_BACKOFF_MS)).await;
+            continue;
         }
+        idle_reads = 0;
         {
             let mut cache = prepared.memory_cache.lock().await;
             cache.push_sequential(cursor, &buf[..n]);
@@ -326,6 +370,42 @@ async fn serve_stream(
         );
     }
 
+    Ok(())
+}
+
+async fn align_stream_to_offset<S>(stream: &mut S, target: u64) -> Result<(), String>
+where
+    S: AsyncRead + AsyncSeek + Unpin,
+{
+    stream
+        .seek(SeekFrom::Start(target))
+        .await
+        .map_err(|e| format!("Ошибка seek в потоке: {e}"))?;
+    let pos = stream
+        .stream_position()
+        .await
+        .map_err(|e| format!("Ошибка проверки позиции потока: {e}"))?;
+    if pos == target {
+        return Ok(());
+    }
+
+    stream
+        .seek(SeekFrom::Start(0))
+        .await
+        .map_err(|e| format!("Ошибка rewind в потоке: {e}"))?;
+    let mut left = target;
+    let mut scratch = vec![0u8; COPY_CHUNK_BYTES];
+    while left > 0 {
+        let to_read = left.min(scratch.len() as u64) as usize;
+        let n = stream
+            .read(&mut scratch[..to_read])
+            .await
+            .map_err(|e| format!("Ошибка домотки потока: {e}"))?;
+        if n == 0 {
+            return Err("Не удалось домотать поток до нужного смещения".into());
+        }
+        left = left.saturating_sub(n as u64);
+    }
     Ok(())
 }
 
