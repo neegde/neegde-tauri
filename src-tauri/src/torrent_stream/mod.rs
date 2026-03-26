@@ -22,13 +22,13 @@ pub fn torrent_streams_dir_label() -> &'static str {
 /// Bytes to pull before returning the stream URL. **0** = skip blocking pre-read (fastest prepare;
 /// the player warms the same `FileStream` via HTTP). Raise (e.g. `64 * 1024`) if you want a warm
 /// cache before `ready` when peers are fast.
-pub(super) const PREBUFFER_BYTES: usize = 0;
+pub(super) const PREBUFFER_BYTES: usize = 512 * 1024;
 /// One `read` on the file stream — if the swarm sends nothing, bail out of this wait quickly.
 pub(super) const PREBUFFER_READ_TIMEOUT_SECS: u64 = 12;
 /// Hard cap for the whole prebuffer loop (many small reads).
 pub(super) const PREBUFFER_MAX_WALL_SECS: u64 = 45;
 pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
-pub(super) const COPY_CHUNK_BYTES: usize = 512 * 1024;
+pub(super) const COPY_CHUNK_BYTES: usize = 256 * 1024;
 
 pub use state::TorrentStreamState;
 use base64::Engine;

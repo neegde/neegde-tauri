@@ -26,7 +26,7 @@ use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
-use super::types::{DownloadMode, PrefetchNextResponse, PreparedStream, ReadaheadBuffer, StreamReady};
+use super::types::{DownloadMode, PrefetchNextResponse, PreparedStream, StreamMemoryCache, StreamReady};
 use super::{PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
 
 /// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
@@ -205,7 +205,7 @@ pub(super) struct TorrentStreamInner {
     pub(super) app: tauri::AppHandle,
     pub(super) session: Mutex<Option<Arc<Session>>>,
     pub(super) server_addr: Mutex<Option<SocketAddr>>,
-    pub(super) streams: DashMap<String, Arc<Mutex<PreparedStream>>>,
+    pub(super) streams: DashMap<String, Arc<PreparedStream>>,
     pub(super) token_counter: AtomicU64,
     pub(super) stream_cache: Arc<StreamCache>,
     pub(super) cache_settings: Arc<RwLock<UserCacheSettings>>,
@@ -428,6 +428,14 @@ impl TorrentStreamState {
             );
         }
 
+        let cached_torrent_bytes = if torrent_file.is_none() {
+            self.inner.load_torrent_metadata_cache(info_hash)
+        } else {
+            None
+        };
+        let torrent_file = torrent_file.or(cached_torrent_bytes);
+
+        let torrent_file_for_cache = torrent_file.clone();
         let opts = AddTorrentOptions {
             only_files: Some(vec![file_idx]),
             overwrite: true,
@@ -651,10 +659,6 @@ impl TorrentStreamState {
             .clone()
             .stream(file_idx)
             .map_err(|e| format!("Не удалось открыть поток файла: {e:#}"))?;
-        let scheduler_stream = handle
-            .clone()
-            .stream(file_idx)
-            .map_err(|e| format!("Не удалось открыть поток планировщика: {e:#}"))?;
 
         let total_len = stream.len();
         let file_torrent_offset = handle
@@ -778,22 +782,25 @@ impl TorrentStreamState {
                 "totalLen": total_len,
             })),
         );
-        let prepared = Arc::new(Mutex::new(PreparedStream {
-            stream_pos: filled as u64,
-            stream: Box::new(stream),
-            scheduler_stream: Arc::new(Mutex::new(Box::new(scheduler_stream))),
+        let piece_size = handle
+            .with_metadata(|meta| meta.lengths.default_piece_length() as u64)
+            .unwrap_or(0);
+        let prepared = Arc::new(PreparedStream {
+            torrent: handle.clone(),
+            file_idx,
             prebuffer,
-            readahead: ReadaheadBuffer {
-                buffer: Vec::new(),
-                start_offset: filled as u64,
-            },
+            memory_cache: Arc::new(Mutex::new(StreamMemoryCache::new(
+                super::http::STREAM_MEMORY_CACHE_CAP_BYTES,
+            ))),
             total_len,
             playback_offset: Arc::new(AtomicU64::new(filled as u64)),
             file_torrent_offset,
             file_torrent_end_offset,
-            download_mode: DownloadMode::SequentialStartup,
+            piece_size,
+            priority_window_pieces: HIGH_PRIORITY_WINDOW_PIECES,
+            download_mode: Arc::new(AtomicU64::new(0)),
             mime,
-        }));
+        });
         self.spawn_priority_worker(prepared.clone(), handle.clone(), token.clone());
 
         // Keep existing tokens alive: the UI may trigger multiple parallel prepare calls
@@ -804,6 +811,9 @@ impl TorrentStreamState {
             .stream_cache
             .register_stream_token(token.clone(), info_hash)
             .await;
+        if let Some(ref tf) = torrent_file_for_cache {
+            self.inner.cache_torrent_metadata(info_hash, tf);
+        }
 
         Ok(StreamReady {
             url: format!("http://{addr}/stream/{token}"),
@@ -812,35 +822,65 @@ impl TorrentStreamState {
 
     fn spawn_priority_worker(
         &self,
-        prepared: Arc<Mutex<PreparedStream>>,
+        prepared: Arc<PreparedStream>,
         torrent: Arc<ManagedTorrent>,
         token: String,
     ) {
         let dbg = self.inner.debug_log.clone();
         tauri::async_runtime::spawn(async move {
+            let mut scheduler_stream = match torrent.clone().stream(prepared.file_idx) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
             let mut interval = tokio::time::interval(Duration::from_millis(500));
             interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            let mut scheduler_pos = prepared.playback_offset.load(Ordering::Relaxed);
+            let mut tmp = vec![0u8; super::COPY_CHUNK_BYTES];
             loop {
                 interval.tick().await;
-                let Some(mut g) = prepared.try_lock().ok() else {
-                    continue;
-                };
-                let current_offset = g.playback_offset.load(Ordering::Relaxed);
+                let current_offset = prepared.playback_offset.load(Ordering::Relaxed);
                 update_piece_priorities(
                     &torrent,
-                    current_offset.saturating_add(g.file_torrent_offset),
-                    g.file_torrent_offset,
-                    g.file_torrent_end_offset,
+                    current_offset.saturating_add(prepared.file_torrent_offset),
+                    prepared.file_torrent_offset,
+                    prepared.file_torrent_end_offset,
+                    prepared.piece_size,
+                    prepared.priority_window_pieces,
                 );
-                let buffered_ahead = g
-                    .readahead
-                    .start_offset
-                    .saturating_add(g.readahead.buffer.len() as u64)
-                    .saturating_sub(current_offset);
+                let buffered_ahead = {
+                    let cache = prepared.memory_cache.lock().await;
+                    cache.end_offset.saturating_sub(current_offset)
+                };
                 if buffered_ahead >= HYBRID_SWITCH_BUFFER_BYTES {
-                    g.download_mode = DownloadMode::HybridStreaming;
+                    prepared.set_mode(DownloadMode::HybridStreaming);
                 } else {
-                    g.download_mode = DownloadMode::SequentialStartup;
+                    prepared.set_mode(DownloadMode::SequentialStartup);
+                }
+                let target_bytes = if current_offset < super::http::INITIAL_FAST_START_BYTES {
+                    super::http::INITIAL_FAST_START_BYTES
+                } else {
+                    super::http::READAHEAD_TARGET_BYTES
+                };
+                let target_end = current_offset
+                    .saturating_add(target_bytes)
+                    .min(prepared.total_len);
+                if scheduler_pos < current_offset {
+                    scheduler_pos = current_offset;
+                }
+                if scheduler_pos < target_end {
+                    let _ = tokio::io::AsyncSeekExt::seek(
+                        &mut scheduler_stream,
+                        std::io::SeekFrom::Start(scheduler_pos),
+                    )
+                    .await;
+                    let to_read = (target_end - scheduler_pos).min(tmp.len() as u64) as usize;
+                    if let Ok(n) = tokio::io::AsyncReadExt::read(&mut scheduler_stream, &mut tmp[..to_read]).await {
+                        if n > 0 {
+                            let mut cache = prepared.memory_cache.lock().await;
+                            cache.push_sequential(scheduler_pos, &tmp[..n]);
+                            scheduler_pos = scheduler_pos.saturating_add(n as u64);
+                        }
+                    }
                 }
                 if dbg.is_enabled() {
                     dbg.push(
@@ -850,7 +890,7 @@ impl TorrentStreamState {
                             "token": token,
                             "offset": current_offset,
                             "bufferedAhead": buffered_ahead,
-                            "mode": g.download_mode,
+                            "mode": prepared.mode(),
                         })),
                     );
                 }
@@ -1013,6 +1053,40 @@ impl TorrentStreamInner {
             .join(super::torrent_streams_dir_label()))
     }
 
+    /// Returns path to persisted metadata cache file for torrent.
+    ///
+    /// Args:
+    ///     info_hash: Torrent info hash.
+    fn metadata_cache_path(&self, info_hash: Id20) -> Result<PathBuf, String> {
+        let dir = self.stream_torrents_base()?.join("metadata_cache");
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Не удалось создать каталог metadata cache: {e}"))?;
+        Ok(dir.join(format!("{}.torrent", info_hash.as_string())))
+    }
+
+    /// Loads cached torrent metadata bytes from disk.
+    ///
+    /// Args:
+    ///     info_hash: Torrent info hash.
+    fn load_torrent_metadata_cache(&self, info_hash: Id20) -> Option<Vec<u8>> {
+        let path = self.metadata_cache_path(info_hash).ok()?;
+        if !path.exists() {
+            return None;
+        }
+        std::fs::read(path).ok()
+    }
+
+    /// Persists torrent metadata bytes for faster warm starts.
+    ///
+    /// Args:
+    ///     info_hash: Torrent info hash.
+    ///     torrent_bytes: Full .torrent bytes.
+    fn cache_torrent_metadata(&self, info_hash: Id20, torrent_bytes: &[u8]) {
+        if let Ok(path) = self.metadata_cache_path(info_hash) {
+            let _ = std::fs::write(path, torrent_bytes);
+        }
+    }
+
     pub(super) async fn ensure_session(&self) -> Result<Arc<Session>, String> {
         let mut guard = self.session.lock().await;
         if let Some(existing) = &*guard {
@@ -1089,8 +1163,8 @@ impl TorrentStreamInner {
 
 type TorrentHandle = Arc<ManagedTorrent>;
 
-const HIGH_PRIORITY_WINDOW_BYTES: u64 = 10 * 1024 * 1024;
-const MEDIUM_PRIORITY_WINDOW_BYTES: u64 = 40 * 1024 * 1024;
+const HIGH_PRIORITY_WINDOW_PIECES: u64 = 32;
+const LOW_PRIORITY_PIECE_STEP: u64 = 8;
 const HYBRID_SWITCH_BUFFER_BYTES: u64 = 15 * 1024 * 1024;
 
 /// Updates piece-priority windows for the current playback offset.
@@ -1105,29 +1179,21 @@ fn update_piece_priorities(
     current_offset: u64,
     selected_file_start: u64,
     selected_file_end: u64,
+    piece_len: u64,
+    high_window_pieces: u64,
 ) {
-    let _ = torrent.with_metadata(|meta| {
-        let piece_len = meta.lengths.default_piece_length() as u64;
-        if piece_len == 0 {
-            return;
-        }
-        if selected_file_end <= selected_file_start {
-            return;
-        }
-
-        let clamped_offset = current_offset.clamp(selected_file_start, selected_file_end - 1);
-        let high_window_end = clamped_offset
-            .saturating_add(HIGH_PRIORITY_WINDOW_BYTES)
-            .min(selected_file_end - 1);
-        let medium_window_end = clamped_offset
-            .saturating_add(MEDIUM_PRIORITY_WINDOW_BYTES)
-            .min(selected_file_end - 1);
-
-        let high_start = clamped_offset / piece_len;
-        let high_end = high_window_end / piece_len;
-        let medium_end = medium_window_end / piece_len;
-        let _ = (high_start, high_end, medium_end);
-    });
+    if piece_len == 0 || selected_file_end <= selected_file_start {
+        return;
+    }
+    let clamped_offset = current_offset.clamp(selected_file_start, selected_file_end - 1);
+    let current_piece = clamped_offset / piece_len;
+    let file_start_piece = selected_file_start / piece_len;
+    let file_end_piece = (selected_file_end - 1) / piece_len;
+    let high_end_piece = current_piece
+        .saturating_add(high_window_pieces)
+        .min(file_end_piece);
+    let low_probe_piece = high_end_piece.saturating_add(LOW_PRIORITY_PIECE_STEP);
+    let _ = (torrent, file_start_piece, low_probe_piece);
 }
 
 fn guess_audio_mime(ext: &str) -> &'static str {
