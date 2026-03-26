@@ -977,7 +977,7 @@ fn guess_audio_mime(ext: &str) -> &'static str {
         "mp3" => "audio/mpeg",
         "flac" => "audio/flac",
         "ogg" => "audio/ogg",
-        "opus" => "audio/opus",
+        "opus" => "audio/ogg; codecs=opus",
         "wav" => "audio/wav",
         "m4a" | "mp4" => "audio/mp4",
         "aac" => "audio/aac",
