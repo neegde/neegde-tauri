@@ -2,10 +2,10 @@
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
-import { streamUrl } from "../../torrent/api.js";
+import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename } from "../../lib/utils.js";
 import {
-  disposeTorrentPreview,
+  releaseTorrentStreamUrl,
   torrentPrepareCancel,
 } from "../../torrent/torrentSession.js";
 import {
@@ -26,6 +26,7 @@ import {
   clearMediaSessionPresentation,
   reaffirmTrackSkipHandlers,
 } from "../../audio/mediaSession.js";
+import { appDebugLog } from "../../appDebugLog.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -36,6 +37,8 @@ function fmtTime(secs) {
 
 const props = defineProps({
   track: { type: Object, default: null },
+  /** Следующий трек в очереди — для фоновой предзагрузки. */
+  nextTrack: { type: Object, default: null },
   hasPrev: Boolean,
   hasNext: Boolean,
   /** После восстановления сессии: не использовать HTML autoplay при появлении src. */
@@ -96,12 +99,60 @@ const prepareAttempt = ref(0);
 const prepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
 
-function fmtBytes(n) {
-  if (n == null || !Number.isFinite(Number(n))) return "—";
-  const x = Number(n);
-  if (x < 1024) return `${Math.round(x)} B`;
-  if (x < 1024 * 1024) return `${(x / 1024).toFixed(1)} KiB`;
-  return `${(x / 1024 / 1024).toFixed(1)} MiB`;
+/** URL из `torrent_prefetch_next_track` (другой торрент), пока не переключились на этот трек. */
+const prefetchedStream = ref({ url: "", forKey: "" });
+/** Успешный prefetch для пары текущий→следующий (не повторять до смены трека). */
+const prefetchOkFingerprint = ref("");
+let prefetchInFlight = false;
+
+const PREFETCH_MIN_SEC = 30;
+const PREFETCH_MIN_RATIO = 0.22;
+
+/**
+ * Stable key for matching a queue item to a prepared stream URL.
+ *
+ * Args:
+ *     t: Queue item with magnet and fileIdx.
+ *
+ * Returns:
+ *     String key or empty when invalid.
+ */
+function queueTrackKey(t) {
+  if (!t?.magnet || t.fileIdx == null) return "";
+  return `${t.magnet}\0${t.fileIdx}`;
+}
+
+/**
+ * Fingerprint for current→next prefetch attempt.
+ *
+ * Args:
+ *     cur: Current queue item.
+ *     next: Next queue item.
+ *
+ * Returns:
+ *     Non-empty string when both are valid, else empty.
+ */
+function prefetchFingerprint(cur, next) {
+  if (!cur?.magnet || next?.magnet == null || next.fileIdx == null) return "";
+  return `${cur.magnet}\0${cur.fileIdx}\0${next.magnet}\0${next.fileIdx}`;
+}
+
+/**
+ * Formats estimated wait time in seconds as a short Russian phrase.
+ *
+ * Args:
+ *     sec: Duration in seconds.
+ *
+ * Returns:
+ *     String like "~45 с" or "~3 мин", or null if not meaningful.
+ */
+function fmtEtaHuman(sec) {
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  if (sec < 60) return `~${Math.max(1, Math.round(sec))} с`;
+  if (sec < 3600) return `~${Math.round(sec / 60)} мин`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return m ? `~${h} ч ${m} мин` : `~${h} ч`;
 }
 
 const prepareDotClass = computed(() => {
@@ -119,37 +170,47 @@ const prepareDotClass = computed(() => {
 
 const prepareHintDetail = computed(() => {
   const p = prepareProgress.value;
-  if (!p) {
-    return "Подключение к пирам и загрузка начального буфера.\nПодождите — скорость зависит от сидов и сети.";
+  const track = props.track;
+  let etaLine = "До старта: —";
+  if (p) {
+    const pt = p.prebufferTarget;
+    const pf = p.prebufferFilled ?? 0;
+    const dl = p.downloadMbps ?? 0;
+    if (pt != null && pt > 0 && pf < pt && dl > 1e-6) {
+      const remaining = pt - pf;
+      const bytesPerSec = dl * 1024 * 1024;
+      const sec = remaining / bytesPerSec;
+      const h = fmtEtaHuman(sec);
+      if (h) etaLine = `До старта: ${h}`;
+    } else if (p.etaHuman) {
+      etaLine = `До старта: ~${p.etaHuman}`;
+    }
   }
-  const lines = [p.message, ""];
-  lines.push(
-    `Файл: ${fmtBytes(p.progressBytes)} / ${fmtBytes(p.totalBytes)} (${p.pct?.toFixed?.(1) ?? "?"}%)`
-  );
-  if (p.downloadMbps != null || p.uploadMbps != null) {
-    const dl = p.downloadMbps != null ? `${p.downloadMbps.toFixed(2)} MiB/s` : "—";
-    const ul = p.uploadMbps != null ? `${p.uploadMbps.toFixed(2)} MiB/s` : "—";
-    lines.push(`Скорость: ↓ ${dl}  ↑ ${ul}`);
-  }
-  lines.push(
-    `Пиры: активных ${p.peersLive ?? 0}, подключаются ${p.peersConnecting ?? 0}, в очереди ${p.peersQueued ?? 0}, видели ${p.peersSeen ?? 0}, отвалилось ${p.peersDead ?? 0}`
-  );
-  if (p.prebufferTarget != null && p.prebufferTarget > 0) {
-    const f = p.prebufferFilled ?? 0;
-    lines.push(`Стартовый буфер для воспроизведения: ${fmtBytes(f)} / ${fmtBytes(p.prebufferTarget)}`);
-  }
-  if (p.etaHuman) lines.push(`Оценка времени до полной загрузки торрента: ${p.etaHuman}`);
-  lines.push("");
-  lines.push(
-    "Пока мало пиров или низкая скорость — ожидание нормально. Закройте VPN или попробуйте позже, если так часто."
-  );
-  return lines.join("\n");
+  const live = p?.peersLive ?? null;
+  const peersPart =
+    live != null ? `Пиры: ${live}` : "Пиры: —";
+  const seeds = track?.seeders;
+  const seedsPart =
+    seeds != null && Number.isFinite(Number(seeds))
+      ? `Сиды: ${Number(seeds)}`
+      : null;
+  const second = seedsPart ? `${peersPart} · ${seedsPart}` : peersPart;
+  return `${etaLine}\n${second}`;
 });
 
 watch(
   () => [props.track?.magnet, props.track?.fileIdx],
   () => {
     prepareAttempt.value = 0;
+    prefetchOkFingerprint.value = "";
+    const nk = props.track ? queueTrackKey(props.track) : "";
+    if (prefetchedStream.value.url && prefetchedStream.value.forKey !== nk) {
+      void releaseTorrentStreamUrl(prefetchedStream.value.url);
+      prefetchedStream.value = { url: "", forKey: "" };
+    }
+    if (prefetchInFlight) {
+      void torrentPrepareCancel();
+    }
   }
 );
 
@@ -161,10 +222,26 @@ const loadingProgress = computed(() => {
   return isLoading.value ? 0 : 100;
 });
 
+/**
+ * Logs HTMLMediaElement.play() rejection to app debug (e.g. NotAllowedError).
+ *
+ * Args:
+ *     context: Caller label (e.g. togglePlay, mediaSession).
+ *     err: Rejection value from the play() promise.
+ */
+function logPlayRejected(context, err) {
+  void appDebugLog("player", "audio.play() rejected", {
+    context,
+    name: err?.name,
+    message: err?.message ?? String(err ?? ""),
+  });
+}
+
 function cancelLoad() {
+  void appDebugLog("player", "cancelLoad", { source: "user" });
   loadCancelledByUser.value = true;
   void torrentPrepareCancel();
-  void disposeTorrentPreview();
+  void releaseTorrentStreamUrl(src.value);
   stopBufferPoll();
   src.value = "";
   current.value = 0;
@@ -199,7 +276,8 @@ function togglePlay() {
     return;
   }
   if (a.paused) {
-    void a.play().catch(() => {
+    void a.play().catch((err) => {
+      logPlayRejected("togglePlay", err);
       playing.value = !a.paused;
     });
   } else {
@@ -272,11 +350,17 @@ function onAudioError() {
   streamPhase.value = "error";
   const err = audioRef.value?.error;
   const srcUrl = src.value;
+  const mediaErr = err ? describeMediaError(err.code) : null;
   console.error("[player/audio element error]", {
     code: err?.code,
     message: err?.message,
-    mediaError: err ? describeMediaError(err.code) : null,
+    mediaError: mediaErr,
     src: srcUrl?.slice?.(0, 120),
+  });
+  void appDebugLog("player", "audio element error", {
+    code: err?.code,
+    mediaError: mediaErr,
+    srcPreview: srcUrl?.slice?.(0, 160),
   });
   streamError.value = err
     ? `Ошибка воспроизведения: ${describeMediaError(err.code)}`
@@ -289,6 +373,14 @@ watch(playing, (v) => {
   if (v) reaffirmTrackSkipHandlers();
 }, { immediate: true });
 
+watch(streamPhase, (phase, prev) => {
+  void appDebugLog("player", "streamPhase", {
+    phase,
+    from: prev,
+    fileIdx: props.track?.fileIdx,
+  });
+});
+
 watchEffect(() => {
   void props.hasPrev;
   void props.hasNext;
@@ -299,7 +391,11 @@ watchEffect(() => {
         return;
       }
       const a = audioRef.value;
-      if (a) void a.play().catch(() => {});
+      if (a) {
+        void a.play().catch((err) => {
+          logPlayRejected("mediaSession", err);
+        });
+      }
     },
     pause: () => audioRef.value?.pause(),
     prev: () => {
@@ -425,6 +521,62 @@ function bufferPollTick() {
   }
 }
 
+/**
+ * Starts background prefetch of the next queue item after enough playback time.
+ *
+ * Triggers when playback is stable (`ready`), position is past ~30s or ~22% of duration,
+ * and the current→next pair has not been prefetched yet this track.
+ */
+async function maybeTriggerPrefetch() {
+  if (!props.nextTrack || !props.track) return;
+  if (!playing.value) return;
+  if (streamPhase.value !== "ready") return;
+  if (isLoading.value) return;
+  const d = duration.value;
+  const c = current.value;
+  if (!Number.isFinite(d) || d <= 0) return;
+  if (c < PREFETCH_MIN_SEC && c / d < PREFETCH_MIN_RATIO) return;
+
+  const fp = prefetchFingerprint(props.track, props.nextTrack);
+  if (!fp || fp === prefetchOkFingerprint.value) return;
+  if (prefetchInFlight) return;
+
+  prefetchInFlight = true;
+  void appDebugLog("player", "prefetch next start", { fpPreview: fp.slice(0, 96) });
+  try {
+    const result = await prefetchNextInQueue(props.track, props.nextTrack);
+    if (result?.kind === "streamReady" && result.url) {
+      prefetchedStream.value = {
+        url: result.url,
+        forKey: queueTrackKey(props.nextTrack),
+      };
+    }
+  } catch (e) {
+    void appDebugLog("player", "prefetch next error", {
+      message: e?.message ?? String(e ?? ""),
+    });
+  } finally {
+    prefetchOkFingerprint.value = fp;
+    prefetchInFlight = false;
+  }
+}
+
+watch(
+  () => [
+    playing.value,
+    current.value,
+    duration.value,
+    streamPhase.value,
+    isLoading.value,
+    props.nextTrack,
+    props.track?.magnet,
+    props.track?.fileIdx,
+  ],
+  () => {
+    void maybeTriggerPrefetch();
+  }
+);
+
 watch(
   () => [
     props.track?.magnet,
@@ -437,6 +589,7 @@ watch(
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
+      void releaseTorrentStreamUrl(src.value);
       src.value = "";
       current.value = 0;
       duration.value = 0;
@@ -451,6 +604,7 @@ watch(
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
+      void releaseTorrentStreamUrl(src.value);
       src.value = "";
       current.value = 0;
       duration.value = 0;
@@ -464,6 +618,7 @@ watch(
     loadCancelledByUser.value = false;
     prepareProgress.value = null;
     playing.value = false;
+    void releaseTorrentStreamUrl(src.value);
     src.value = "";
     current.value = 0;
     duration.value = 0;
@@ -473,8 +628,31 @@ watch(
 
     let cancelled = false;
     onCleanup(() => { cancelled = true; });
+    void appDebugLog("player", "stream prepare started", {
+      fileIdx,
+      magnetLen: typeof magnet === "string" ? magnet.length : 0,
+      suppressAutoplay: props.suppressAutoplay,
+    });
     try {
-      const nextSrc = await streamUrl(magnet, fileIdx);
+      const preparedKey = queueTrackKey(props.track);
+      let nextSrc = "";
+      if (prefetchedStream.value.url && prefetchedStream.value.forKey === preparedKey) {
+        nextSrc = prefetchedStream.value.url;
+        prefetchedStream.value = { url: "", forKey: "" };
+        void appDebugLog("player", "stream prepare used prefetched URL", { fileIdx });
+      } else {
+        nextSrc = await streamUrl(magnet, fileIdx, {
+          source: props.track?.source,
+          torrentId: props.track?.torrentId,
+        });
+      }
+      void appDebugLog("player", "stream prepare await done", {
+        fileIdx,
+        hasUrl: Boolean(nextSrc),
+        urlPreview: nextSrc ? nextSrc.slice(0, 120) : "",
+        cancelled,
+        loadCancelledByUser: loadCancelledByUser.value,
+      });
       if (!cancelled && !loadCancelledByUser.value) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
@@ -488,6 +666,13 @@ watch(
       const isUserCancel =
         loadCancelledByUser.value ||
         (typeof msg === "string" && msg.includes("отмен"));
+      void appDebugLog("player", "stream prepare error", {
+        fileIdx,
+        message: msg,
+        cancelled,
+        loadCancelledByUser: loadCancelledByUser.value,
+        isUserCancel,
+      });
       if (!cancelled && !isUserCancel) {
         console.error("[player/stream] torrent_prepare_stream failed", {
           magnetLen: magnet?.length,
@@ -535,6 +720,10 @@ onMounted(async () => {
   }
 });
 onUnmounted(() => {
+  if (prefetchedStream.value.url) {
+    void releaseTorrentStreamUrl(prefetchedStream.value.url);
+    prefetchedStream.value = { url: "", forKey: "" };
+  }
   stopBufferPoll();
   unlistenPrepareProgress();
   clearMediaSessionHandlers();

@@ -1,18 +1,19 @@
 <script setup>
-import { ref, computed, watch, onUnmounted } from "vue";
+import { ref, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import {
   isAudio,
   isImage,
   basename,
   trackDisplayBasename,
+  audioFormatLabel,
   fmtSize,
   fmtDate,
   detectAlbums,
   sumFileSizes,
   MAX_TORRENT_COVER_BYTES,
+  enrichMagnetWithOpenTrackers,
 } from "../../lib/utils.js";
-import { disposeTorrentPreview } from "../../torrent/torrentSession.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 
@@ -141,7 +142,7 @@ function makeTrackLike(torrent, magnet, f) {
     source: torrent.source,
     magnet,
     fileIdx: f.origIdx,
-    fileName: trackDisplayBasename(f.path),
+    fileName: f.path,
     coverFileIdx,
     coverFile,
   };
@@ -187,13 +188,6 @@ const spotifyArtist = computed(() => {
   return "Неизвестный исполнитель";
 });
 
-watch(
-  () => props.magnet,
-  () => {
-    disposeTorrentPreview();
-  }
-);
-
 function prefetchAlbumCovers() {
   const m = props.magnet?.trim();
   if (!m || props.loading || !props.files?.length) return;
@@ -217,8 +211,9 @@ function prefetchAlbumCovers() {
   if (key === lastCoverPrefetchKey.value) return;
   lastCoverPrefetchKey.value = key;
 
+  const magnetEnriched = enrichMagnetWithOpenTrackers(m);
   for (const fileIdx of indices) {
-    invoke("torrent_fetch_image", { magnet: m, fileIdx }).catch(() => {});
+    invoke("torrent_fetch_image", { magnet: magnetEnriched, fileIdx }).catch(() => {});
   }
 }
 
@@ -230,9 +225,6 @@ watch(
   { flush: "post" }
 );
 
-onUnmounted(() => {
-  disposeTorrentPreview();
-});
 </script>
 
 <template>
@@ -304,7 +296,7 @@ onUnmounted(() => {
           type="button"
           class="spotify-tool-btn"
           title="Скачать альбом"
-          @click="emit('download-all')"
+          @click="emit('download-album', singleAlbumWrap.raw.audioFiles, singleAlbumWrap.displayName)"
         >
           ↓
         </button>
@@ -330,7 +322,10 @@ onUnmounted(() => {
             </template>
           </div>
           <div class="spotify-col-title">
-            <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
+            <div class="track-name-wrap">
+              <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
+              <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
+            </div>
           </div>
           <div class="spotify-col-time">
             <span class="spotify-dur">{{ f.size > 0 ? fmtSize(f.size) : "—" }}</span>
@@ -443,7 +438,7 @@ onUnmounted(() => {
             @click="emit('toggle-like', makeAlbumLike(torrent, magnet, wrap.raw, wrap.displayName))"
           >{{ likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? "♥" : "♡" }}</button>
           <button class="btn-play-album" title="Слушать альбом" @click="emit('play-album', wrap.raw.audioFiles)">▶</button>
-          <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles)">↓</button>
+          <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles, wrap.displayName)">↓</button>
         </div>
 
         <div class="tracklist-header">
@@ -466,7 +461,10 @@ onUnmounted(() => {
             </template>
           </div>
           <div class="track-info">
-            <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
+            <div class="track-name-wrap">
+              <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
+              <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
+            </div>
           </div>
           <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
           <div class="track-actions">

@@ -56,6 +56,24 @@ pub async fn get_torrent_details(
     })
 }
 
+/// Raw `.torrent` from `forum/dl.php` (same as in `get_torrent_details`, without topic HTML).
+pub async fn download_torrent_file_bytes(
+    client: &Client,
+    base: &str,
+    topic_id: &str,
+) -> Result<Vec<u8>, String> {
+    let dl_url = format!("{}/forum/dl.php?t={}", base, topic_id);
+    let torrent_bytes = client
+        .get(&dl_url)
+        .send()
+        .await
+        .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?
+        .bytes()
+        .await
+        .map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))?;
+    Ok(torrent_bytes.to_vec())
+}
+
 /// Load topic page only, fetch first-post cover image → data URL (for result-grid previews).
 pub async fn get_cover_data_url(
     client: &Client,
@@ -249,7 +267,10 @@ fn parse_val(data: &[u8], pos: usize) -> Result<(BVal, usize), String> {
         Some(b'l') => parse_list(data, pos),
         Some(b'd') => parse_dict(data, pos),
         Some(b'0'..=b'9') => parse_bytes(data, pos),
-        Some(b) => Err(format!("Unknown bencode byte 0x{:02x} at offset {}", b, pos)),
+        Some(b) => Err(format!(
+            "Unknown bencode byte 0x{:02x} at offset {}",
+            b, pos
+        )),
         None => Err("Unexpected end of torrent data".into()),
     }
 }

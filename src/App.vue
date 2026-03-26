@@ -1,5 +1,9 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { appDebugLog, appDebugClickDetail } from "./appDebugLog.js";
+import { APP_DEBUG_WINDOW_LABEL } from "./appDebugWindow.js";
 import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./lib/utils.js";
 import { trackCoverFileIdxForLike } from "./library/likesCover.js";
 import { loadLikes, saveLikes } from "./library/libraryStorage.js";
@@ -24,6 +28,7 @@ import Player       from "./components/player/Player.vue";
 import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
 import NavArrows    from "./components/shell/NavArrows.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
+import { openAppDebugWindow } from "./appDebugWindow.js";
 
 // ── Queue (восстановление последней сессии из localStorage) ──────────────────
 const _savedPlayer = loadPlayerSession();
@@ -34,6 +39,10 @@ const queuePos = ref(
     : 0
 );
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
+const nextInQueue = computed(() => {
+  if (queuePos.value >= queue.value.length - 1) return null;
+  return queue.value[queuePos.value + 1];
+});
 
 watch(
   [queue, queuePos],
@@ -77,14 +86,21 @@ onMounted(async () => {
     const s = normalizeLoginStatus(raw);
     if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
   } catch (_) { /* offline or no saved session — stay logged out */ }
-  finally {
-    window.clearTimeout(unblockTimer);
-    restoringSession.value = false;
-  }
+  try {
+    appDebugEnabled.value = await invoke("get_app_debug_enabled");
+  } catch (_) { /* web preview or old backend */ }
+  setupAppDebugInstrumentation();
+  window.clearTimeout(unblockTimer);
+  restoringSession.value = false;
 });
 
 onUnmounted(() => {
   window.removeEventListener("beforeunload", flushPlayerSessionToStorage);
+  appDebugUnlistenClick?.();
+  if (appDebugVisibilityHandler) {
+    document.removeEventListener("visibilitychange", appDebugVisibilityHandler);
+    appDebugVisibilityHandler = null;
+  }
 });
 
 function handleThemeChange(newTheme) {
@@ -103,6 +119,65 @@ const authPanelOpen = ref(false);
 // ── View ──────────────────────────────────────────────────────────────────────
 const view       = ref("search");  // "search" | "likes" | "settings"
 const returnView = ref("search");
+
+/** Журнал отладки: UI, плеер, торренты — только в отдельном окне (настройки → чекбокс). */
+const appDebugEnabled = ref(false);
+
+let appDebugUnlistenClick = null;
+let appDebugVisibilityHandler = null;
+
+function setupAppDebugInstrumentation() {
+  watch(
+    appDebugEnabled,
+    async (on) => {
+      appDebugUnlistenClick?.();
+      appDebugUnlistenClick = null;
+      if (on) {
+        const onClick = (e) => {
+          appDebugLog("ui", "click", appDebugClickDetail(e.target));
+        };
+        document.addEventListener("click", onClick, true);
+        appDebugUnlistenClick = () =>
+          document.removeEventListener("click", onClick, true);
+        void openAppDebugWindow().catch(() => {});
+      } else {
+        const w = await WebviewWindow.getByLabel(APP_DEBUG_WINDOW_LABEL);
+        if (w) await w.close().catch(() => {});
+      }
+    },
+    { immediate: true },
+  );
+
+  watch(view, (v, prev) => {
+    if (!appDebugEnabled.value) return;
+    appDebugLog("ui", "view", { view: v, from: prev });
+  });
+
+  watch(queuePos, (pos) => {
+    if (!appDebugEnabled.value) return;
+    const t = nowPlaying.value;
+    appDebugLog("player", "queuePos", {
+      pos,
+      fileIdx: t?.fileIdx,
+      fileName: t?.fileName?.slice?.(0, 80),
+    });
+  });
+
+  watch(nowPlaying, (t) => {
+    if (!appDebugEnabled.value) return;
+    appDebugLog("player", "nowPlaying", {
+      fileIdx: t?.fileIdx,
+      fileName: t?.fileName?.slice?.(0, 80),
+      torrentId: t?.torrentId,
+    });
+  });
+
+  appDebugVisibilityHandler = () => {
+    if (!appDebugEnabled.value) return;
+    appDebugLog("ui", "visibility", { state: document.visibilityState });
+  };
+  document.addEventListener("visibilitychange", appDebugVisibilityHandler);
+}
 
 // ── Search ────────────────────────────────────────────────────────────────────
 const searchQuery = ref("");
@@ -332,6 +407,11 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
       }
     }
   }
+  const rawSeeds = torrent?.seeders;
+  const seeders =
+    rawSeeds != null && rawSeeds !== "?" && Number.isFinite(Number(rawSeeds))
+      ? Number(rawSeeds)
+      : null;
   return {
     magnet,
     fileIdx:     f.origIdx,
@@ -340,6 +420,7 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
     torrentId:   torrent?.id      ?? "",
     source:      torrent?.source  ?? "rutracker",
     coverFileIdx,
+    seeders,
   };
 }
 
@@ -504,7 +585,7 @@ function handleDownloadTrack(origIdx) {
   downloadOverlayExpanded.value = true;
   const f = files.value.find((x) => x.origIdx === origIdx);
   const label = f ? trackDisplayBasename(f.path) : `Файл ${origIdx}`;
-  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], (p) => {
+  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], null, (p) => {
     downloadProgress.value = p;
   });
 }
@@ -514,19 +595,25 @@ function handleDownloadAll() {
   const audio = files.value.filter((f) => isAudio(f.path));
   const idxs = audio.map((f) => f.origIdx);
   const labels = audio.map((f) => trackDisplayBasename(f.path));
-  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
+  exportTorrentFiles(torrentMagnet.value, idxs, labels, null, (p) => {
     downloadProgress.value = p;
   });
 }
 
-function handleDownloadAlbum(albumFiles) {
+function handleDownloadAlbum(albumFiles, albumName = "") {
   downloadOverlayExpanded.value = true;
   const audio = (albumFiles ?? []).filter((f) => isAudio(f.path));
   const idxs = audio.map((f) => f.origIdx);
   const labels = audio.map((f) => trackDisplayBasename(f.path));
-  exportTorrentFiles(torrentMagnet.value, idxs, labels, (p) => {
-    downloadProgress.value = p;
-  });
+  exportTorrentFiles(
+    torrentMagnet.value,
+    idxs,
+    labels,
+    { albumDirName: albumName || selected.value?.name || "Альбом" },
+    (p) => {
+      downloadProgress.value = p;
+    }
+  );
 }
 
 function handleNext() {
@@ -782,11 +869,13 @@ function handleNavBack() {
           :restoring-session="restoringSession"
           :app-user="appUser"
           :theme="theme"
+          :app-debug-enabled="appDebugEnabled"
           @login="handleLogin"
           @logout="handleLogout"
           @app-logout="handleAppLogout"
           @open-auth="authPanelOpen = true"
           @theme-change="handleThemeChange"
+          @update:app-debug-enabled="appDebugEnabled = $event"
         />
 
         <!-- Search view -->
@@ -849,6 +938,7 @@ function handleNavBack() {
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
       :track="nowPlaying"
+      :next-track="nextInQueue"
       :suppress-autoplay="suppressAutoplayAfterSessionRestore"
       :has-prev="queuePos > 0"
       :has-next="queuePos < queue.length - 1"

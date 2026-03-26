@@ -147,8 +147,12 @@ impl RutrackerState {
     }
 
     fn wipe(&self) {
-        if let Some(p) = &self.session_path { let _ = std::fs::remove_file(p); }
-        if let Some(p) = &self.meta_path    { let _ = std::fs::remove_file(p); }
+        if let Some(p) = &self.session_path {
+            let _ = std::fs::remove_file(p);
+        }
+        if let Some(p) = &self.meta_path {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
 
@@ -175,7 +179,9 @@ fn extract_user_id(html: &str) -> Option<String> {
     for marker in &["viewprofile&u=", "viewprofile&amp;u="] {
         if let Some(pos) = html.find(marker) {
             let after = &html[pos + marker.len()..];
-            let end = after.find(|c: char| !c.is_ascii_digit()).unwrap_or(after.len());
+            let end = after
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(after.len());
             let uid = &after[..end];
             if !uid.is_empty() {
                 return Some(uid.to_string());
@@ -253,7 +259,9 @@ async fn fetch_avatar_data_url(client: &Client, url: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "image/jpeg".to_string());
     let bytes = resp.bytes().await.ok()?;
-    if bytes.is_empty() { return None; }
+    if bytes.is_empty() {
+        return None;
+    }
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Some(format!("data:{};base64,{}", mime, b64))
 }
@@ -314,7 +322,7 @@ pub async fn rutracker_login(
     let bytes = resp.bytes().await.unwrap_or_default();
     let (decoded, _, _) = WINDOWS_1251.decode(&bytes);
 
-    let redirected_away    = !final_url.contains("/login.php");
+    let redirected_away = !final_url.contains("/login.php");
     let body_says_logged_in = decoded.contains("logout.php") || decoded.contains("profile.php");
 
     if redirected_away || body_says_logged_in {
@@ -329,7 +337,7 @@ pub async fn rutracker_login(
 
         let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
         inner.logged_in = true;
-        inner.username   = Some(username.clone());
+        inner.username = Some(username.clone());
         inner.avatar_url = avatar_data_url.clone();
 
         return Ok(LoginResult {
@@ -340,12 +348,16 @@ pub async fn rutracker_login(
         });
     }
 
-    let error = if decoded.contains("неверный") || decoded.contains("Неверный")
-        || decoded.contains("пароль")  || decoded.contains("password")
-        || decoded.contains("invalid") || decoded.contains("Invalid")
+    let error = if decoded.contains("неверный")
+        || decoded.contains("Неверный")
+        || decoded.contains("пароль")
+        || decoded.contains("password")
+        || decoded.contains("invalid")
+        || decoded.contains("Invalid")
     {
         "Неверный логин или пароль".to_string()
-    } else if decoded.contains("апч") || decoded.contains("captcha") || decoded.contains("CAPTCHA") {
+    } else if decoded.contains("апч") || decoded.contains("captcha") || decoded.contains("CAPTCHA")
+    {
         "Требуется CAPTCHA — попробуйте войти через браузер".to_string()
     } else if decoded.contains("бан") || decoded.contains("заблокирован") {
         "Аккаунт заблокирован".to_string()
@@ -353,17 +365,20 @@ pub async fn rutracker_login(
         format!("Ошибка входа (HTTP {})", status.as_u16())
     };
 
-    Ok(LoginResult { success: false, error: Some(error), username: None, avatar_url: None })
+    Ok(LoginResult {
+        success: false,
+        error: Some(error),
+        username: None,
+        avatar_url: None,
+    })
 }
 
 #[tauri::command]
-pub async fn rutracker_logout(
-    state: tauri::State<'_, RutrackerState>,
-) -> Result<(), String> {
+pub async fn rutracker_logout(state: tauri::State<'_, RutrackerState>) -> Result<(), String> {
     state.wipe();
     let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
     inner.logged_in = false;
-    inner.username   = None;
+    inner.username = None;
     inner.avatar_url = None;
     Ok(())
 }
@@ -378,14 +393,21 @@ pub async fn rutracker_restore_session(
 ) -> Result<LoginStatus, String> {
     // Fast-path: no cookies stored at all
     {
-        let store = state.cookie_store.lock().map_err(|_| "lock error".to_string())?;
+        let store = state
+            .cookie_store
+            .lock()
+            .map_err(|_| "lock error".to_string())?;
         if store.iter_any().count() == 0 {
-            return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
+            return Ok(LoginStatus {
+                logged_in: false,
+                username: None,
+                avatar_url: None,
+            });
         }
     }
 
     let client = state.client.clone();
-    let base   = mirror.trim_end_matches('/').to_string();
+    let base = mirror.trim_end_matches('/').to_string();
 
     // Light healthcheck: try loading the forum index
     let resp = client
@@ -397,7 +419,11 @@ pub async fn rutracker_restore_session(
     if resp.url().to_string().contains("/login.php") {
         // Session expired — wipe files
         state.wipe();
-        return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
+        return Ok(LoginStatus {
+            logged_in: false,
+            username: None,
+            avatar_url: None,
+        });
     }
 
     // Session is valid — restore from saved meta (no extra network requests)
@@ -405,24 +431,22 @@ pub async fn rutracker_restore_session(
 
     let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
     inner.logged_in = true;
-    inner.username   = meta.username.clone();
+    inner.username = meta.username.clone();
     inner.avatar_url = meta.avatar_data_url.clone();
 
     Ok(LoginStatus {
         logged_in: true,
-        username:  meta.username,
+        username: meta.username,
         avatar_url: meta.avatar_data_url,
     })
 }
 
 #[tauri::command]
-pub fn rutracker_status(
-    state: tauri::State<'_, RutrackerState>,
-) -> Result<LoginStatus, String> {
+pub fn rutracker_status(state: tauri::State<'_, RutrackerState>) -> Result<LoginStatus, String> {
     let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
     Ok(LoginStatus {
         logged_in: inner.logged_in,
-        username:  inner.username.clone(),
+        username: inner.username.clone(),
         avatar_url: inner.avatar_url.clone(),
     })
 }
@@ -524,4 +548,25 @@ pub async fn rutracker_get_torrent_details(
     }
     let base = mirror.trim_end_matches('/').to_string();
     topic::get_torrent_details(&state.client, &base, &topic_id).await
+}
+
+/// Download `.torrent` for a topic (for streaming without magnet metadata resolution).
+#[tauri::command]
+pub async fn rutracker_download_torrent_file_b64(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+    topic_id: String,
+) -> Result<String, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Err("Необходимо войти в Rutracker".into());
+        }
+    }
+    let base = mirror.trim_end_matches('/').to_string();
+    let raw = topic::download_torrent_file_bytes(&state.client, &base, &topic_id).await?;
+    Ok(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &raw,
+    ))
 }

@@ -19,12 +19,17 @@ type ManagedTorrentHandle = Arc<ManagedTorrent>;
 const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024; // 3 MB hard cap
 const FETCH_TIMEOUT_SECS: u64 = 15;
 
-fn torrent_images_dir_name() -> &'static str {
+/// Subfolder under app data for the cover-art librqbit session (debug vs release).
+pub fn torrent_images_dir_label() -> &'static str {
     if cfg!(debug_assertions) {
         "torrent_images_dev"
     } else {
         "torrent_images"
     }
+}
+
+fn torrent_images_dir_name() -> &'static str {
+    torrent_images_dir_label()
 }
 /// In-memory cache for successful data URLs (avoids repeat BT work and IPC payload).
 const CACHE_MAX_ENTRIES: usize = 128;
@@ -106,7 +111,11 @@ impl MagnetInner {
             return Ok(Some(handle));
         }
 
-        let handle = self.handle.as_ref().expect("handle set when refcounts non-empty").clone();
+        let handle = self
+            .handle
+            .as_ref()
+            .expect("handle set when refcounts non-empty")
+            .clone();
         session
             .update_only_files(&handle, &only_set)
             .await
@@ -164,7 +173,11 @@ impl TorrentImageState {
         }
     }
 
-    fn cache_put(cache: &mut HashMap<(String, usize), String>, key: (String, usize), value: String) {
+    fn cache_put(
+        cache: &mut HashMap<(String, usize), String>,
+        key: (String, usize),
+        value: String,
+    ) {
         if cache.len() >= CACHE_MAX_ENTRIES && !cache.contains_key(&key) {
             if let Some(k) = cache.keys().next().cloned() {
                 cache.remove(&k);
@@ -263,12 +276,10 @@ impl TorrentImageState {
                     .get(file_idx)
                     .and_then(|fi| fi.relative_filename.extension())
                     .and_then(|e| e.to_str())
-                    .map(|ext| {
-                        match ext.to_ascii_lowercase().as_str() {
-                            "png" => "image/png",
-                            "webp" => "image/webp",
-                            _ => "image/jpeg",
-                        }
+                    .map(|ext| match ext.to_ascii_lowercase().as_str() {
+                        "png" => "image/png",
+                        "webp" => "image/webp",
+                        _ => "image/jpeg",
                     })
                     .unwrap_or("image/jpeg")
                     .to_string()
@@ -307,6 +318,24 @@ impl TorrentImageState {
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
         Some(format!("data:{};base64,{}", mime, b64))
+    }
+
+    /// Drops the image librqbit session, clears in-memory caches, and wipes the on-disk folder.
+    pub async fn purge_all_data(&self) -> Result<(), String> {
+        let mut sess_guard = self.session.lock().await;
+        if let Some(s) = sess_guard.take() {
+            crate::torrent_stream::purge_session_torrents(&s).await;
+        }
+        drop(sess_guard);
+        self.magnet_states.lock().await.clear();
+        self.data_url_cache.lock().await.clear();
+        if let Some(ref base) = self.base_dir {
+            if base.exists() {
+                std::fs::remove_dir_all(base).map_err(|e| format!("Очистка кэша обложек: {e}"))?;
+            }
+            std::fs::create_dir_all(base).map_err(|e| format!("Очистка кэша обложек: {e}"))?;
+        }
+        Ok(())
     }
 }
 

@@ -250,9 +250,13 @@ fn extract_tor_size(row: &str) -> u64 {
         return 0;
     };
     let after = &row[pos..];
-    let Some(u_start) = after.find("<u>") else { return 0 };
+    let Some(u_start) = after.find("<u>") else {
+        return 0;
+    };
     let inner = &after[u_start + 3..];
-    let Some(u_end) = inner.find("</u>") else { return 0 };
+    let Some(u_end) = inner.find("</u>") else {
+        return 0;
+    };
     inner[..u_end].trim().parse().unwrap_or(0)
 }
 

@@ -3,7 +3,7 @@ import { ref, computed } from "vue";
 import CoverThumb from "../shared/CoverThumb.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import { trackCoverFileIdxForLike } from "../../library/likesCover.js";
-import { trackDisplayBasename } from "../../lib/utils.js";
+import { trackDisplayBasename, audioFormatLabel } from "../../lib/utils.js";
 
 const props = defineProps({
   likes: Array,
@@ -130,11 +130,11 @@ function trackCoverFileIdx(like) {
               :radius="4"
             />
             <div class="track-info">
-              <div class="track-name">{{ trackDisplayBasename(like.fileName) }}</div>
-              <button
-                class="likes-track-sub"
-                @click.stop="emit('open-torrent', like)"
-              >{{ like.torrentName }}</button>
+              <div class="track-name-wrap">
+                <div class="track-name">{{ trackDisplayBasename(like.fileName) }}</div>
+                <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(like.filePath || like.fileName)}`">{{ audioFormatLabel(like.filePath || like.fileName) }}</span>
+              </div>
+              <button class="likes-track-sub" @click.stop="emit('open-torrent', like)">{{ like.torrentName }}</button>
             </div>
           </div>
           <div class="track-actions">
