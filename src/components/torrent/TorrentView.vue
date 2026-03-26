@@ -6,6 +6,7 @@ import {
   isImage,
   basename,
   trackDisplayBasename,
+  audioFormatLabel,
   fmtSize,
   fmtDate,
   detectAlbums,
@@ -141,7 +142,7 @@ function makeTrackLike(torrent, magnet, f) {
     source: torrent.source,
     magnet,
     fileIdx: f.origIdx,
-    fileName: trackDisplayBasename(f.path),
+    fileName: f.path,
     coverFileIdx,
     coverFile,
   };
@@ -321,7 +322,10 @@ watch(
             </template>
           </div>
           <div class="spotify-col-title">
-            <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
+            <div class="track-name-wrap">
+              <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
+              <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
+            </div>
           </div>
           <div class="spotify-col-time">
             <span class="spotify-dur">{{ f.size > 0 ? fmtSize(f.size) : "—" }}</span>
@@ -457,7 +461,10 @@ watch(
             </template>
           </div>
           <div class="track-info">
-            <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
+            <div class="track-name-wrap">
+              <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
+              <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
+            </div>
           </div>
           <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
           <div class="track-actions">

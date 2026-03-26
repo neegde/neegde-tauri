@@ -146,9 +146,41 @@ export const AUDIO_EXTS = new Set([
   ".mp3", ".flac", ".ape", ".wav", ".m4a", ".ogg", ".wv", ".aac", ".opus",
 ]);
 
+const AUDIO_FORMAT_LABELS = Object.freeze({
+  mp3: "MP3",
+  flac: "FLAC",
+  ape: "APE",
+  wav: "WAV",
+  m4a: "M4A",
+  ogg: "OGG",
+  wv: "WV",
+  aac: "AAC",
+  opus: "OPUS",
+});
+
 export function isAudio(path) {
   const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
   return AUDIO_EXTS.has(ext);
+}
+
+/**
+ * Extracts normalized human-readable audio format from a file path.
+ *
+ * Args:
+ *     path: Audio file path or file name.
+ *
+ * Returns:
+ *     Uppercase short format label (for example "FLAC"), or "AUDIO" for unknown extension.
+ */
+export function audioFormatLabel(path) {
+  const value = String(path ?? "").trim();
+  if (!value) return "AUDIO";
+  const dot = value.lastIndexOf(".");
+  if (dot < 0 || dot === value.length - 1) return "AUDIO";
+  const ext = value.slice(dot + 1).toLowerCase();
+  if (AUDIO_FORMAT_LABELS[ext]) return AUDIO_FORMAT_LABELS[ext];
+  if (!/^[a-z0-9]{1,6}$/.test(ext)) return "AUDIO";
+  return ext.toUpperCase();
 }
 
 export function basename(path) {

@@ -1192,6 +1192,33 @@ body {
 
 .track-info   { min-width: 0; padding: 0 12px; }
 .track-name   { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.track-name-wrap .track-name,
+.track-name-wrap .spotify-track-title {
+  min-width: 0;
+}
+.track-format-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  opacity: 0.92;
+}
 .track-row.playing .track-name {
   color: var(--text);
   font-weight: 600;
@@ -1635,6 +1662,9 @@ body {
 .likes-track-main .track-info {
   padding: 0;
 }
+.likes-track-main .track-name-wrap {
+  margin-bottom: 2px;
+}
 
 /* track subtitle link inside likes */
 .likes-track-sub {
@@ -1982,6 +2012,10 @@ body {
 [data-theme="light"] .login-input::placeholder          { color: var(--muted2); }
 [data-theme="light"] .progress-track                    { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .track-row:hover                   { background: rgba(0,0,0,0.04); }
+[data-theme="light"] .track-format-chip {
+  border-color: rgba(0, 0, 0, 0.16);
+  background: rgba(0, 0, 0, 0.04);
+}
 [data-theme="light"] .volume-slider::-webkit-slider-runnable-track { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .volume-slider::-moz-range-track    { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .ctrl-btn-play                     { color: #fff; }
