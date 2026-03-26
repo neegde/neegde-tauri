@@ -630,18 +630,8 @@ impl TorrentStreamState {
 
         self.check_prepare_cancel()?;
 
-        // Stream only the chosen file and prioritize pieces around stream cursor.
-        let mut only = HashSet::new();
-        only.insert(file_idx);
-        session
-            .update_only_files(&handle, &only)
-            .await
-            .map_err(|e| format!("Ошибка настройки sequential-режима: {e:#}"))?;
-        self.inner.debug_log.push(
-            "prepare",
-            "update_only_files done",
-            Some(json!({ "fileIdx": file_idx })),
-        );
+        self.select_file_for_streaming(&session, &handle, file_idx)
+            .await?;
 
         self.check_prepare_cancel()?;
 
@@ -675,6 +665,7 @@ impl TorrentStreamState {
                     .unwrap_or(0)
             })
             .unwrap_or(0);
+        let file_torrent_end_offset = file_torrent_offset.saturating_add(total_len);
         let target = PREBUFFER_BYTES.min(total_len as usize);
         prep_shared
             .prebuffer_target
@@ -799,6 +790,7 @@ impl TorrentStreamState {
             total_len,
             playback_offset: Arc::new(AtomicU64::new(filled as u64)),
             file_torrent_offset,
+            file_torrent_end_offset,
             download_mode: DownloadMode::SequentialStartup,
             mime,
         }));
@@ -834,7 +826,12 @@ impl TorrentStreamState {
                     continue;
                 };
                 let current_offset = g.playback_offset.load(Ordering::Relaxed);
-                update_piece_priorities(&torrent, current_offset.saturating_add(g.file_torrent_offset));
+                update_piece_priorities(
+                    &torrent,
+                    current_offset.saturating_add(g.file_torrent_offset),
+                    g.file_torrent_offset,
+                    g.file_torrent_end_offset,
+                );
                 let buffered_ahead = g
                     .readahead
                     .start_offset
@@ -946,6 +943,63 @@ impl TorrentStreamState {
             .prepare_cancel_requested
             .store(true, Ordering::SeqCst);
     }
+
+    /// Selects one file for playback and disables all other files for this torrent.
+    ///
+    /// Args:
+    ///     session: Active librqbit session.
+    ///     torrent: Managed torrent handle.
+    ///     file_index: File index that must remain enabled.
+    async fn select_file_for_streaming(
+        &self,
+        session: &Arc<Session>,
+        torrent: &TorrentHandle,
+        file_index: usize,
+    ) -> Result<(), String> {
+        let file_count = torrent.with_metadata(|meta| meta.file_infos.len()).unwrap_or(0);
+        if file_index >= file_count {
+            return Err(format!(
+                "Выбранный индекс файла вне диапазона: {file_index} (file_count={file_count})"
+            ));
+        }
+
+        let mut only = HashSet::new();
+        only.insert(file_index);
+        session
+            .update_only_files(torrent, &only)
+            .await
+            .map_err(|e| format!("Ошибка выбора файла для стриминга: {e:#}"))?;
+
+        let selected_name = torrent
+            .with_metadata(|meta| {
+                meta.file_infos
+                    .get(file_index)
+                    .map(|fi| fi.relative_filename.to_string_lossy().to_string())
+            })
+            .ok()
+            .flatten();
+        let disabled_indices: Vec<usize> = (0..file_count).filter(|&i| i != file_index).collect();
+
+        self.inner.debug_log.push(
+            "prepare",
+            "selected streaming file (others disabled)",
+            Some(json!({
+                "selectedFileIdx": file_index,
+                "selectedFileName": selected_name,
+                "fileCount": file_count,
+                "disabledFileCount": disabled_indices.len(),
+            })),
+        );
+        self.inner.debug_log.push(
+            "prepare",
+            "disabled torrent files",
+            Some(json!({
+                "selectedFileIdx": file_index,
+                "disabledFileIndices": disabled_indices,
+            })),
+        );
+        Ok(())
+    }
 }
 
 impl TorrentStreamInner {
@@ -1044,15 +1098,34 @@ const HYBRID_SWITCH_BUFFER_BYTES: u64 = 15 * 1024 * 1024;
 /// Args:
 ///     torrent: Managed torrent handle.
 ///     current_offset: Current absolute file offset in bytes.
-fn update_piece_priorities(torrent: &TorrentHandle, current_offset: u64) {
+///     selected_file_start: Inclusive start offset of selected file in torrent bytes.
+///     selected_file_end: Exclusive end offset of selected file in torrent bytes.
+fn update_piece_priorities(
+    torrent: &TorrentHandle,
+    current_offset: u64,
+    selected_file_start: u64,
+    selected_file_end: u64,
+) {
     let _ = torrent.with_metadata(|meta| {
         let piece_len = meta.lengths.default_piece_length() as u64;
         if piece_len == 0 {
             return;
         }
-        let high_start = current_offset / piece_len;
-        let high_end = (current_offset + HIGH_PRIORITY_WINDOW_BYTES) / piece_len;
-        let medium_end = (current_offset + MEDIUM_PRIORITY_WINDOW_BYTES) / piece_len;
+        if selected_file_end <= selected_file_start {
+            return;
+        }
+
+        let clamped_offset = current_offset.clamp(selected_file_start, selected_file_end - 1);
+        let high_window_end = clamped_offset
+            .saturating_add(HIGH_PRIORITY_WINDOW_BYTES)
+            .min(selected_file_end - 1);
+        let medium_window_end = clamped_offset
+            .saturating_add(MEDIUM_PRIORITY_WINDOW_BYTES)
+            .min(selected_file_end - 1);
+
+        let high_start = clamped_offset / piece_len;
+        let high_end = high_window_end / piece_len;
+        let medium_end = medium_window_end / piece_len;
         let _ = (high_start, high_end, medium_end);
     });
 }

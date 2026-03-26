@@ -38,6 +38,7 @@ pub(super) struct PreparedStream {
     pub(super) stream_pos: u64,
     pub(super) playback_offset: Arc<AtomicU64>,
     pub(super) file_torrent_offset: u64,
+    pub(super) file_torrent_end_offset: u64,
     pub(super) download_mode: DownloadMode,
     pub(super) mime: String,
 }
