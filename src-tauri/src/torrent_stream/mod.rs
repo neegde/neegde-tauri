@@ -28,7 +28,7 @@ pub(super) const PREBUFFER_READ_TIMEOUT_SECS: u64 = 12;
 /// Hard cap for the whole prebuffer loop (many small reads).
 pub(super) const PREBUFFER_MAX_WALL_SECS: u64 = 45;
 pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
-pub(super) const COPY_CHUNK_BYTES: usize = 64 * 1024;
+pub(super) const COPY_CHUNK_BYTES: usize = 512 * 1024;
 
 pub use state::TorrentStreamState;
 use base64::Engine;

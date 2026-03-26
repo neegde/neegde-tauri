@@ -1,14 +1,15 @@
 use bytes::Bytes;
+use dashmap::DashMap;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::Id20;
 use librqbit::torrent_from_bytes_ext;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ByteBuf, Magnet, Session, SessionOptions,
-    TorrentStats, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ByteBuf, Magnet, ManagedTorrent, Session,
+    SessionOptions, TorrentStats, TorrentStatsState,
 };
 use serde::Serialize;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -25,7 +26,7 @@ use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
-use super::types::{PrefetchNextResponse, PreparedStream, StreamReady};
+use super::types::{DownloadMode, PrefetchNextResponse, PreparedStream, ReadaheadBuffer, StreamReady};
 use super::{PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
 
 /// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
@@ -204,7 +205,7 @@ pub(super) struct TorrentStreamInner {
     pub(super) app: tauri::AppHandle,
     pub(super) session: Mutex<Option<Arc<Session>>>,
     pub(super) server_addr: Mutex<Option<SocketAddr>>,
-    pub(super) streams: Mutex<HashMap<String, Arc<Mutex<PreparedStream>>>>,
+    pub(super) streams: DashMap<String, Arc<Mutex<PreparedStream>>>,
     pub(super) token_counter: AtomicU64,
     pub(super) stream_cache: Arc<StreamCache>,
     pub(super) cache_settings: Arc<RwLock<UserCacheSettings>>,
@@ -224,7 +225,7 @@ impl TorrentStreamState {
                 app,
                 session: Mutex::new(None),
                 server_addr: Mutex::new(None),
-                streams: Mutex::new(HashMap::new()),
+                streams: DashMap::new(),
                 token_counter: AtomicU64::new(1),
                 stream_cache: Arc::new(StreamCache::new(
                     cache_settings.clone(),
@@ -660,8 +661,20 @@ impl TorrentStreamState {
             .clone()
             .stream(file_idx)
             .map_err(|e| format!("Не удалось открыть поток файла: {e:#}"))?;
+        let scheduler_stream = handle
+            .clone()
+            .stream(file_idx)
+            .map_err(|e| format!("Не удалось открыть поток планировщика: {e:#}"))?;
 
         let total_len = stream.len();
+        let file_torrent_offset = handle
+            .with_metadata(|meta| {
+                meta.file_infos
+                    .get(file_idx)
+                    .map(|fi| fi.offset_in_torrent)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
         let target = PREBUFFER_BYTES.min(total_len as usize);
         prep_shared
             .prebuffer_target
@@ -777,16 +790,24 @@ impl TorrentStreamState {
         let prepared = Arc::new(Mutex::new(PreparedStream {
             stream_pos: filled as u64,
             stream: Box::new(stream),
+            scheduler_stream: Arc::new(Mutex::new(Box::new(scheduler_stream))),
             prebuffer,
+            readahead: ReadaheadBuffer {
+                buffer: Vec::new(),
+                start_offset: filled as u64,
+            },
             total_len,
+            playback_offset: Arc::new(AtomicU64::new(filled as u64)),
+            file_torrent_offset,
+            download_mode: DownloadMode::SequentialStartup,
             mime,
         }));
+        self.spawn_priority_worker(prepared.clone(), handle.clone(), token.clone());
 
-        let mut map = self.inner.streams.lock().await;
         // Keep existing tokens alive: the UI may trigger multiple parallel prepare calls
         // (e.g. preview images + player). Clearing here can invalidate the URL that
         // was just returned to the player before <audio> makes its first HTTP request.
-        map.insert(token.clone(), prepared);
+        self.inner.streams.insert(token.clone(), prepared);
         self.inner
             .stream_cache
             .register_stream_token(token.clone(), info_hash)
@@ -797,20 +818,60 @@ impl TorrentStreamState {
         })
     }
 
+    fn spawn_priority_worker(
+        &self,
+        prepared: Arc<Mutex<PreparedStream>>,
+        torrent: Arc<ManagedTorrent>,
+        token: String,
+    ) {
+        let dbg = self.inner.debug_log.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let Some(mut g) = prepared.try_lock().ok() else {
+                    continue;
+                };
+                let current_offset = g.playback_offset.load(Ordering::Relaxed);
+                update_piece_priorities(&torrent, current_offset.saturating_add(g.file_torrent_offset));
+                let buffered_ahead = g
+                    .readahead
+                    .start_offset
+                    .saturating_add(g.readahead.buffer.len() as u64)
+                    .saturating_sub(current_offset);
+                if buffered_ahead >= HYBRID_SWITCH_BUFFER_BYTES {
+                    g.download_mode = DownloadMode::HybridStreaming;
+                } else {
+                    g.download_mode = DownloadMode::SequentialStartup;
+                }
+                if dbg.is_enabled() {
+                    dbg.push(
+                        "priority",
+                        "window updated",
+                        Some(json!({
+                            "token": token,
+                            "offset": current_offset,
+                            "bufferedAhead": buffered_ahead,
+                            "mode": g.download_mode,
+                        })),
+                    );
+                }
+            }
+        });
+    }
+
     pub(super) async fn dispose(&self) {
         self.inner
             .debug_log
             .push("lifecycle", "dispose preview (clear streams)", None);
         self.inner.stream_cache.clear_stream_tokens().await;
-        self.inner.streams.lock().await.clear();
+        self.inner.streams.clear();
     }
 
     /// Removes one prepared HTTP stream so its token stops resolving (LRU can evict the torrent).
     pub(super) async fn release_stream_token(&self, token: &str) {
-        let removed = {
-            let mut map = self.inner.streams.lock().await;
-            map.remove(token).is_some()
-        };
+        let removed = self.inner.streams.remove(token).is_some();
         if removed {
             self.inner.stream_cache.unregister_stream_token(token).await;
             self.inner.debug_log.push(
@@ -970,6 +1031,30 @@ impl TorrentStreamInner {
         });
         Ok(addr)
     }
+}
+
+type TorrentHandle = Arc<ManagedTorrent>;
+
+const HIGH_PRIORITY_WINDOW_BYTES: u64 = 10 * 1024 * 1024;
+const MEDIUM_PRIORITY_WINDOW_BYTES: u64 = 40 * 1024 * 1024;
+const HYBRID_SWITCH_BUFFER_BYTES: u64 = 15 * 1024 * 1024;
+
+/// Updates piece-priority windows for the current playback offset.
+///
+/// Args:
+///     torrent: Managed torrent handle.
+///     current_offset: Current absolute file offset in bytes.
+fn update_piece_priorities(torrent: &TorrentHandle, current_offset: u64) {
+    let _ = torrent.with_metadata(|meta| {
+        let piece_len = meta.lengths.default_piece_length() as u64;
+        if piece_len == 0 {
+            return;
+        }
+        let high_start = current_offset / piece_len;
+        let high_end = (current_offset + HIGH_PRIORITY_WINDOW_BYTES) / piece_len;
+        let medium_end = (current_offset + MEDIUM_PRIORITY_WINDOW_BYTES) / piece_len;
+        let _ = (high_start, high_end, medium_end);
+    });
 }
 
 fn guess_audio_mime(ext: &str) -> &'static str {

@@ -1,8 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dashmap::DashMap;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::Id20;
 use librqbit::Session;
@@ -14,15 +15,15 @@ use crate::cache_settings::UserCacheSettings;
 use super::debug_log::AppDebugLog;
 
 pub struct StreamCache {
+    last_access: DashMap<Id20, Instant>,
+    ref_count: DashMap<Id20, u32>,
+    token_to_hash: DashMap<String, Id20>,
     inner: tokio::sync::Mutex<StreamCacheState>,
     user_settings: Arc<RwLock<UserCacheSettings>>,
     debug_log: Arc<AppDebugLog>,
 }
 
 struct StreamCacheState {
-    last_access: HashMap<Id20, Instant>,
-    ref_count: HashMap<Id20, u32>,
-    token_to_hash: HashMap<String, Id20>,
     preparing: HashSet<Id20>,
     export_hash: Option<Id20>,
 }
@@ -34,10 +35,10 @@ impl StreamCache {
         debug_log: Arc<AppDebugLog>,
     ) -> Self {
         Self {
+            last_access: DashMap::new(),
+            ref_count: DashMap::new(),
+            token_to_hash: DashMap::new(),
             inner: tokio::sync::Mutex::new(StreamCacheState {
-                last_access: HashMap::new(),
-                ref_count: HashMap::new(),
-                token_to_hash: HashMap::new(),
                 preparing: HashSet::new(),
                 export_hash: None,
             }),
@@ -53,7 +54,7 @@ impl StreamCache {
     pub async fn begin_prepare(&self, hash: Id20) {
         let mut g = self.inner.lock().await;
         g.preparing.insert(hash);
-        g.last_access.insert(hash, Instant::now());
+        self.last_access.insert(hash, Instant::now());
     }
 
     /// Clears the mid-prepare guard after `prepare` finishes.
@@ -72,7 +73,7 @@ impl StreamCache {
     pub async fn begin_export(&self, hash: Id20) {
         let mut g = self.inner.lock().await;
         g.export_hash = Some(hash);
-        g.last_access.insert(hash, Instant::now());
+        self.last_access.insert(hash, Instant::now());
     }
 
     /// Clears the export pin after `torrent_export_files` completes.
@@ -87,37 +88,38 @@ impl StreamCache {
     ///     token: URL segment returned to the player.
     ///     hash: Info hash for the torrent backing that stream.
     pub async fn register_stream_token(&self, token: String, hash: Id20) {
-        let mut g = self.inner.lock().await;
-        g.last_access.insert(hash, Instant::now());
-        *g.ref_count.entry(hash).or_insert(0) += 1;
-        g.token_to_hash.insert(token, hash);
+        self.last_access.insert(hash, Instant::now());
+        self.ref_count
+            .entry(hash)
+            .and_modify(|v| *v = v.saturating_add(1))
+            .or_insert(1);
+        self.token_to_hash.insert(token, hash);
     }
 
     /// Clears all stream tokens (for example after `torrent_dispose_preview`).
     pub async fn clear_stream_tokens(&self) {
-        let mut g = self.inner.lock().await;
-        let hashes: Vec<Id20> = g.token_to_hash.drain().map(|(_, h)| h).collect();
+        let hashes: Vec<Id20> = self.token_to_hash.iter().map(|e| *e.value()).collect();
+        self.token_to_hash.clear();
         for h in hashes {
-            if let Some(c) = g.ref_count.get_mut(&h) {
+            if let Some(mut c) = self.ref_count.get_mut(&h) {
                 *c = c.saturating_sub(1);
-                if *c == 0 {
-                    g.ref_count.remove(&h);
-                }
+            }
+            if self.ref_count.get(&h).is_some_and(|v| *v == 0) {
+                self.ref_count.remove(&h);
             }
         }
     }
 
     /// Drops one HTTP token from ref bookkeeping (call after removing the stream from `streams`).
     pub async fn unregister_stream_token(&self, token: &str) {
-        let mut g = self.inner.lock().await;
-        let Some(h) = g.token_to_hash.remove(token) else {
+        let Some((_, h)) = self.token_to_hash.remove(token) else {
             return;
         };
-        if let Some(c) = g.ref_count.get_mut(&h) {
+        if let Some(mut c) = self.ref_count.get_mut(&h) {
             *c = c.saturating_sub(1);
-            if *c == 0 {
-                g.ref_count.remove(&h);
-            }
+        }
+        if self.ref_count.get(&h).is_some_and(|v| *v == 0) {
+            self.ref_count.remove(&h);
         }
     }
 
@@ -140,7 +142,7 @@ impl StreamCache {
             let over_budget = size > max_bytes;
             let victim = {
                 let g = self.inner.lock().await;
-                g.pick_victim(session, over_budget, ttl)
+                g.pick_victim(session, over_budget, ttl, &self.last_access, &self.ref_count)
             };
             let Some(hash) = victim else {
                 break;
@@ -150,9 +152,9 @@ impl StreamCache {
                 .await
                 .is_ok()
             {
-                let mut g = self.inner.lock().await;
-                g.last_access.remove(&hash);
-                g.ref_count.remove(&hash);
+                self.last_access.remove(&hash);
+                self.ref_count.remove(&hash);
+                self.token_to_hash.retain(|_, v| *v != hash);
                 self.debug_log.push(
                     "cache",
                     format!("evicted {}", hash.as_string()),
@@ -176,10 +178,10 @@ impl StreamCache {
 }
 
 impl StreamCacheState {
-    fn is_protected(&self, h: Id20) -> bool {
+    fn is_protected(&self, h: Id20, ref_count: &DashMap<Id20, u32>) -> bool {
         self.preparing.contains(&h)
             || self.export_hash == Some(h)
-            || self.ref_count.get(&h).copied().unwrap_or(0) > 0
+            || ref_count.get(&h).map(|v| *v).unwrap_or(0) > 0
     }
 
     fn pick_victim(
@@ -187,6 +189,8 @@ impl StreamCacheState {
         session: &Session,
         over_budget: bool,
         idle_ttl: Duration,
+        last_access: &DashMap<Id20, Instant>,
+        ref_count: &DashMap<Id20, u32>,
     ) -> Option<Id20> {
         let unknown_last_access = || {
             Instant::now()
@@ -196,10 +200,9 @@ impl StreamCacheState {
         let mut candidates: Vec<(Id20, Instant)> = session.with_torrents(|iter| {
             iter.map(|(_, t)| {
                 let ih = t.info_hash();
-                let la = self
-                    .last_access
+                let la = last_access
                     .get(&ih)
-                    .copied()
+                    .map(|v| *v.value())
                     .unwrap_or_else(unknown_last_access);
                 (ih, la)
             })
@@ -210,10 +213,10 @@ impl StreamCacheState {
         }
         candidates.sort_by_key(|(_, la)| *la);
         for (h, la) in candidates {
-            if self.is_protected(h) {
+            if self.is_protected(h, ref_count) {
                 continue;
             }
-            if self.ref_count.get(&h).copied().unwrap_or(0) > 0 {
+            if ref_count.get(&h).map(|v| *v).unwrap_or(0) > 0 {
                 continue;
             }
             if over_budget {
