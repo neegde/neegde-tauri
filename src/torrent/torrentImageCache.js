@@ -18,9 +18,12 @@ export function peekTorrentImage(magnet, fileIdx) {
 }
 
 /**
+ * @param {string} magnet
+ * @param {number} fileIdx
+ * @param {string | null} [torrentFileB64] - optional .torrent bytes (base64); skips DHT wait in Rust
  * @returns {Promise<string | null>}
  */
-export async function getTorrentImageDataUrl(magnet, fileIdx) {
+export async function getTorrentImageDataUrl(magnet, fileIdx, torrentFileB64 = null) {
   const key = cacheKey(magnet, fileIdx);
   if (cache.has(key)) return cache.get(key);
 
@@ -29,6 +32,7 @@ export async function getTorrentImageDataUrl(magnet, fileIdx) {
     p = invoke("torrent_fetch_image", {
       magnet: enrichMagnetWithOpenTrackers(magnet),
       fileIdx,
+      torrentFileB64: torrentFileB64 ?? null,
     })
       .then((u) => {
         const v = u ?? null;

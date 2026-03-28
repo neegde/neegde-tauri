@@ -68,7 +68,7 @@ function setupCoverObserver() {
         })
         .catch(() => {});
     },
-    { rootMargin: "200px" }
+    { rootMargin: "400px" }
   );
 
   const el = cardRef.value;

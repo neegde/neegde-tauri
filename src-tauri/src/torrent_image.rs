@@ -4,6 +4,7 @@
 /// Concurrent fetches for the same magnet share one handle and merge `only_files` into a union
 /// so multiple covers download in parallel instead of serializing on a single mutex.
 use base64::Engine as _;
+use bytes::Bytes;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent, Session, SessionOptions,
 };
@@ -59,11 +60,13 @@ impl MagnetInner {
     }
 
     /// Registers interest in `file_idx`, ensures the torrent handle selects all active indices.
+    /// `torrent_file`: optional `.torrent` bytes — skips DHT metadata resolution when provided.
     async fn register_file(
         &mut self,
         session: &Arc<Session>,
         magnet: &str,
         file_idx: usize,
+        torrent_file: Option<Vec<u8>>,
     ) -> Result<Option<ManagedTorrentHandle>, String> {
         *self.refcounts.entry(file_idx).or_insert(0) += 1;
         let only_set: HashSet<_> = self.refcounts.keys().copied().collect();
@@ -76,8 +79,12 @@ impl MagnetInner {
                 ..Default::default()
             };
 
+            let add_src = match torrent_file {
+                Some(tf) if !tf.is_empty() => AddTorrent::TorrentFileBytes(Bytes::from(tf)),
+                _ => AddTorrent::from_url(magnet),
+            };
             let added = match session
-                .add_torrent(AddTorrent::from_url(magnet), Some(opts))
+                .add_torrent(add_src, Some(opts))
                 .await
             {
                 Ok(a) => a,
@@ -215,7 +222,7 @@ impl TorrentImageState {
             .clone()
     }
 
-    pub async fn fetch(&self, magnet: String, file_idx: usize) -> Result<Option<String>, String> {
+    pub async fn fetch(&self, magnet: String, file_idx: usize, torrent_file_bytes: Option<Vec<u8>>) -> Result<Option<String>, String> {
         let key = (magnet.clone(), file_idx);
         {
             let cache = self.data_url_cache.lock().await;
@@ -229,7 +236,7 @@ impl TorrentImageState {
 
         let handle = {
             let mut g = inner.lock().await;
-            match g.register_file(&session, &magnet, file_idx).await? {
+            match g.register_file(&session, &magnet, file_idx, torrent_file_bytes).await? {
                 Some(h) => h,
                 None => return Ok(None),
             }
@@ -344,6 +351,13 @@ pub async fn torrent_fetch_image(
     state: tauri::State<'_, TorrentImageState>,
     magnet: String,
     file_idx: usize,
+    torrent_file_b64: Option<String>,
 ) -> Result<Option<String>, String> {
-    state.fetch(magnet, file_idx).await
+    let torrent_file_bytes: Option<Vec<u8>> = match torrent_file_b64.as_deref() {
+        None | Some("") => None,
+        Some(s) => base64::engine::general_purpose::STANDARD
+            .decode(s.trim())
+            .ok(),
+    };
+    state.fetch(magnet, file_idx, torrent_file_bytes).await
 }

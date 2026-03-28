@@ -830,7 +830,7 @@ impl TorrentStreamState {
                 Ok(s) => s,
                 Err(_) => return,
             };
-            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            let mut interval = tokio::time::interval(Duration::from_millis(250));
             interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut scheduler_pos = prepared.playback_offset.load(Ordering::Relaxed);
             let mut tmp = vec![0u8; super::COPY_CHUNK_BYTES];

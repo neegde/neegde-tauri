@@ -551,12 +551,13 @@ async function maybeTriggerPrefetch() {
         forKey: queueTrackKey(props.nextTrack),
       };
     }
+    // Mark done only on success so a transient error allows one retry.
+    prefetchOkFingerprint.value = fp;
   } catch (e) {
     void appDebugLog("player", "prefetch next error", {
       message: e?.message ?? String(e ?? ""),
     });
   } finally {
-    prefetchOkFingerprint.value = fp;
     prefetchInFlight = false;
   }
 }

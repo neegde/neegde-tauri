@@ -16,6 +16,7 @@ import {
 } from "../../lib/utils.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
+import { torrentFileB64ForTrack } from "../../torrent/api.js";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
@@ -188,7 +189,7 @@ const spotifyArtist = computed(() => {
   return "Неизвестный исполнитель";
 });
 
-function prefetchAlbumCovers() {
+async function prefetchAlbumCovers() {
   const m = props.magnet?.trim();
   if (!m || props.loading || !props.files?.length) return;
 
@@ -212,8 +213,18 @@ function prefetchAlbumCovers() {
   lastCoverPrefetchKey.value = key;
 
   const magnetEnriched = enrichMagnetWithOpenTrackers(m);
+  // Await cached .torrent bytes to skip DHT metadata wait in image session.
+  // By this point handleSelect already warmed the cache, so this usually resolves instantly.
+  const torrentFileB64 = await torrentFileB64ForTrack({
+    source: props.torrent?.source,
+    torrentId: props.torrent?.id,
+  }).catch(() => null);
   for (const fileIdx of indices) {
-    invoke("torrent_fetch_image", { magnet: magnetEnriched, fileIdx }).catch(() => {});
+    invoke("torrent_fetch_image", {
+      magnet: magnetEnriched,
+      fileIdx,
+      torrentFileB64: torrentFileB64 ?? null,
+    }).catch(() => {});
   }
 }
 

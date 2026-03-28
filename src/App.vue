@@ -18,6 +18,7 @@ import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
+import { torrentFileB64ForTrack } from "./torrent/api.js";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -388,6 +389,9 @@ async function handleSelect(torrent) {
       idx:      i,
       origIdx:  i,
     }));
+    // Warm .torrent file cache while user browses the track list.
+    // By the time they click play it'll already be resolved → streamUrl skips the fetch.
+    void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
   } catch (e) {
     console.error("handleSelect:", e);
     // Leave files empty — TorrentView shows "Аудиофайлы не найдены."
