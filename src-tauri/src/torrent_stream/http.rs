@@ -282,6 +282,9 @@ async fn serve_stream(
         .stream(prepared.file_idx)
         .map_err(|e| format!("Ошибка открытия потока для HTTP: {e:#}"))?;
     align_stream_to_offset(&mut stream, cursor).await?;
+    // Track actual stream position separately from cursor so we can detect when
+    // memory-cache hits have advanced cursor past the stream's read pointer.
+    let mut stream_pos = cursor;
     let mut buf = vec![0u8; COPY_CHUNK_BYTES];
     let mut idle_reads: u32 = 0;
     while remaining > 0 {
@@ -290,6 +293,16 @@ async fn serve_stream(
             cursor += from_mem;
             remaining = remaining.saturating_sub(from_mem);
             continue;
+        }
+        // If cache hits advanced cursor past the stream's actual position we must
+        // re-seek before reading, otherwise read() would return stale bytes from
+        // the old position and send them at the wrong HTTP offset.
+        if stream_pos != cursor {
+            stream
+                .seek(SeekFrom::Start(cursor))
+                .await
+                .map_err(|e| format!("Ошибка re-seek в потоке: {e}"))?;
+            stream_pos = cursor;
         }
         let to_read = remaining.min(COPY_CHUNK_BYTES as u64) as usize;
         let read_fut = stream.read(&mut buf[..to_read]);
@@ -350,6 +363,7 @@ async fn serve_stream(
             .await
             .map_err(|e| format!("Ошибка отправки стрима: {e}"))?;
         cursor += n as u64;
+        stream_pos = cursor;
         prepared
             .playback_offset
             .store(cursor, std::sync::atomic::Ordering::Relaxed);
