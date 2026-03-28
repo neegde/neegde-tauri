@@ -5,6 +5,7 @@ import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 const pending = new Map();
 /** @type {Map<string, string>} — только успешные data URL */
 const cache = new Map();
+const TORRENT_IMAGE_CACHE_MAX = 200;
 
 function cacheKey(magnet, fileIdx) {
   return `${magnet}\n${fileIdx}`;
@@ -36,7 +37,12 @@ export async function getTorrentImageDataUrl(magnet, fileIdx, torrentFileB64 = n
     })
       .then((u) => {
         const v = u ?? null;
-        if (v) cache.set(key, v);
+        if (v) {
+          cache.set(key, v);
+          if (cache.size > TORRENT_IMAGE_CACHE_MAX) {
+            cache.delete(cache.keys().next().value);
+          }
+        }
         return v;
       })
       .finally(() => {

@@ -27,7 +27,7 @@ use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
 use super::types::{DownloadMode, PrefetchNextResponse, PreparedStream, StreamMemoryCache, StreamReady};
-use super::{PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
+use super::{PREBUFFER_ADAPTIVE_MAX, PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
 
 /// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
 #[derive(Serialize, Clone)]
@@ -670,14 +670,20 @@ impl TorrentStreamState {
             })
             .unwrap_or(0);
         let file_torrent_end_offset = file_torrent_offset.saturating_add(total_len);
-        let target = PREBUFFER_BYTES.min(total_len as usize);
+        // Adaptive prebuffer: start with PREBUFFER_BYTES (64 KB) for fast playback start,
+        // then measure download speed and extend the target up to PREBUFFER_ADAPTIVE_MAX (512 KB)
+        // to reduce mid-playback buffering on fast connections.
+        let initial_target = PREBUFFER_BYTES.min(total_len as usize);
+        let alloc_max = PREBUFFER_ADAPTIVE_MAX.min(total_len as usize);
         prep_shared
             .prebuffer_target
-            .store(target as u64, Ordering::Relaxed);
-        let mut prebuffer = vec![0u8; target];
+            .store(initial_target as u64, Ordering::Relaxed);
+        let mut prebuffer = vec![0u8; alloc_max];
         let mut filled = 0usize;
+        let mut adaptive_target = initial_target;
+        let mut speed_sampled = false;
         const PREBUFFER_LOG_STEP: usize = 64 * 1024;
-        if target == 0 {
+        if initial_target == 0 {
             self.inner.debug_log.push(
                 "prepare",
                 "prebuffer skipped (0 B target — first bytes via HTTP)",
@@ -688,7 +694,8 @@ impl TorrentStreamState {
                 "prepare",
                 "prebuffer loop starting",
                 Some(json!({
-                    "targetBytes": target,
+                    "initialTargetBytes": initial_target,
+                    "allocMaxBytes": alloc_max,
                     "totalLen": total_len,
                 })),
             );
@@ -696,14 +703,14 @@ impl TorrentStreamState {
         let t_pre = Instant::now();
         let read_timeout = Duration::from_secs(PREBUFFER_READ_TIMEOUT_SECS);
         let wall_limit = Duration::from_secs(PREBUFFER_MAX_WALL_SECS);
-        while filled < target {
+        while filled < adaptive_target {
             if t_pre.elapsed() >= wall_limit {
                 self.inner.debug_log.push(
                     "prepare",
                     "prebuffer wall time limit",
                     Some(json!({
                         "filled": filled,
-                        "target": target,
+                        "target": adaptive_target,
                         "msSoFar": t_pre.elapsed().as_millis(),
                     })),
                 );
@@ -711,7 +718,7 @@ impl TorrentStreamState {
             }
             self.check_prepare_cancel()?;
             let before = filled;
-            let read_fut = stream.read(&mut prebuffer[filled..target]);
+            let read_fut = stream.read(&mut prebuffer[filled..adaptive_target]);
             let n = match tokio::time::timeout(read_timeout, read_fut).await {
                 Ok(Ok(n)) => n,
                 Ok(Err(e)) => {
@@ -723,7 +730,7 @@ impl TorrentStreamState {
                         "prebuffer stalled (read timeout)",
                         Some(json!({
                             "filled": filled,
-                            "target": target,
+                            "target": adaptive_target,
                             "msSoFar": t_pre.elapsed().as_millis(),
                         })),
                     );
@@ -736,7 +743,7 @@ impl TorrentStreamState {
                     "prebuffer read returned 0 (EOF)",
                     Some(json!({
                         "filled": filled,
-                        "target": target,
+                        "target": adaptive_target,
                         "msSoFar": t_pre.elapsed().as_millis(),
                     })),
                 );
@@ -746,13 +753,45 @@ impl TorrentStreamState {
             prep_shared
                 .prebuffer_filled
                 .store(filled as u64, Ordering::Relaxed);
-            if (before / PREBUFFER_LOG_STEP) != (filled / PREBUFFER_LOG_STEP) || filled >= target {
+
+            // Sample speed once at the halfway point of the initial target and adjust target.
+            if !speed_sampled && initial_target > 0 && filled >= initial_target / 2 {
+                speed_sampled = true;
+                let elapsed_secs = t_pre.elapsed().as_secs_f64().max(0.001);
+                let speed_kbps = filled as f64 / elapsed_secs / 1024.0;
+                let new_target = if speed_kbps > 2048.0 {
+                    PREBUFFER_ADAPTIVE_MAX  // > 2 MB/s  → 512 KB
+                } else if speed_kbps > 1024.0 {
+                    256 * 1024              // > 1 MB/s  → 256 KB
+                } else if speed_kbps > 512.0 {
+                    128 * 1024              // > 512 KB/s → 128 KB
+                } else {
+                    initial_target          // slow       → keep 64 KB
+                };
+                adaptive_target = new_target.min(alloc_max);
+                if adaptive_target != initial_target {
+                    prep_shared
+                        .prebuffer_target
+                        .store(adaptive_target as u64, Ordering::Relaxed);
+                    self.inner.debug_log.push(
+                        "prepare",
+                        "prebuffer target adapted",
+                        Some(json!({
+                            "speedKbps": speed_kbps as u64,
+                            "newTargetBytes": adaptive_target,
+                            "oldTargetBytes": initial_target,
+                        })),
+                    );
+                }
+            }
+
+            if (before / PREBUFFER_LOG_STEP) != (filled / PREBUFFER_LOG_STEP) || filled >= adaptive_target {
                 self.inner.debug_log.push(
                     "prepare",
                     "prebuffer progress",
                     Some(json!({
                         "filled": filled,
-                        "target": target,
+                        "target": adaptive_target,
                         "lastRead": n,
                         "msSoFar": t_pre.elapsed().as_millis(),
                     })),
@@ -766,7 +805,7 @@ impl TorrentStreamState {
             "prebuffer done",
             Some(json!({
                 "filled": filled,
-                "target": target,
+                "target": adaptive_target,
                 "totalLen": total_len,
                 "prebufferMs": t_pre.elapsed().as_millis(),
             })),

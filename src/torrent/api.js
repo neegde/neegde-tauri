@@ -3,27 +3,64 @@ import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 import { getMirror } from "../rutracker/config.js";
 
 /**
- * In-memory cache: topicId → Promise<string|null>.
+ * In-memory LRU cache: topicId → Promise<string|null>.
  * Prevents re-downloading the same .torrent file when switching tracks or during prefetch.
- * Capped at 30 entries (FIFO) to avoid unbounded growth in long sessions.
+ * Capped at 30 entries (LRU). Persisted to localStorage so restarts skip the network.
  */
 const _torrentFileCache = new Map();
 const TORRENT_FILE_CACHE_MAX = 30;
+const _TORRENT_LS_PREFIX = "torrent_file_b64_v1_";
+
+function _loadPersistedTorrentFiles() {
+  try {
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith(_TORRENT_LS_PREFIX));
+    for (const key of keys) {
+      const tid = key.slice(_TORRENT_LS_PREFIX.length);
+      const b64 = localStorage.getItem(key);
+      if (b64) _torrentFileCache.set(tid, Promise.resolve(b64));
+    }
+  } catch {
+    // localStorage unavailable
+  }
+}
+
+function _persistTorrentFile(tid, b64) {
+  try {
+    localStorage.setItem(`${_TORRENT_LS_PREFIX}${tid}`, b64);
+    // Trim localStorage to max entries
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith(_TORRENT_LS_PREFIX));
+    if (keys.length > TORRENT_FILE_CACHE_MAX) {
+      keys.slice(0, keys.length - TORRENT_FILE_CACHE_MAX).forEach((k) => localStorage.removeItem(k));
+    }
+  } catch {
+    // localStorage full or unavailable
+  }
+}
+
+_loadPersistedTorrentFiles();
 
 function _cachedTorrentFileB64(tid) {
-  if (!_torrentFileCache.has(tid)) {
-    if (_torrentFileCache.size >= TORRENT_FILE_CACHE_MAX) {
-      _torrentFileCache.delete(_torrentFileCache.keys().next().value);
-    }
-    _torrentFileCache.set(
-      tid,
-      invoke("rutracker_download_torrent_file_b64", {
-        mirror: getMirror(),
-        topicId: tid,
-      }).catch(() => null),
-    );
+  if (_torrentFileCache.has(tid)) {
+    // LRU touch: move to end
+    const p = _torrentFileCache.get(tid);
+    _torrentFileCache.delete(tid);
+    _torrentFileCache.set(tid, p);
+    return p;
   }
-  return _torrentFileCache.get(tid);
+  if (_torrentFileCache.size >= TORRENT_FILE_CACHE_MAX) {
+    _torrentFileCache.delete(_torrentFileCache.keys().next().value);
+  }
+  const p = invoke("rutracker_download_torrent_file_b64", {
+    mirror: getMirror(),
+    topicId: tid,
+  })
+    .then((b64) => {
+      if (b64) _persistTorrentFile(tid, b64);
+      return b64 ?? null;
+    })
+    .catch(() => null);
+  _torrentFileCache.set(tid, p);
+  return p;
 }
 
 /**

@@ -16,7 +16,7 @@ import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
-import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
+import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
 import { torrentFileB64ForTrack } from "./torrent/api.js";
 
@@ -30,6 +30,24 @@ import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
 import NavArrows    from "./components/shell/NavArrows.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
+
+// ── Search result LRU cache ───────────────────────────────────────────────────
+const _searchCache = new Map(); // normalized query → results[]
+const SEARCH_CACHE_MAX = 30;
+function _searchCacheGet(q) {
+  const v = _searchCache.get(q);
+  if (v === undefined) return undefined;
+  _searchCache.delete(q);
+  _searchCache.set(q, v); // LRU touch
+  return v;
+}
+function _searchCacheSet(q, r) {
+  if (_searchCache.has(q)) _searchCache.delete(q);
+  if (_searchCache.size >= SEARCH_CACHE_MAX) {
+    _searchCache.delete(_searchCache.keys().next().value);
+  }
+  _searchCache.set(q, r);
+}
 
 // ── Queue (восстановление последней сессии из localStorage) ──────────────────
 const _savedPlayer = loadPlayerSession();
@@ -320,7 +338,6 @@ function handleLogout(evt) {
   queue.value        = [];
   forwardStack.value = [];
   backStack.value    = [];
-  clearRutrackerCoverCache();
 }
 
 function handleAppLogin(username) {
@@ -337,18 +354,28 @@ function handleAppLogout() {
 
 async function handleSearch(query) {
   if (!query?.trim()) return;
+  const q = query.trim();
   forwardStack.value = [];
-  backStack.value = [];
-  loading.value      = true;
+  backStack.value    = [];
   error.value        = null;
-  results.value      = [];
   selected.value     = null;
   files.value        = [];
   torrentCover.value = null;
   view.value         = "search";
-  try {
-    results.value = await searchMusic(query.trim());
+
+  const cached = _searchCacheGet(q.toLowerCase());
+  if (cached) {
+    results.value = cached;
     if (!results.value.length) error.value = "Ничего не найдено.";
+    return;
+  }
+
+  loading.value = true;
+  results.value = [];
+  try {
+    results.value = await searchMusic(q);
+    if (!results.value.length) error.value = "Ничего не найдено.";
+    else _searchCacheSet(q.toLowerCase(), results.value);
   } catch (e) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
   } finally {

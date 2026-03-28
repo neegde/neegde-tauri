@@ -19,9 +19,10 @@ pub fn torrent_streams_dir_label() -> &'static str {
     }
 }
 
-/// Bytes to pull before returning the stream URL. Small value = fast start; the player's
-/// HTTP server warms the rest while audio plays. 64 KB ≈ 1-2s of audio at 320kbps.
+/// Minimum (initial) prebuffer target — fast start at any connection speed.
 pub(super) const PREBUFFER_BYTES: usize = 64 * 1024;
+/// Maximum prebuffer when connection is fast (>2 MB/s measured during the first read).
+pub(super) const PREBUFFER_ADAPTIVE_MAX: usize = 512 * 1024;
 /// One `read` on the file stream — if the swarm sends nothing, bail out of this wait quickly.
 pub(super) const PREBUFFER_READ_TIMEOUT_SECS: u64 = 8;
 /// Hard cap for the whole prebuffer loop (many small reads).
