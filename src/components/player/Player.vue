@@ -105,8 +105,8 @@ const prefetchedStream = ref({ url: "", forKey: "" });
 const prefetchOkFingerprint = ref("");
 let prefetchInFlight = false;
 
-const PREFETCH_MIN_SEC = 30;
-const PREFETCH_MIN_RATIO = 0.22;
+const PREFETCH_MIN_SEC = 10;
+const PREFETCH_MIN_RATIO = 0.12;
 
 /**
  * Stable key for matching a queue item to a prepared stream URL.

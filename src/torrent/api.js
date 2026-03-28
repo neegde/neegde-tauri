@@ -3,6 +3,30 @@ import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 import { getMirror } from "../rutracker/config.js";
 
 /**
+ * In-memory cache: topicId → Promise<string|null>.
+ * Prevents re-downloading the same .torrent file when switching tracks or during prefetch.
+ * Capped at 30 entries (FIFO) to avoid unbounded growth in long sessions.
+ */
+const _torrentFileCache = new Map();
+const TORRENT_FILE_CACHE_MAX = 30;
+
+function _cachedTorrentFileB64(tid) {
+  if (!_torrentFileCache.has(tid)) {
+    if (_torrentFileCache.size >= TORRENT_FILE_CACHE_MAX) {
+      _torrentFileCache.delete(_torrentFileCache.keys().next().value);
+    }
+    _torrentFileCache.set(
+      tid,
+      invoke("rutracker_download_torrent_file_b64", {
+        mirror: getMirror(),
+        topicId: tid,
+      }).catch(() => null),
+    );
+  }
+  return _torrentFileCache.get(tid);
+}
+
+/**
  * URL для воспроизведения или превью файла из торрента (обложка в папке, трек и т.д.).
  * Запускает нативный torrent-stream backend:
  * magnet -> open -> optional prebuffer -> local HTTP URL (default: no blocking pre-read).
@@ -19,10 +43,7 @@ export async function streamUrl(magnet, fileIdx, opts = {}) {
   const src = opts.source != null ? String(opts.source) : "";
   const tid = opts.torrentId != null ? String(opts.torrentId) : "";
   if (src === "rutracker" && tid !== "") {
-    torrentFileB64 = await invoke("rutracker_download_torrent_file_b64", {
-      mirror: getMirror(),
-      topicId: tid,
-    }).catch(() => null);
+    torrentFileB64 = await _cachedTorrentFileB64(tid);
   }
   const ready = await invoke("torrent_prepare_stream", {
     magnet: m,
@@ -34,6 +55,7 @@ export async function streamUrl(magnet, fileIdx, opts = {}) {
 
 /**
  * Fetches RuTracker .torrent base64 when needed (same rules as `streamUrl`).
+ * Uses an in-memory cache so repeated calls for the same track are instant.
  *
  * Args:
  *     track: Queue item with optional `source` and `torrentId`.
@@ -46,10 +68,7 @@ export async function torrentFileB64ForTrack(track) {
   const src = track.source != null ? String(track.source) : "";
   const tid = track.torrentId != null ? String(track.torrentId) : "";
   if (src !== "rutracker" || tid === "") return null;
-  return invoke("rutracker_download_torrent_file_b64", {
-    mirror: getMirror(),
-    topicId: tid,
-  }).catch(() => null);
+  return _cachedTorrentFileB64(tid);
 }
 
 /**

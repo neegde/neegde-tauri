@@ -69,7 +69,7 @@ const theme = ref(localStorage.getItem("theme") || "dark");
 const restoringSession = ref(true);
 
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
-const RESTORE_UI_MAX_MS = 20_000;
+const RESTORE_UI_MAX_MS = 5_000;
 
 onMounted(async () => {
   window.addEventListener("beforeunload", flushPlayerSessionToStorage);
