@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from "vue";
 import { fmtSize } from "../../lib/utils.js";
-import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../../rutracker/search.js";
+import { getRutrackerCoverDataUrl, peekRutrackerCover, prefetchTorrentDetails } from "../../rutracker/search.js";
 
 const props = defineProps({
   torrent: Object,
@@ -76,7 +76,23 @@ function setupCoverObserver() {
 }
 
 onMounted(setupCoverObserver);
-onUnmounted(resetCover);
+onUnmounted(() => {
+  resetCover();
+  clearTimeout(hoverTimer);
+});
+
+// ── Hover-prefetch ────────────────────────────────────────────────────────────
+let hoverTimer = null;
+
+function onMouseenter() {
+  if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
+  hoverTimer = setTimeout(() => prefetchTorrentDetails(String(props.torrent.id)), 300);
+}
+
+function onMouseleave() {
+  clearTimeout(hoverTimer);
+  hoverTimer = null;
+}
 
 watch(
   () => [props.torrent?.id, props.torrent?.source],
@@ -91,6 +107,8 @@ watch(
     :class="['album-card', selected ? 'selected' : '']"
     :title="torrent.name"
     @click="emit('select', torrent)"
+    @mouseenter="onMouseenter"
+    @mouseleave="onMouseleave"
   >
     <div class="album-art">
       <img

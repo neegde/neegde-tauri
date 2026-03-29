@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { appDebugLog, appDebugClickDetail } from "./appDebugLog.js";
@@ -51,7 +51,7 @@ function _searchCacheSet(q, r) {
 
 // ── Queue (восстановление последней сессии из localStorage) ──────────────────
 const _savedPlayer = loadPlayerSession();
-const queue = ref(_savedPlayer?.queue ?? []);
+const queue = shallowRef(_savedPlayer?.queue ?? []);
 const queuePos = ref(
   _savedPlayer && _savedPlayer.queue.length
     ? _savedPlayer.queuePos
@@ -67,8 +67,7 @@ watch(
   [queue, queuePos],
   () => {
     savePlayerSession(queue.value, queuePos.value);
-  },
-  { deep: true }
+  }
 );
 
 function flushPlayerSessionToStorage() {
@@ -200,7 +199,7 @@ function setupAppDebugInstrumentation() {
 
 // ── Search ────────────────────────────────────────────────────────────────────
 const searchQuery = ref("");
-const results = ref([]);
+const results = shallowRef([]);
 const loading = ref(false);
 const error   = ref(null);
 
@@ -208,7 +207,7 @@ const error   = ref(null);
 const selected      = ref(null);
 const torrentMagnet = ref("");
 const torrentCover  = ref(null);   // base64 data URL or null
-const files         = ref([]);
+const files         = shallowRef([]);
 const loadingFiles  = ref(false);
 
 /** Полный список файлов раздачи до предпросмотра одного альбома (как из лайков). */
@@ -880,37 +879,41 @@ function handleNavBack() {
         </div>
 
         <!-- Likes view -->
-        <LikesView
-          v-if="view === 'likes'"
-          :likes="Object.values(likes)"
-          :now-playing="nowPlayingMatchForLikes"
-          :player-playing="playerPlaying"
-          @toggle-like="handleToggleLike"
-          @play="handlePlayFromLike"
-          @play-album="handlePlayAlbumFromLike"
-          @open-torrent="handleOpenTorrentFromLike"
-        />
+        <KeepAlive>
+          <LikesView
+            v-if="view === 'likes'"
+            :likes="Object.values(likes)"
+            :now-playing="nowPlayingMatchForLikes"
+            :player-playing="playerPlaying"
+            @toggle-like="handleToggleLike"
+            @play="handlePlayFromLike"
+            @play-album="handlePlayAlbumFromLike"
+            @open-torrent="handleOpenTorrentFromLike"
+          />
+        </KeepAlive>
 
         <!-- Settings view -->
-        <SettingsView
-          v-else-if="view === 'settings'"
-          :rt-logged-in="rtLoggedIn"
-          :rt-username="rtUsername"
-          :rt-avatar-url="rtAvatarUrl"
-          :restoring-session="restoringSession"
-          :app-user="appUser"
-          :theme="theme"
-          :app-debug-enabled="appDebugEnabled"
-          @login="handleLogin"
-          @logout="handleLogout"
-          @app-logout="handleAppLogout"
-          @open-auth="authPanelOpen = true"
-          @theme-change="handleThemeChange"
-          @update:app-debug-enabled="appDebugEnabled = $event"
-        />
+        <KeepAlive>
+          <SettingsView
+            v-if="view === 'settings'"
+            :rt-logged-in="rtLoggedIn"
+            :rt-username="rtUsername"
+            :rt-avatar-url="rtAvatarUrl"
+            :restoring-session="restoringSession"
+            :app-user="appUser"
+            :theme="theme"
+            :app-debug-enabled="appDebugEnabled"
+            @login="handleLogin"
+            @logout="handleLogout"
+            @app-logout="handleAppLogout"
+            @open-auth="authPanelOpen = true"
+            @theme-change="handleThemeChange"
+            @update:app-debug-enabled="appDebugEnabled = $event"
+          />
+        </KeepAlive>
 
         <!-- Search view -->
-        <template v-else>
+        <template v-if="view !== 'likes' && view !== 'settings'">
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->

@@ -18,26 +18,32 @@ pub async fn get_torrent_details(
     let topic_url = format!("{}/forum/viewtopic.php?t={}", base, topic_id);
     let dl_url = format!("{}/forum/dl.php?t={}", base, topic_id);
 
-    // ── 1. Topic page (Rutracker markup is windows-1251) ──────────────────────
-    let topic_bytes = client
-        .get(&topic_url)
-        .send()
-        .await
-        .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?
-        .bytes()
-        .await
-        .map_err(|e| format!("Ошибка чтения страницы: {}", e))?;
+    // ── 1+2. Topic page and .torrent file in parallel ─────────────────────────
+    let (topic_result, torrent_result) = tokio::join!(
+        async {
+            client
+                .get(&topic_url)
+                .send()
+                .await
+                .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?
+                .bytes()
+                .await
+                .map_err(|e| format!("Ошибка чтения страницы: {}", e))
+        },
+        async {
+            client
+                .get(&dl_url)
+                .send()
+                .await
+                .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?
+                .bytes()
+                .await
+                .map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))
+        }
+    );
+    let topic_bytes = topic_result?;
+    let torrent_bytes = torrent_result?;
     let (topic_html, _, _) = WINDOWS_1251.decode(&topic_bytes);
-
-    // ── 2. Torrent file ───────────────────────────────────────────────────────
-    let torrent_bytes = client
-        .get(&dl_url)
-        .send()
-        .await
-        .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?
-        .bytes()
-        .await
-        .map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))?;
 
     // ── 3. Parse ──────────────────────────────────────────────────────────────
     let (cover_img_url, magnet) = parse_topic_page(topic_html.as_ref(), base);

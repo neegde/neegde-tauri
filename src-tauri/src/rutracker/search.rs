@@ -205,9 +205,79 @@ fn parse_results(html: &str) -> Vec<SearchResult> {
     out
 }
 
-/// Extract text content of the first `<a class="tLink">` anchor (torrent title).
+/// Strip simple HTML tags (torrent titles may use `<span>` / `<wbr>` inside `<a class="tLink">`).
+fn strip_html_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Opening `<a` tag that contains `class_val_start` (byte index of `class="`).
+fn find_parent_anchor_open(row: &str, class_val_start: usize) -> Option<usize> {
+    let mut search = class_val_start;
+    while search > 0 {
+        let slice = &row[..search];
+        let lt = slice.rfind('<')?;
+        if let Some(name) = opening_tag_name(row, lt) {
+            if name.eq_ignore_ascii_case("a") {
+                return Some(lt);
+            }
+        }
+        search = lt;
+    }
+    None
+}
+
+/// Extract text content of the first `<a class="…tLink…">` anchor (torrent title).
+/// Handles nested markup inside the link (plain `extract_class_text` only saw text before the first `<`).
 fn extract_tlink(row: &str) -> Option<String> {
-    extract_class_text(row, "tLink")
+    let mut search_from = 0usize;
+    loop {
+        let rel = match row[search_from..].find("class=\"") {
+            Some(r) => r,
+            None => return extract_class_text(row, "tLink"),
+        };
+        let val_start = search_from + rel + 7;
+        let val_end = match row[val_start..].find('"') {
+            Some(e) => val_start + e,
+            None => return extract_class_text(row, "tLink"),
+        };
+        let classes = &row[val_start..val_end];
+
+        if class_list_has_token(classes, "tLink") {
+            if let Some(a_open) = find_parent_anchor_open(row, val_start) {
+                if let Some(gt) = opening_tag_gt(row, a_open) {
+                    let inner_start = gt + 1;
+                    if let Some(rest) = row.get(inner_start..) {
+                        let end_rel = rest
+                            .find("</a>")
+                            .or_else(|| rest.find("</A>"))
+                            .unwrap_or(rest.len());
+                        if let Some(inner) = rest.get(..end_rel) {
+                            let text = strip_html_tags(inner);
+                            let text = text.trim();
+                            if !text.is_empty() {
+                                return Some(decode_entities(text));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        search_from = val_end + 1;
+        if search_from >= row.len() {
+            return extract_class_text(row, "tLink");
+        }
+    }
 }
 
 /// Extract text content of the first element that has `class_name` as one of
@@ -422,5 +492,17 @@ mod tests {
     fn peer_count_td_b_with_attr() {
         let row = r#"<tr><td class="seedmed"><b class="x">56</b></td></tr>"#;
         assert_eq!(extract_peer_count(row, "seedmed"), 56);
+    }
+
+    #[test]
+    fn tlink_nested_span() {
+        let row = r#"<tr class="hl-tr"><td><a class="tLink med"><span>Artist – Album</span></a></td></tr>"#;
+        assert_eq!(extract_tlink(row).as_deref(), Some("Artist – Album"));
+    }
+
+    #[test]
+    fn tlink_plain_text() {
+        let row = r#"<tr><td><a class="tLink">Plain title</a></td></tr>"#;
+        assert_eq!(extract_tlink(row).as_deref(), Some("Plain title"));
     }
 }

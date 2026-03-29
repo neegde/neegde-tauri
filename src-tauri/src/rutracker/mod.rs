@@ -3,10 +3,12 @@ pub mod topic;
 
 use base64::Engine as _;
 use encoding_rs::WINDOWS_1251;
+use lru::LruCache;
 use reqwest::{header, Client, ClientBuilder};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -95,6 +97,8 @@ fn save_cookie_store(path: &Option<PathBuf>, store: &Arc<CookieStoreMutex>) {
 
 /// Max concurrent cover HTTP fetches (viewtopic.php + image).
 const COVER_CONCURRENCY: usize = 4;
+/// In-process LRU for recently loaded cover data: URLs (avoids disk I/O on repeated views).
+const COVER_MEM_CACHE_CAP: usize = 100;
 
 pub struct RutrackerState {
     pub client: Client,
@@ -104,6 +108,7 @@ pub struct RutrackerState {
     meta_path: Option<PathBuf>,
     cover_cache_dir: Option<PathBuf>,
     cover_semaphore: Semaphore,
+    cover_mem_cache: Mutex<LruCache<String, String>>,
 }
 
 pub struct RutrackerInner {
@@ -151,15 +156,35 @@ impl RutrackerState {
             meta_path,
             cover_cache_dir,
             cover_semaphore: Semaphore::new(COVER_CONCURRENCY),
+            cover_mem_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(COVER_MEM_CACHE_CAP).unwrap(),
+            )),
         }
     }
 
-    fn read_disk_cover(&self, topic_id: &str) -> Option<String> {
+    /// Check memory cache first, fall back to disk, populate memory on disk hit.
+    fn read_cover(&self, topic_id: &str) -> Option<String> {
+        // Fast path: in-memory LRU
+        if let Ok(mut mem) = self.cover_mem_cache.lock() {
+            if let Some(v) = mem.get(topic_id) {
+                return Some(v.clone());
+            }
+        }
+        // Slow path: disk cache
         let dir = self.cover_cache_dir.as_ref()?;
-        std::fs::read_to_string(dir.join(topic_id)).ok()
+        let data_url = std::fs::read_to_string(dir.join(topic_id)).ok()?;
+        // Promote to memory cache for next access
+        if let Ok(mut mem) = self.cover_mem_cache.lock() {
+            mem.put(topic_id.to_string(), data_url.clone());
+        }
+        Some(data_url)
     }
 
-    fn write_disk_cover(&self, topic_id: &str, data_url: &str) {
+    /// Write to both memory cache and disk.
+    fn write_cover(&self, topic_id: &str, data_url: &str) {
+        if let Ok(mut mem) = self.cover_mem_cache.lock() {
+            mem.put(topic_id.to_string(), data_url.to_string());
+        }
         if let Some(ref dir) = self.cover_cache_dir {
             let _ = std::fs::write(dir.join(topic_id), data_url);
         }
@@ -554,7 +579,7 @@ pub async fn rutracker_get_cover(
     }
 
     // Fast path: disk cache (survives restarts, no network needed).
-    if let Some(cached) = state.read_disk_cover(&topic_id) {
+    if let Some(cached) = state.read_cover(&topic_id) {
         return Ok(Some(cached));
     }
 
@@ -562,7 +587,7 @@ pub async fn rutracker_get_cover(
     let _permit = state.cover_semaphore.acquire().await.map_err(|e| format!("{e}"))?;
 
     // Check again: another task might have populated the disk cache while we waited.
-    if let Some(cached) = state.read_disk_cover(&topic_id) {
+    if let Some(cached) = state.read_cover(&topic_id) {
         return Ok(Some(cached));
     }
 
@@ -570,7 +595,7 @@ pub async fn rutracker_get_cover(
     let result = topic::get_cover_data_url(&state.client, &base, &topic_id).await?;
 
     if let Some(ref data_url) = result {
-        state.write_disk_cover(&topic_id, data_url);
+        state.write_cover(&topic_id, data_url);
     }
 
     Ok(result)
@@ -594,7 +619,7 @@ pub async fn rutracker_get_torrent_details(
     let details = topic::get_torrent_details(&state.client, &base, &topic_id).await?;
     // Persist cover to disk so grid loads are instant on next visit.
     if let Some(ref data_url) = details.cover_data_url {
-        state.write_disk_cover(&details.id, data_url);
+        state.write_cover(&details.id, data_url);
     }
     Ok(details)
 }
