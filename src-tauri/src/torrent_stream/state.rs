@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use dashmap::DashMap;
-use librqbit::api::TorrentIdOrHash;
+use librqbit::api::{TorrentDetailsResponse, TorrentIdOrHash};
 use librqbit::dht::Id20;
 use librqbit::torrent_from_bytes_ext;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ByteBuf, Magnet, ManagedTorrent, Session,
-    SessionOptions, TorrentStats, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ByteBuf, Magnet, ManagedTorrent,
+    Session, SessionOptions, TorrentStats, TorrentStatsState,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -27,7 +27,7 @@ use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
 use super::types::{DownloadMode, PrefetchNextResponse, PreparedStream, StreamMemoryCache, StreamReady};
-use super::{PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
+use super::{PREBUFFER_ADAPTIVE_MAX, PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
 
 /// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
 #[derive(Serialize, Clone)]
@@ -135,6 +135,38 @@ fn resolve_info_hash_from_magnet_or_file(
         m.as_id20()
             .ok_or_else(|| "В magnet нет BTIH".to_string())
     }
+}
+
+/// Maps librqbit API file rows to the same `TorrentFile` shape as Rutracker topic parsing.
+fn torrent_details_to_rutracker_files(
+    details: &TorrentDetailsResponse,
+) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
+    let root = details
+        .name
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .map(String::as_str)
+        .unwrap_or("Раздача")
+        .to_string();
+    let list = details
+        .files
+        .as_ref()
+        .ok_or_else(|| "Нет списка файлов в метаданных".to_string())?;
+    let mut out = Vec::with_capacity(list.len());
+    for f in list {
+        let path = if f.components.is_empty() {
+            vec![f.name.clone()]
+        } else {
+            let mut p = vec![root.clone()];
+            p.extend(f.components.iter().cloned());
+            p
+        };
+        out.push(crate::rutracker::TorrentFile {
+            path,
+            size: f.length,
+        });
+    }
+    Ok(out)
 }
 
 fn build_prepare_progress_payload(
@@ -290,6 +322,65 @@ impl TorrentStreamState {
         std::fs::create_dir_all(&base)
             .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;
         Ok(())
+    }
+
+    /// Resolves BitTorrent metadata for a magnet URI and returns the file list (Rutracker-compatible shape).
+    ///
+    /// Adds the torrent to the streaming session when it is not already managed; waits until
+    /// metadata is available (DHT/trackers). Does not start playback.
+    pub async fn magnet_resolve_files(
+        &self,
+        magnet: String,
+    ) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
+        if magnet.trim().is_empty() {
+            return Err("Пустой magnet".into());
+        }
+        self.check_prepare_cancel()?;
+        let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+        let info_hash = m
+            .as_id20()
+            .ok_or_else(|| "В magnet нет BTIH".to_string())?;
+        let id = TorrentIdOrHash::Hash(info_hash);
+
+        let session = self.torrent_session().await?;
+
+        if session.get(id).is_none() {
+            let opts = AddTorrentOptions {
+                only_files: Some(vec![0]),
+                overwrite: true,
+                ..Default::default()
+            };
+            let added = session
+                .add_torrent(AddTorrent::from_url(&magnet), Some(opts))
+                .await
+                .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?;
+            let handle = match added {
+                AddTorrentResponse::Added(_, h) => h,
+                AddTorrentResponse::AlreadyManaged(_, h) => h,
+                AddTorrentResponse::ListOnly(_) => {
+                    return Err("Не удалось открыть торрент для списка файлов".into());
+                }
+            };
+            handle
+                .wait_until_initialized()
+                .await
+                .map_err(|e| format!("Ошибка метаданных торрента: {e:#}"))?;
+        } else {
+            let handle = session
+                .get(id)
+                .ok_or_else(|| "Торрент пропал из сессии".to_string())?;
+            handle
+                .wait_until_initialized()
+                .await
+                .map_err(|e| format!("Ошибка метаданных торрента: {e:#}"))?;
+        }
+        self.check_prepare_cancel()?;
+
+        let api = Api::new(session.clone(), None);
+        let details = api
+            .api_torrent_details(id)
+            .map_err(|e| format!("Метаданные торрента: {e}"))?;
+        torrent_details_to_rutracker_files(&details)
     }
 
     fn check_prepare_cancel(&self) -> Result<(), String> {
@@ -670,14 +761,20 @@ impl TorrentStreamState {
             })
             .unwrap_or(0);
         let file_torrent_end_offset = file_torrent_offset.saturating_add(total_len);
-        let target = PREBUFFER_BYTES.min(total_len as usize);
+        // Adaptive prebuffer: start with PREBUFFER_BYTES (64 KB) for fast playback start,
+        // then measure download speed and extend the target up to PREBUFFER_ADAPTIVE_MAX (512 KB)
+        // to reduce mid-playback buffering on fast connections.
+        let initial_target = PREBUFFER_BYTES.min(total_len as usize);
+        let alloc_max = PREBUFFER_ADAPTIVE_MAX.min(total_len as usize);
         prep_shared
             .prebuffer_target
-            .store(target as u64, Ordering::Relaxed);
-        let mut prebuffer = vec![0u8; target];
+            .store(initial_target as u64, Ordering::Relaxed);
+        let mut prebuffer = vec![0u8; alloc_max];
         let mut filled = 0usize;
+        let mut adaptive_target = initial_target;
+        let mut speed_sampled = false;
         const PREBUFFER_LOG_STEP: usize = 64 * 1024;
-        if target == 0 {
+        if initial_target == 0 {
             self.inner.debug_log.push(
                 "prepare",
                 "prebuffer skipped (0 B target — first bytes via HTTP)",
@@ -688,7 +785,8 @@ impl TorrentStreamState {
                 "prepare",
                 "prebuffer loop starting",
                 Some(json!({
-                    "targetBytes": target,
+                    "initialTargetBytes": initial_target,
+                    "allocMaxBytes": alloc_max,
                     "totalLen": total_len,
                 })),
             );
@@ -696,14 +794,14 @@ impl TorrentStreamState {
         let t_pre = Instant::now();
         let read_timeout = Duration::from_secs(PREBUFFER_READ_TIMEOUT_SECS);
         let wall_limit = Duration::from_secs(PREBUFFER_MAX_WALL_SECS);
-        while filled < target {
+        while filled < adaptive_target {
             if t_pre.elapsed() >= wall_limit {
                 self.inner.debug_log.push(
                     "prepare",
                     "prebuffer wall time limit",
                     Some(json!({
                         "filled": filled,
-                        "target": target,
+                        "target": adaptive_target,
                         "msSoFar": t_pre.elapsed().as_millis(),
                     })),
                 );
@@ -711,7 +809,7 @@ impl TorrentStreamState {
             }
             self.check_prepare_cancel()?;
             let before = filled;
-            let read_fut = stream.read(&mut prebuffer[filled..target]);
+            let read_fut = stream.read(&mut prebuffer[filled..adaptive_target]);
             let n = match tokio::time::timeout(read_timeout, read_fut).await {
                 Ok(Ok(n)) => n,
                 Ok(Err(e)) => {
@@ -723,7 +821,7 @@ impl TorrentStreamState {
                         "prebuffer stalled (read timeout)",
                         Some(json!({
                             "filled": filled,
-                            "target": target,
+                            "target": adaptive_target,
                             "msSoFar": t_pre.elapsed().as_millis(),
                         })),
                     );
@@ -736,7 +834,7 @@ impl TorrentStreamState {
                     "prebuffer read returned 0 (EOF)",
                     Some(json!({
                         "filled": filled,
-                        "target": target,
+                        "target": adaptive_target,
                         "msSoFar": t_pre.elapsed().as_millis(),
                     })),
                 );
@@ -746,13 +844,45 @@ impl TorrentStreamState {
             prep_shared
                 .prebuffer_filled
                 .store(filled as u64, Ordering::Relaxed);
-            if (before / PREBUFFER_LOG_STEP) != (filled / PREBUFFER_LOG_STEP) || filled >= target {
+
+            // Sample speed at 25% of the initial target so we can extend it early on fast links.
+            if !speed_sampled && initial_target > 0 && filled >= initial_target / 4 {
+                speed_sampled = true;
+                let elapsed_secs = t_pre.elapsed().as_secs_f64().max(0.001);
+                let speed_kbps = filled as f64 / elapsed_secs / 1024.0;
+                let new_target = if speed_kbps > 2048.0 {
+                    PREBUFFER_ADAPTIVE_MAX  // > 2 MB/s  → 512 KB
+                } else if speed_kbps > 1024.0 {
+                    256 * 1024              // > 1 MB/s  → 256 KB
+                } else if speed_kbps > 512.0 {
+                    128 * 1024              // > 512 KB/s → 128 KB
+                } else {
+                    initial_target          // slow       → keep 64 KB
+                };
+                adaptive_target = new_target.min(alloc_max);
+                if adaptive_target != initial_target {
+                    prep_shared
+                        .prebuffer_target
+                        .store(adaptive_target as u64, Ordering::Relaxed);
+                    self.inner.debug_log.push(
+                        "prepare",
+                        "prebuffer target adapted",
+                        Some(json!({
+                            "speedKbps": speed_kbps as u64,
+                            "newTargetBytes": adaptive_target,
+                            "oldTargetBytes": initial_target,
+                        })),
+                    );
+                }
+            }
+
+            if (before / PREBUFFER_LOG_STEP) != (filled / PREBUFFER_LOG_STEP) || filled >= adaptive_target {
                 self.inner.debug_log.push(
                     "prepare",
                     "prebuffer progress",
                     Some(json!({
                         "filled": filled,
-                        "target": target,
+                        "target": adaptive_target,
                         "lastRead": n,
                         "msSoFar": t_pre.elapsed().as_millis(),
                     })),
@@ -766,7 +896,7 @@ impl TorrentStreamState {
             "prebuffer done",
             Some(json!({
                 "filled": filled,
-                "target": target,
+                "target": adaptive_target,
                 "totalLen": total_len,
                 "prebufferMs": t_pre.elapsed().as_millis(),
             })),
@@ -830,7 +960,7 @@ impl TorrentStreamState {
                 Ok(s) => s,
                 Err(_) => return,
             };
-            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            let mut interval = tokio::time::interval(Duration::from_millis(250));
             interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut scheduler_pos = prepared.playback_offset.load(Ordering::Relaxed);
             let mut tmp = vec![0u8; super::COPY_CHUNK_BYTES];
@@ -1149,7 +1279,9 @@ impl TorrentStreamInner {
 
 type TorrentHandle = Arc<ManagedTorrent>;
 
-const HIGH_PRIORITY_WINDOW_PIECES: u64 = 32;
+/// High-priority lookahead window for the priority worker.
+/// 64 pieces × 256 KB/piece = 16 MB ahead — reduces stalls at high bitrates.
+const HIGH_PRIORITY_WINDOW_PIECES: u64 = 64;
 const LOW_PRIORITY_PIECE_STEP: u64 = 8;
 const HYBRID_SWITCH_BUFFER_BYTES: u64 = 15 * 1024 * 1024;
 

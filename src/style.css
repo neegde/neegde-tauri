@@ -149,137 +149,6 @@ body {
 .sidebar-login      { padding: 16px 12px; border-top: 1px solid var(--border); }
 .sidebar-bottom-rt  { padding: 12px 12px 0; border-top: 1px solid var(--border); }
 
-/* ── Sidebar account block ────────────────────────────────────────────── */
-.sidebar-account {
-  padding: 12px 12px 16px;
-  border-top: 1px solid var(--border);
-  margin-top: auto;
-}
-
-.account-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.account-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #3a3a5c, #1a1a2e);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  flex-shrink: 0;
-  overflow: hidden;
-  color: var(--text);
-}
-.account-avatar img { width: 100%; height: 100%; object-fit: cover; }
-
-.account-name {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text);
-}
-
-.account-logout-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 16px;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-  transition: color 0.15s;
-  line-height: 1;
-  flex-shrink: 0;
-}
-.account-logout-btn:hover { color: var(--text); }
-
-.account-login-btn {
-  width: 100%;
-  background: none;
-  border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 500px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  padding: 8px;
-  cursor: pointer;
-  letter-spacing: 0.5px;
-  transition: all 0.15s;
-}
-.account-login-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-/* ── App Auth Modal ───────────────────────────────────────────────────── */
-.app-auth-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-  animation: fade-in 0.15s ease;
-}
-@keyframes fade-in { from { opacity: 0; } }
-
-.app-auth-modal {
-  background: #282828;
-  border-radius: 12px;
-  padding: 32px 28px 28px;
-  width: 340px;
-  position: relative;
-  animation: modal-in 0.2s ease;
-}
-@keyframes modal-in { from { opacity: 0; transform: scale(0.95) translateY(-8px); } }
-
-.app-auth-close {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  line-height: 1;
-  transition: color 0.15s;
-}
-.app-auth-close:hover { color: var(--text); }
-
-.app-auth-tabs {
-  display: flex;
-  gap: 0;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.app-auth-tab {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 700;
-  padding: 8px 16px 10px;
-  cursor: pointer;
-  margin-bottom: -1px;
-  transition: color 0.15s, border-color 0.15s;
-}
-.app-auth-tab.active       { color: var(--text); border-bottom-color: var(--accent); }
-.app-auth-tab:not(.active):hover { color: var(--text); }
-
-.login-success { color: var(--accent); font-size: 11px; }
-
 .logout-btn {
   width: 100%;
   background: none;
@@ -634,7 +503,7 @@ body {
 }
 .torrent-page--spotify-album .spotify-tracklist-head {
   display: grid;
-  grid-template-columns: 48px 1fr 120px;
+  grid-template-columns: 48px 1fr 128px;
   align-items: center;
   padding: 8px 16px;
   margin: 0 0 4px;
@@ -654,7 +523,7 @@ body {
 }
 .torrent-page--spotify-album .spotify-track-row {
   display: grid;
-  grid-template-columns: 48px 1fr 120px;
+  grid-template-columns: 48px 1fr 128px;
   align-items: center;
   padding: 10px 16px;
   border-radius: 6px;
@@ -762,10 +631,11 @@ body {
   justify-content: flex-end;
   gap: 8px;
 }
-.torrent-page--spotify-album .spotify-dur {
+.torrent-page--spotify-album .spotify-dur--empty {
   font-size: 13px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .torrent-page--spotify-album .spotify-track-actions {
   display: flex;
@@ -775,6 +645,9 @@ body {
   transition: opacity 0.12s;
 }
 .torrent-page--spotify-album .spotify-track-row:hover .spotify-track-actions {
+  opacity: 1;
+}
+.torrent-page--spotify-album .spotify-track-row:has(.like-btn.liked) .spotify-track-actions {
   opacity: 1;
 }
 @media (max-width: 640px) {
@@ -832,6 +705,51 @@ body {
   width: 100%;
   min-height: 44px;
   box-sizing: border-box;
+}
+
+.main-toolbar-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.toolbar-magnet-btn {
+  flex-shrink: 0;
+  align-self: center;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(29, 185, 84, 0.35);
+  background: rgba(29, 185, 84, 0.1);
+  color: var(--accent, #1db954);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease,
+    transform 0.15s ease;
+  box-shadow: 0 2px 12px rgba(29, 185, 84, 0.12);
+}
+.toolbar-magnet-btn:hover:not(:disabled) {
+  background: rgba(29, 185, 84, 0.18);
+  border-color: rgba(29, 185, 84, 0.55);
+  box-shadow: 0 4px 18px rgba(29, 185, 84, 0.22);
+  transform: translateY(-1px);
+}
+.toolbar-magnet-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+[data-theme="light"] .toolbar-magnet-btn {
+  background: rgba(29, 185, 84, 0.12);
+  border-color: rgba(29, 185, 84, 0.4);
+  color: #15883d;
+}
+[data-theme="light"] .toolbar-magnet-btn:hover:not(:disabled) {
+  background: rgba(29, 185, 84, 0.2);
 }
 
 /* ── Cover loading shimmer ────────────────────────────────────────────── */
@@ -1097,7 +1015,7 @@ body {
 /* ── Track List ───────────────────────────────────────────────────────── */
 .tracklist-header {
   display: grid;
-  grid-template-columns: 44px 1fr 88px 118px;
+  grid-template-columns: 44px 1fr 96px 118px;
   padding: 6px 16px;
   font-size: 11px;
   font-weight: 700;
@@ -1111,7 +1029,7 @@ body {
 
 .track-row {
   display: grid;
-  grid-template-columns: 44px 1fr 88px 118px;
+  grid-template-columns: 44px 1fr 96px 118px;
   align-items: center;
   padding: 8px 16px;
   border-radius: 6px;
@@ -1231,7 +1149,36 @@ body {
   font-weight: 500;
 }
 
-.track-size   { font-size: 12px; color: var(--muted); text-align: right; }
+/* Двухстрочный размер: число сверху, единица (КБ/МБ/ГБ) снизу — без переноса внутри строки */
+.file-size-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.file-size-stack__value,
+.file-size-stack__unit {
+  display: block;
+  white-space: nowrap;
+  line-height: 1.12;
+}
+.file-size-stack__value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.file-size-stack__unit {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.track-size.file-size-stack {
+  text-align: right;
+}
 
 .track-actions {
   display: flex;
@@ -1347,9 +1294,13 @@ body {
   justify-content: center;
   color: #000;
   font-size: 14px;
-  transition: transform 0.1s, background 0.15s;
+  transition: transform 0.1s;
 }
-.ctrl-btn-play:hover { transform: scale(1.07) !important; background: rgba(255,255,255,0.88); }
+.ctrl-btn.ctrl-btn-play:hover:not(:disabled) {
+  transform: scale(1.07) !important;
+  background: var(--text);
+  color: #000;
+}
 
 .player-progress {
   display: flex;
@@ -1904,30 +1855,6 @@ body {
   letter-spacing: 0.3px;
 }
 
-/* Sidebar account button — WIP state */
-.account-login-btn--wip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  opacity: 0.45;
-  cursor: not-allowed !important;
-}
-.account-login-btn--wip:hover {
-  border-color: rgba(255,255,255,0.25) !important;
-  color: var(--muted) !important;
-}
-
-.account-wip-badge {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: #f59e0b;
-  background: rgba(245,158,11,0.15);
-  padding: 2px 5px;
-  border-radius: 3px;
-}
-
 /* ── Theme Toggle ─────────────────────────────────────────────────── */
 .theme-toggle {
   display: flex;
@@ -1979,13 +1906,11 @@ body {
     var(--bg) 100%
   );
 }
-[data-theme="light"] .app-auth-modal       { background: var(--surface); }
 [data-theme="light"] .player               { background: var(--surface); }
 
 [data-theme="light"] .album-art,
 [data-theme="light"] .album-cover,
 [data-theme="light"] .player-art,
-[data-theme="light"] .account-avatar,
 [data-theme="light"] .album-section-cover,
 [data-theme="light"] .cover-thumb {
   background: linear-gradient(135deg, #c8c0e0, #a898c8);
@@ -2004,7 +1929,6 @@ body {
 [data-theme="light"] .btn-play-album,
 [data-theme="light"] .btn-dl-album,
 [data-theme="light"] .btn-dl-all,
-[data-theme="light"] .account-login-btn,
 [data-theme="light"] .logout-btn,
 [data-theme="light"] .settings-action-btn--ghost        { border-color: rgba(0,0,0,0.2); }
 [data-theme="light"] .login-input                       { background: rgba(0,0,0,0.06); color: var(--text); }
@@ -2019,14 +1943,16 @@ body {
 [data-theme="light"] .volume-slider::-webkit-slider-runnable-track { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .volume-slider::-moz-range-track    { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .ctrl-btn-play                     { color: #fff; }
-[data-theme="light"] .ctrl-btn-play:hover               { background: #333 !important; }
+[data-theme="light"] .ctrl-btn.ctrl-btn-play:hover:not(:disabled) {
+  background: var(--text);
+  color: #fff;
+}
 [data-theme="light"] .likes-tab                         { background: rgba(0,0,0,0.07); }
 [data-theme="light"] .likes-tab:hover                   { background: rgba(0,0,0,0.12); }
 [data-theme="light"] .likes-tab.active                  { color: #fff; }
 [data-theme="light"] .settings-card-icon                { background: rgba(0,0,0,0.06); }
 [data-theme="light"] ::-webkit-scrollbar-thumb          { background: rgba(0,0,0,0.2); }
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover    { background: rgba(0,0,0,0.35); }
-[data-theme="light"] .account-login-btn--wip:hover      { border-color: rgba(0,0,0,0.2) !important; }
 
 [data-theme="light"] .likes-hero {
   background: linear-gradient(180deg, #c8b8e8 0%, #d8ccf0 50%, transparent 100%);

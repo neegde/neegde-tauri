@@ -4,7 +4,8 @@ defineProps({
   source: String,
   fallback: { type: String, default: "💿" },
 });
-// No backend — always show fallback emoji
+// Stub: always show fallback emoji
+
 </script>
 
 <template>

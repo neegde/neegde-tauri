@@ -2,6 +2,7 @@
 import { ref, watch, onMounted, onUnmounted } from "vue";
 import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../../rutracker/search.js";
 import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
+import { torrentFileB64ForTrack } from "../../torrent/api.js";
 
 const props = defineProps({
   torrentId: [String, Number],
@@ -62,7 +63,9 @@ function setupCover() {
         if (!entry?.isIntersecting) return;
         observer?.disconnect();
         observer = null;
-        getTorrentImageDataUrl(magnet, idx)
+        // Pass cached .torrent bytes so the image session skips DHT metadata wait.
+        torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
+          .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
           .then((u) => {
             if (gen !== fetchGen) return;
             if (u) coverUrl.value = u;
@@ -70,7 +73,7 @@ function setupCover() {
           })
           .catch(() => {});
       },
-      { rootMargin: "200px" }
+      { rootMargin: "400px" }
     );
     const el = rootRef.value;
     if (el) observer.observe(el);
@@ -97,7 +100,7 @@ function setupCover() {
         })
         .catch(() => {});
     },
-    { rootMargin: "200px" }
+    { rootMargin: "400px" }
   );
 
   const el = rootRef.value;

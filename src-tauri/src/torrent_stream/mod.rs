@@ -19,14 +19,16 @@ pub fn torrent_streams_dir_label() -> &'static str {
     }
 }
 
-/// Bytes to pull before returning the stream URL. **0** = skip blocking pre-read (fastest prepare;
-/// the player warms the same `FileStream` via HTTP). Raise (e.g. `64 * 1024`) if you want a warm
-/// cache before `ready` when peers are fast.
-pub(super) const PREBUFFER_BYTES: usize = 512 * 1024;
+/// Minimum (initial) prebuffer target — fast start at any connection speed.
+/// 32 KB is enough to unblock Web Audio on most connections; speed is sampled
+/// at 25% (8 KB) so adaptive upsizing happens early on fast links.
+pub(super) const PREBUFFER_BYTES: usize = 32 * 1024;
+/// Maximum prebuffer when connection is fast (>2 MB/s measured during the first read).
+pub(super) const PREBUFFER_ADAPTIVE_MAX: usize = 512 * 1024;
 /// One `read` on the file stream — if the swarm sends nothing, bail out of this wait quickly.
-pub(super) const PREBUFFER_READ_TIMEOUT_SECS: u64 = 12;
+pub(super) const PREBUFFER_READ_TIMEOUT_SECS: u64 = 8;
 /// Hard cap for the whole prebuffer loop (many small reads).
-pub(super) const PREBUFFER_MAX_WALL_SECS: u64 = 45;
+pub(super) const PREBUFFER_MAX_WALL_SECS: u64 = 20;
 pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 pub(super) const COPY_CHUNK_BYTES: usize = 256 * 1024;
 
@@ -134,4 +136,13 @@ pub async fn torrent_prefetch_next_track(
             next_torrent_file,
         )
         .await
+}
+
+/// Returns the list of files inside a torrent described by a magnet link (metadata via DHT/trackers).
+#[tauri::command]
+pub async fn torrent_magnet_list_files(
+    state: tauri::State<'_, TorrentStreamState>,
+    magnet: String,
+) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
+    state.magnet_resolve_files(magnet).await
 }

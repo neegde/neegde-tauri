@@ -57,7 +57,7 @@ export function getLastResolvedMirror() {
 }
 
 /**
- * В режиме auto запрашивает у бэкенда первое доступное зеркало из списка.
+ * В режиме auto запрашивает у Tauri первое доступное зеркало из списка.
  * При ошибке оставляет прежний кэш или DEFAULT_MIRROR.
  */
 export async function resolveMirrorIfNeeded() {

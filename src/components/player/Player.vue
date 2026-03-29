@@ -39,13 +39,18 @@ const props = defineProps({
   track: { type: Object, default: null },
   /** Следующий трек в очереди — для фоновой предзагрузки. */
   nextTrack: { type: Object, default: null },
+  /** Трек через один — для упреждающей предзагрузки после завершения prefetch nextTrack. */
+  secondNextTrack: { type: Object, default: null },
   hasPrev: Boolean,
   hasNext: Boolean,
   /** После восстановления сессии: не использовать HTML autoplay при появлении src. */
   suppressAutoplay: Boolean,
+  /** Hover-prefetch URL + ключ, переданные из App.vue (пользователь навёл на трек). */
+  hoverPrefetchUrl: { type: String, default: "" },
+  hoverPrefetchKey: { type: String, default: "" },
 });
 
-const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream"]);
+const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed"]);
 
 function loadSavedVolume() {
   try {
@@ -95,7 +100,7 @@ const loadCancelledByUser = ref(false);
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
 
-/** Последняя статистика BitTorrent с бэкенда (событие torrent-prepare-progress). */
+/** Последняя статистика BitTorrent из Tauri (событие torrent-prepare-progress). */
 const prepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
 
@@ -104,9 +109,12 @@ const prefetchedStream = ref({ url: "", forKey: "" });
 /** Успешный prefetch для пары текущий→следующий (не повторять до смены трека). */
 const prefetchOkFingerprint = ref("");
 let prefetchInFlight = false;
+/** Спекулятивный «тихий» прогрев track+2 (не нужен URL — важна только загрузка кусков). */
+let secondPrefetchInFlight = false;
+let secondPrefetchDoneFingerprint = "";
 
-const PREFETCH_MIN_SEC = 30;
-const PREFETCH_MIN_RATIO = 0.22;
+const PREFETCH_MIN_SEC = 10;
+const PREFETCH_MIN_RATIO = 0.12;
 
 /**
  * Stable key for matching a queue item to a prepared stream URL.
@@ -203,6 +211,7 @@ watch(
   () => {
     prepareAttempt.value = 0;
     prefetchOkFingerprint.value = "";
+    secondPrefetchDoneFingerprint = "";
     const nk = props.track ? queueTrackKey(props.track) : "";
     if (prefetchedStream.value.url && prefetchedStream.value.forKey !== nk) {
       void releaseTorrentStreamUrl(prefetchedStream.value.url);
@@ -551,13 +560,44 @@ async function maybeTriggerPrefetch() {
         forKey: queueTrackKey(props.nextTrack),
       };
     }
+    // Mark done only on success so a transient error allows one retry.
+    prefetchOkFingerprint.value = fp;
   } catch (e) {
     void appDebugLog("player", "prefetch next error", {
       message: e?.message ?? String(e ?? ""),
     });
   } finally {
-    prefetchOkFingerprint.value = fp;
     prefetchInFlight = false;
+  }
+}
+
+/**
+ * Silent speculative warm-up for the track after next (track+2).
+ * Runs only after the current→next prefetch succeeds.
+ * Discards the URL immediately — the benefit is having pieces pre-downloaded
+ * so when the user reaches track+2 it starts with filled cache.
+ */
+async function maybeTriggerSecondPrefetch() {
+  if (!props.secondNextTrack || !props.nextTrack) return;
+  const fp = prefetchFingerprint(props.nextTrack, props.secondNextTrack);
+  if (!fp || fp === secondPrefetchDoneFingerprint) return;
+  if (secondPrefetchInFlight) return;
+  // Only start after the first prefetch (next track) has completed
+  if (!prefetchOkFingerprint.value) return;
+
+  secondPrefetchInFlight = true;
+  try {
+    const result = await prefetchNextInQueue(props.nextTrack, props.secondNextTrack);
+    // Release the URL immediately — we just want the torrent warmed in session
+    if (result?.kind === "streamReady" && result.url) {
+      void releaseTorrentStreamUrl(result.url);
+    }
+    secondPrefetchDoneFingerprint = fp;
+    void appDebugLog("player", "second prefetch (track+2) done", { fpPreview: fp.slice(0, 64) });
+  } catch {
+    // Silently ignore
+  } finally {
+    secondPrefetchInFlight = false;
   }
 }
 
@@ -574,6 +614,13 @@ watch(
   ],
   () => {
     void maybeTriggerPrefetch();
+  }
+);
+
+watch(
+  () => [prefetchOkFingerprint.value, props.secondNextTrack, props.nextTrack],
+  () => {
+    void maybeTriggerSecondPrefetch();
   }
 );
 
@@ -637,9 +684,15 @@ watch(
       const preparedKey = queueTrackKey(props.track);
       let nextSrc = "";
       if (prefetchedStream.value.url && prefetchedStream.value.forKey === preparedKey) {
+        // Next-track prefetch hit (pre-fetched while playing the previous track)
         nextSrc = prefetchedStream.value.url;
         prefetchedStream.value = { url: "", forKey: "" };
         void appDebugLog("player", "stream prepare used prefetched URL", { fileIdx });
+      } else if (props.hoverPrefetchUrl && props.hoverPrefetchKey === preparedKey) {
+        // Hover-prefetch hit (user hovered this track before clicking)
+        nextSrc = props.hoverPrefetchUrl;
+        emit("hover-prefetch-consumed");
+        void appDebugLog("player", "stream prepare used hover-prefetch URL", { fileIdx });
       } else {
         nextSrc = await streamUrl(magnet, fileIdx, {
           source: props.track?.source,

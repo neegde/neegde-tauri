@@ -1,10 +1,16 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { appDebugLog, appDebugClickDetail } from "./appDebugLog.js";
 import { APP_DEBUG_WINDOW_LABEL } from "./appDebugWindow.js";
-import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./lib/utils.js";
+import {
+  isAudio,
+  detectAlbums,
+  orderedAudioFiles,
+  trackDisplayBasename,
+  enrichMagnetWithOpenTrackers,
+} from "./lib/utils.js";
 import { trackCoverFileIdxForLike } from "./library/likesCover.js";
 import { loadLikes, saveLikes } from "./library/libraryStorage.js";
 import {
@@ -16,8 +22,10 @@ import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
-import { searchMusic, getTorrentDetails, clearRutrackerCoverCache } from "./rutracker/search.js";
+import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
+import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
+import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -25,14 +33,32 @@ import TorrentView  from "./components/torrent/TorrentView.vue";
 import LikesView    from "./components/likes/LikesView.vue";
 import SettingsView from "./components/settings/SettingsView.vue";
 import Player       from "./components/player/Player.vue";
-import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
-import NavArrows    from "./components/shell/NavArrows.vue";
+import NavArrows       from "./components/shell/NavArrows.vue";
+import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
 
+// ── Search result LRU cache ───────────────────────────────────────────────────
+const _searchCache = new Map(); // normalized query → results[]
+const SEARCH_CACHE_MAX = 30;
+function _searchCacheGet(q) {
+  const v = _searchCache.get(q);
+  if (v === undefined) return undefined;
+  _searchCache.delete(q);
+  _searchCache.set(q, v); // LRU touch
+  return v;
+}
+function _searchCacheSet(q, r) {
+  if (_searchCache.has(q)) _searchCache.delete(q);
+  if (_searchCache.size >= SEARCH_CACHE_MAX) {
+    _searchCache.delete(_searchCache.keys().next().value);
+  }
+  _searchCache.set(q, r);
+}
+
 // ── Queue (восстановление последней сессии из localStorage) ──────────────────
 const _savedPlayer = loadPlayerSession();
-const queue = ref(_savedPlayer?.queue ?? []);
+const queue = shallowRef(_savedPlayer?.queue ?? []);
 const queuePos = ref(
   _savedPlayer && _savedPlayer.queue.length
     ? _savedPlayer.queuePos
@@ -43,13 +69,48 @@ const nextInQueue = computed(() => {
   if (queuePos.value >= queue.value.length - 1) return null;
   return queue.value[queuePos.value + 1];
 });
+const secondNextInQueue = computed(() => {
+  if (queuePos.value >= queue.value.length - 2) return null;
+  return queue.value[queuePos.value + 2];
+});
+
+// ── Hover-prefetch state ──────────────────────────────────────────────────────
+// Stores a pre-prepared stream URL for the track the user is hovering over.
+const hoverPrefetchUrl = ref("");
+const hoverPrefetchKey = ref("");
+
+async function handleHoverTrack(fileIdx) {
+  if (!selected.value || !torrentMagnet.value) return;
+  const magnet = torrentMagnet.value;
+  const key = `${magnet}\0${fileIdx}`;
+  // Already prefetched or currently playing
+  if (key === hoverPrefetchKey.value) return;
+  if (nowPlaying.value && `${nowPlaying.value.magnet}\0${nowPlaying.value.fileIdx}` === key) return;
+  // Release previous hover prefetch if not used
+  if (hoverPrefetchUrl.value) {
+    void releaseTorrentStreamUrl(hoverPrefetchUrl.value);
+    hoverPrefetchUrl.value = "";
+    hoverPrefetchKey.value = "";
+  }
+  try {
+    const url = await streamUrl(magnet, fileIdx, {
+      source: selected.value?.source,
+      torrentId: selected.value?.id,
+    });
+    if (url) {
+      hoverPrefetchUrl.value = url;
+      hoverPrefetchKey.value = key;
+    }
+  } catch {
+    // Silently ignore hover-prefetch errors
+  }
+}
 
 watch(
   [queue, queuePos],
   () => {
     savePlayerSession(queue.value, queuePos.value);
-  },
-  { deep: true }
+  }
 );
 
 function flushPlayerSessionToStorage() {
@@ -69,13 +130,11 @@ const theme = ref(localStorage.getItem("theme") || "dark");
 const restoringSession = ref(true);
 
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
-const RESTORE_UI_MAX_MS = 20_000;
+const RESTORE_UI_MAX_MS = 5_000;
 
 onMounted(async () => {
   window.addEventListener("beforeunload", flushPlayerSessionToStorage);
   document.documentElement.setAttribute("data-theme", theme.value);
-  authPanelOpen.value = false;
-
   const unblockTimer = window.setTimeout(() => {
     restoringSession.value = false;
   }, RESTORE_UI_MAX_MS);
@@ -88,7 +147,7 @@ onMounted(async () => {
   } catch (_) { /* offline or no saved session — stay logged out */ }
   try {
     appDebugEnabled.value = await invoke("get_app_debug_enabled");
-  } catch (_) { /* web preview or old backend */ }
+  } catch (_) { /* нет Tauri API (превью в браузере) */ }
   setupAppDebugInstrumentation();
   window.clearTimeout(unblockTimer);
   restoringSession.value = false;
@@ -113,9 +172,6 @@ function handleThemeChange(newTheme) {
 const rtLoggedIn  = ref(false);
 const rtUsername  = ref(null);
 const rtAvatarUrl = ref(null);
-const appUser     = ref(null);
-const authPanelOpen = ref(false);
-
 // ── View ──────────────────────────────────────────────────────────────────────
 const view       = ref("search");  // "search" | "likes" | "settings"
 const returnView = ref("search");
@@ -181,7 +237,7 @@ function setupAppDebugInstrumentation() {
 
 // ── Search ────────────────────────────────────────────────────────────────────
 const searchQuery = ref("");
-const results = ref([]);
+const results = shallowRef([]);
 const loading = ref(false);
 const error   = ref(null);
 
@@ -189,7 +245,7 @@ const error   = ref(null);
 const selected      = ref(null);
 const torrentMagnet = ref("");
 const torrentCover  = ref(null);   // base64 data URL or null
-const files         = ref([]);
+const files         = shallowRef([]);
 const loadingFiles  = ref(false);
 
 /** Полный список файлов раздачи до предпросмотра одного альбома (как из лайков). */
@@ -319,40 +375,195 @@ function handleLogout(evt) {
   queue.value        = [];
   forwardStack.value = [];
   backStack.value    = [];
-  clearRutrackerCoverCache();
-}
-
-function handleAppLogin(username) {
-  appUser.value       = { username };
-  authPanelOpen.value = false;
-}
-
-function handleAppRegister() { /* stub */ }
-
-function handleAppLogout() {
-  appUser.value = null;
-  likes.value   = {};
 }
 
 async function handleSearch(query) {
   if (!query?.trim()) return;
+  const q = query.trim();
   forwardStack.value = [];
-  backStack.value = [];
-  loading.value      = true;
+  backStack.value    = [];
   error.value        = null;
-  results.value      = [];
   selected.value     = null;
   files.value        = [];
   torrentCover.value = null;
   view.value         = "search";
-  try {
-    results.value = await searchMusic(query.trim());
+
+  const cached = _searchCacheGet(q.toLowerCase());
+  if (cached) {
+    results.value = cached;
     if (!results.value.length) error.value = "Ничего не найдено.";
+    return;
+  }
+
+  loading.value = true;
+  results.value = [];
+  try {
+    results.value = await searchMusic(q);
+    if (!results.value.length) error.value = "Ничего не найдено.";
+    else _searchCacheSet(q.toLowerCase(), results.value);
   } catch (e) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
   } finally {
     loading.value = false;
   }
+}
+
+const magnetPanelOpen = ref(false);
+const magnetDraft = ref("");
+const magnetError = ref(null);
+
+/**
+ * Extracts a `magnet:?…` substring from pasted text (extra words or quotes allowed).
+ *
+ * Returns:
+ *     The magnet URI or null if none found.
+ */
+function extractMagnetUri(raw) {
+  const s = String(raw ?? "").trim();
+  const lower = s.toLowerCase();
+  const i = lower.indexOf("magnet:?");
+  if (i < 0) return null;
+  const slice = s.slice(i);
+  const end = slice.search(/\s/);
+  const core = end < 0 ? slice : slice.slice(0, end);
+  return core.replace(/[),.;>]+$/g, "");
+}
+
+/**
+ * Parses the BTIH (hex or base32) from a magnet link for stable synthetic ids.
+ *
+ * Returns:
+ *     Lowercase hash string or null.
+ */
+function parseBtihFromMagnet(magnet) {
+  const u = String(magnet ?? "");
+  const hex = /btih:([a-fA-F0-9]{40})/i.exec(u);
+  if (hex) return hex[1].toLowerCase();
+  const b32 = /btih:([a-z2-7]{32})/i.exec(u);
+  if (b32) return b32[1].toLowerCase();
+  return null;
+}
+
+/**
+ * Display name for a magnet-only torrent (`dn` parameter or short hash fallback).
+ *
+ * Returns:
+ *     Non-empty title string.
+ */
+function magnetTitleFromMagnet(magnet) {
+  const u = String(magnet ?? "");
+  const dn = /[?&]dn=([^&]+)/.exec(u);
+  if (dn) {
+    const spaced = dn[1].replace(/\+/g, " ");
+    const fixed = spaced.replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
+    const t = decodeURIComponent(fixed).trim();
+    if (t) return t;
+  }
+  const h = parseBtihFromMagnet(u);
+  return h ? `Раздача ${h.slice(0, 8)}…` : "Раздача по ссылке";
+}
+
+async function submitMagnetLink() {
+  magnetError.value = null;
+  const extracted = extractMagnetUri(magnetDraft.value);
+  if (!extracted) {
+    magnetError.value = "Вставьте magnet-ссылку (начинается с magnet:?)";
+    return;
+  }
+  if (!extracted.toLowerCase().includes("btih:")) {
+    magnetError.value = "В ссылке нет info hash (btih)";
+    return;
+  }
+  const enriched = enrichMagnetWithOpenTrackers(extracted);
+  const btih = parseBtihFromMagnet(enriched);
+  if (!btih) {
+    magnetError.value = "Не удалось разобрать hash раздачи";
+    return;
+  }
+  const syntheticId = `magnet-${btih}`;
+  if (selected.value?.id === syntheticId) {
+    magnetPanelOpen.value = false;
+    magnetDraft.value = "";
+    forwardStack.value = [];
+    backStack.value = [];
+    selected.value = null;
+    files.value = [];
+    torrentMagnet.value = "";
+    torrentCover.value = null;
+    torrentFilesBeforeAlbumPreview.value = null;
+    torrentSelectedBeforeAlbumPreview.value = null;
+    return;
+  }
+
+  const synthetic = {
+    id: syntheticId,
+    name: magnetTitleFromMagnet(enriched),
+    category: "—",
+    size: 0,
+    seeders: "?",
+    leechers: 0,
+    added: "—",
+    source: "magnet",
+  };
+
+  if (selected.value) {
+    backStack.value.push(snapshotTorrentForBack());
+  } else {
+    backStack.value.push(snapshotSearchForBack());
+  }
+  forwardStack.value = [];
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
+  selected.value = synthetic;
+  files.value = [];
+  torrentMagnet.value = "";
+  torrentCover.value = null;
+  loadingFiles.value = true;
+  view.value = "search";
+  error.value = null;
+
+  try {
+    const rawFiles = await magnetListFiles(enriched);
+    torrentMagnet.value = enriched;
+    files.value = rawFiles.map((f, i) => ({
+      name: f.path[f.path.length - 1] ?? "",
+      path: f.path.join("/"),
+      size: f.size,
+      idx: i,
+      origIdx: i,
+    }));
+    magnetPanelOpen.value = false;
+    magnetDraft.value = "";
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+  } catch (e) {
+    console.error("submitMagnetLink:", e);
+    magnetError.value = String(e?.message ?? e);
+    backStack.value.pop();
+    selected.value = null;
+    files.value = [];
+    torrentMagnet.value = "";
+    torrentCover.value = null;
+  } finally {
+    loadingFiles.value = false;
+  }
+}
+
+function closeMagnetPanel() {
+  if (
+    loadingFiles.value &&
+    selected.value?.source === "magnet" &&
+    !torrentMagnet.value
+  ) {
+    torrentPrepareCancel();
+    if (backStack.value.length > 0) backStack.value.pop();
+    selected.value = null;
+    files.value = [];
+    torrentMagnet.value = "";
+    torrentCover.value = null;
+    loadingFiles.value = false;
+  }
+  magnetPanelOpen.value = false;
+  magnetError.value = null;
 }
 
 async function handleSelect(torrent) {
@@ -388,6 +599,9 @@ async function handleSelect(torrent) {
       idx:      i,
       origIdx:  i,
     }));
+    // Warm .torrent file cache while user browses the track list.
+    // By the time they click play it'll already be resolved → streamUrl skips the fetch.
+    void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
   } catch (e) {
     console.error("handleSelect:", e);
     // Leave files empty — TorrentView shows "Аудиофайлы не найдены."
@@ -586,6 +800,17 @@ function handleDownloadTrack(origIdx) {
   const f = files.value.find((x) => x.origIdx === origIdx);
   const label = f ? trackDisplayBasename(f.path) : `Файл ${origIdx}`;
   exportTorrentFiles(torrentMagnet.value, [origIdx], [label], null, (p) => {
+    downloadProgress.value = p;
+  });
+}
+
+/** Скачивание трека из списка «Мне нравится» без открытия раздачи. */
+function handleDownloadTrackFromLike(like) {
+  if (!like?.magnet || like.fileIdx == null) return;
+  downloadOverlayExpanded.value = true;
+  const idx = Number(like.fileIdx);
+  const label = trackDisplayBasename(like.fileName);
+  exportTorrentFiles(like.magnet, [idx], [label], null, (p) => {
     downloadProgress.value = p;
   });
 }
@@ -825,80 +1050,86 @@ function handleNavBack() {
         <span class="sidebar-rt-connecting-label">Проверяем доступность…</span>
       </div>
 
-      <!-- App account block -->
-      <div class="sidebar-account">
-        <button class="account-login-btn account-login-btn--wip" disabled title="В разработке">
-          Войти в аккаунт
-          <span class="account-wip-badge">скоро</span>
-        </button>
-      </div>
     </aside>
 
     <!-- ── Main ────────────────────────────────────────────────────── -->
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
         <div v-if="view === 'search'" class="main-toolbar">
-          <div class="main-toolbar-search">
-            <SearchBar
-              v-model="searchQuery"
-              :loading="loading"
-              :show-categories="false"
-              @search="handleSearch"
-            />
+          <div class="main-toolbar-row">
+            <div class="main-toolbar-search">
+              <SearchBar
+                v-model="searchQuery"
+                :loading="loading"
+                :show-categories="false"
+                @search="handleSearch"
+              />
+            </div>
+            <button
+              type="button"
+              class="toolbar-magnet-btn"
+              title="Открыть раздачу по magnet-ссылке"
+              :disabled="loadingFiles"
+              @click="magnetPanelOpen = true"
+            >
+              По ссылке
+            </button>
           </div>
         </div>
 
-        <!-- Likes view -->
-        <LikesView
-          v-if="view === 'likes'"
-          :likes="Object.values(likes)"
-          :now-playing="nowPlayingMatchForLikes"
-          :player-playing="playerPlaying"
-          @toggle-like="handleToggleLike"
-          @play="handlePlayFromLike"
-          @play-album="handlePlayAlbumFromLike"
-          @open-torrent="handleOpenTorrentFromLike"
+        <MagnetLinkDialog
+          v-model:open="magnetPanelOpen"
+          v-model:draft="magnetDraft"
+          :error="magnetError"
+          :resolving="loadingFiles && magnetPanelOpen"
+          @submit="submitMagnetLink"
+          @close="closeMagnetPanel"
         />
+
+        <!-- Likes view -->
+        <KeepAlive>
+          <LikesView
+            v-if="view === 'likes'"
+            :likes="Object.values(likes)"
+            :now-playing="nowPlayingMatchForLikes"
+            :player-playing="playerPlaying"
+            @toggle-like="handleToggleLike"
+            @play="handlePlayFromLike"
+            @play-album="handlePlayAlbumFromLike"
+            @open-torrent="handleOpenTorrentFromLike"
+            @download="handleDownloadTrackFromLike"
+          />
+        </KeepAlive>
 
         <!-- Settings view -->
-        <SettingsView
-          v-else-if="view === 'settings'"
-          :rt-logged-in="rtLoggedIn"
-          :rt-username="rtUsername"
-          :rt-avatar-url="rtAvatarUrl"
-          :restoring-session="restoringSession"
-          :app-user="appUser"
-          :theme="theme"
-          :app-debug-enabled="appDebugEnabled"
-          @login="handleLogin"
-          @logout="handleLogout"
-          @app-logout="handleAppLogout"
-          @open-auth="authPanelOpen = true"
-          @theme-change="handleThemeChange"
-          @update:app-debug-enabled="appDebugEnabled = $event"
-        />
+        <KeepAlive>
+          <SettingsView
+            v-if="view === 'settings'"
+            :rt-logged-in="rtLoggedIn"
+            :rt-username="rtUsername"
+            :rt-avatar-url="rtAvatarUrl"
+            :restoring-session="restoringSession"
+            :theme="theme"
+            :app-debug-enabled="appDebugEnabled"
+            @login="handleLogin"
+            @logout="handleLogout"
+            @theme-change="handleThemeChange"
+            @update:app-debug-enabled="appDebugEnabled = $event"
+          />
+        </KeepAlive>
 
         <!-- Search view -->
-        <template v-else>
+        <template v-if="view !== 'likes' && view !== 'settings'">
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->
-          <div v-if="!restoringSession && !rtLoggedIn && !appUser && !results.length && !selected && !loading" class="onboarding">
+          <div v-if="!restoringSession && !rtLoggedIn && !results.length && !selected && !loading" class="onboarding">
             <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
               <div class="onboarding-icon">🔗</div>
               <div class="onboarding-body">
                 <div class="onboarding-title">Подключите Rutracker</div>
                 <div class="onboarding-desc">
                   Зайдите в <strong style="color:var(--text)">Настройки</strong> и введите логин — поиск заработает сразу.
-                </div>
-              </div>
-            </div>
-            <div class="onboarding-card onboarding-card--dim" style="cursor:pointer" @click="authPanelOpen = true">
-              <div class="onboarding-icon">♥</div>
-              <div class="onboarding-body">
-                <div class="onboarding-title">Аккаунт — для библиотеки</div>
-                <div class="onboarding-desc">
-                  Лайки уже сохраняются на этом компьютере. Аккаунт — для синхронизации между устройствами (скоро).
                 </div>
               </div>
             </div>
@@ -929,6 +1160,7 @@ function handleNavBack() {
             @download-all="handleDownloadAll"
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
+            @hover-track="handleHoverTrack"
           />
         </template>
 
@@ -939,22 +1171,18 @@ function handleNavBack() {
     <Player
       :track="nowPlaying"
       :next-track="nextInQueue"
+      :second-next-track="secondNextInQueue"
       :suppress-autoplay="suppressAutoplayAfterSessionRestore"
       :has-prev="queuePos > 0"
       :has-next="queuePos < queue.length - 1"
+      :hover-prefetch-url="hoverPrefetchUrl"
+      :hover-prefetch-key="hoverPrefetchKey"
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
-    />
-
-    <!-- ── App auth modal ──────────────────────────────────────────── -->
-    <AppAuthPanel
-      v-if="authPanelOpen"
-      @login="handleAppLogin"
-      @register="handleAppRegister"
-      @close="authPanelOpen = false"
+      @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
     />
 
     <DownloadProgressOverlay

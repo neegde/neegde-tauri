@@ -26,7 +26,6 @@ const props = defineProps({
   rtUsername:       { type: String, default: null },
   rtAvatarUrl:      { type: String, default: null },
   restoringSession: { type: Boolean, default: false },
-  appUser:          Object,
   theme:            { type: String, default: "dark" },
   /** Полный журнал отладки приложения (UI, плеер, торрент-стриминг). */
   appDebugEnabled: { type: Boolean, default: false },
@@ -38,8 +37,6 @@ const avatarImgFailed = ref(false);
 const emit = defineEmits([
   "login",
   "logout",
-  "app-logout",
-  "open-auth",
   "theme-change",
   "update:appDebugEnabled",
 ]);
@@ -496,34 +493,6 @@ watch(nerdOpen, (open) => {
               </button>
             </form>
           </template>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Аккаунт ────────────────────────────────────────────── -->
-    <div class="settings-section">
-      <div class="settings-section-label">
-        Аккаунт Нигде
-        <span class="settings-soon-badge">скоро</span>
-      </div>
-
-      <div class="settings-card settings-card--disabled">
-        <div class="settings-card-header">
-          <div class="settings-card-icon">👤</div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Нигде</div>
-            <div class="settings-card-status">
-              <span class="settings-status-dot status-off" />
-              В разработке
-            </div>
-          </div>
-          <span class="settings-wip-pill">В разработке</span>
-        </div>
-
-        <div class="settings-card-body">
-          <p class="settings-card-desc">
-            Синхронизация лайков между устройствами появится в следующих версиях.
-          </p>
         </div>
       </div>
     </div>

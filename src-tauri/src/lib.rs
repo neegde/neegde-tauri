@@ -6,7 +6,14 @@ mod rutracker;
 mod torrent_image;
 mod torrent_stream;
 
+use std::num::NonZeroUsize;
+use std::sync::Mutex;
+use lru::LruCache;
 use tauri::{Manager, RunEvent};
+
+/// In-process LRU cache for MusicBrainz + Cover Art Archive results.
+/// Avoids repeat HTTP round-trips for the same artist/album.
+type CoverArtCache = Mutex<LruCache<String, Option<String>>>;
 
 use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
 
@@ -47,15 +54,29 @@ fn kill_vite_dev_server() {
 }
 
 /// Fetch album cover art via MusicBrainz search + Cover Art Archive.
-/// Does not require Rutracker auth — uses the shared reqwest client.
+/// Results are cached in a 200-entry LRU (including None for negative caching).
 #[tauri::command]
 async fn fetch_album_cover(
     state: tauri::State<'_, rutracker::RutrackerState>,
+    cache: tauri::State<'_, CoverArtCache>,
     artist: String,
     album: String,
 ) -> Result<Option<String>, String> {
+    let key = format!("{}|{}", artist.trim().to_lowercase(), album.trim().to_lowercase());
+
+    // Fast path: cache hit (includes negative entries)
+    {
+        let mut c = cache.lock().unwrap();
+        if let Some(cached) = c.get(&key) {
+            return Ok(cached.clone());
+        }
+    }
+
     let client = state.client.clone();
-    Ok(cover_art::fetch_album_cover(&client, &artist, &album).await)
+    let result = cover_art::fetch_album_cover(&client, &artist, &album).await;
+
+    cache.lock().unwrap().put(key, result.clone());
+    Ok(result)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -66,6 +87,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));
+            app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
+                NonZeroUsize::new(200).unwrap(),
+            )));
             app.manage(torrent_stream::TorrentStreamState::new(
                 app.handle().clone(),
             ));
@@ -91,6 +115,7 @@ pub fn run() {
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
             torrent_stream::torrent_prepare_stream,
+            torrent_stream::torrent_magnet_list_files,
             torrent_stream::torrent_prefetch_next_track,
             torrent_stream::torrent_prepare_cancel,
             torrent_stream::torrent_dispose_preview,

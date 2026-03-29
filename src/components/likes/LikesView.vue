@@ -12,7 +12,7 @@ const props = defineProps({
   playerPlaying: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(["toggle-like", "play", "play-album", "open-torrent"]);
+const emit = defineEmits(["toggle-like", "play", "play-album", "open-torrent", "download"]);
 
 const tab = ref("tracks");
 
@@ -143,6 +143,11 @@ function trackCoverFileIdx(like) {
               title="Перейти к раздаче"
               @click.stop="emit('open-torrent', like)"
             >↗</button>
+            <button
+              class="track-btn dl"
+              title="Скачать"
+              @click.stop="emit('download', like)"
+            >↓</button>
             <button
               class="track-btn like-btn liked"
               title="Убрать лайк"

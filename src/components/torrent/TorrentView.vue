@@ -8,6 +8,7 @@ import {
   trackDisplayBasename,
   audioFormatLabel,
   fmtSize,
+  fmtSizeParts,
   fmtDate,
   detectAlbums,
   sumFileSizes,
@@ -16,6 +17,7 @@ import {
 } from "../../lib/utils.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
+import { torrentFileB64ForTrack } from "../../torrent/api.js";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
@@ -39,7 +41,26 @@ const emit = defineEmits([
   "download", "download-all", "download-album",
   "toggle-like",
   "open-album-preview",
+  "hover-track",
 ]);
+
+// ── Hover prefetch ────────────────────────────────────────────────────────────
+let _hoverTimer = null;
+let _lastHoveredIdx = null;
+
+function onTrackHover(origIdx) {
+  if (origIdx === props.nowPlayingIdx) return;
+  if (origIdx === _lastHoveredIdx) return;
+  clearTimeout(_hoverTimer);
+  _hoverTimer = setTimeout(() => {
+    _lastHoveredIdx = origIdx;
+    emit("hover-track", origIdx);
+  }, 280);
+}
+
+function onTrackLeave() {
+  clearTimeout(_hoverTimer);
+}
 
 // ── View mode ────────────────────────────────────────────────────────────────
 const viewMode = ref(localStorage.getItem("albumViewMode") || "list");
@@ -188,7 +209,7 @@ const spotifyArtist = computed(() => {
   return "Неизвестный исполнитель";
 });
 
-function prefetchAlbumCovers() {
+async function prefetchAlbumCovers() {
   const m = props.magnet?.trim();
   if (!m || props.loading || !props.files?.length) return;
 
@@ -212,8 +233,18 @@ function prefetchAlbumCovers() {
   lastCoverPrefetchKey.value = key;
 
   const magnetEnriched = enrichMagnetWithOpenTrackers(m);
+  // Await cached .torrent bytes to skip DHT metadata wait in image session.
+  // By this point handleSelect already warmed the cache, so this usually resolves instantly.
+  const torrentFileB64 = await torrentFileB64ForTrack({
+    source: props.torrent?.source,
+    torrentId: props.torrent?.id,
+  }).catch(() => null);
   for (const fileIdx of indices) {
-    invoke("torrent_fetch_image", { magnet: magnetEnriched, fileIdx }).catch(() => {});
+    invoke("torrent_fetch_image", {
+      magnet: magnetEnriched,
+      fileIdx,
+      torrentFileB64: torrentFileB64 ?? null,
+    }).catch(() => {});
   }
 }
 
@@ -313,6 +344,8 @@ watch(
           :key="f.origIdx"
           :class="['spotify-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @mouseenter="onTrackHover(f.origIdx)"
+          @mouseleave="onTrackLeave"
         >
           <div class="spotify-col-n">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
@@ -328,13 +361,18 @@ watch(
             </div>
           </div>
           <div class="spotify-col-time">
-            <span class="spotify-dur">{{ f.size > 0 ? fmtSize(f.size) : "—" }}</span>
+            <div v-if="f.size > 0" class="file-size-stack spotify-file-size-stack">
+              <template v-for="p in [fmtSizeParts(f.size)]" :key="'sp-sz-' + f.origIdx">
+                <span class="file-size-stack__value">{{ p.value }}</span>
+                <span class="file-size-stack__unit">{{ p.unit }}</span>
+              </template>
+            </div>
+            <span v-else class="spotify-dur spotify-dur--empty">—</span>
             <div class="spotify-track-actions">
               <button
                 :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
                 @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
               >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
-              <button class="track-btn" title="Слушать" @click.stop="emit('play', f.origIdx, f.path)">▶</button>
               <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
             </div>
           </div>
@@ -452,6 +490,8 @@ watch(
           :key="f.origIdx"
           :class="['track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @mouseenter="onTrackHover(f.origIdx)"
+          @mouseleave="onTrackLeave"
         >
           <div class="track-num">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
@@ -466,14 +506,18 @@ watch(
               <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
             </div>
           </div>
-          <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
+          <div class="track-size file-size-stack">
+            <template v-for="p in f.size > 0 ? [fmtSizeParts(f.size)] : []" :key="'sz-' + f.origIdx">
+              <span class="file-size-stack__value">{{ p.value }}</span>
+              <span class="file-size-stack__unit">{{ p.unit }}</span>
+            </template>
+          </div>
           <div class="track-actions">
             <button
               :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
               :title="likes?.[trackLikeId(torrent, f)] ? 'Убрать лайк' : 'Нравится'"
               @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
             >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
-            <button class="track-btn" title="Слушать" @click.stop="emit('play', f.origIdx, f.path)">▶</button>
             <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
           </div>
         </div>

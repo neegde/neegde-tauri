@@ -5,6 +5,7 @@ import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 const pending = new Map();
 /** @type {Map<string, string>} — только успешные data URL */
 const cache = new Map();
+const TORRENT_IMAGE_CACHE_MAX = 200;
 
 function cacheKey(magnet, fileIdx) {
   return `${magnet}\n${fileIdx}`;
@@ -18,9 +19,12 @@ export function peekTorrentImage(magnet, fileIdx) {
 }
 
 /**
+ * @param {string} magnet
+ * @param {number} fileIdx
+ * @param {string | null} [torrentFileB64] - optional .torrent bytes (base64); skips DHT wait in Rust
  * @returns {Promise<string | null>}
  */
-export async function getTorrentImageDataUrl(magnet, fileIdx) {
+export async function getTorrentImageDataUrl(magnet, fileIdx, torrentFileB64 = null) {
   const key = cacheKey(magnet, fileIdx);
   if (cache.has(key)) return cache.get(key);
 
@@ -29,10 +33,16 @@ export async function getTorrentImageDataUrl(magnet, fileIdx) {
     p = invoke("torrent_fetch_image", {
       magnet: enrichMagnetWithOpenTrackers(magnet),
       fileIdx,
+      torrentFileB64: torrentFileB64 ?? null,
     })
       .then((u) => {
         const v = u ?? null;
-        if (v) cache.set(key, v);
+        if (v) {
+          cache.set(key, v);
+          if (cache.size > TORRENT_IMAGE_CACHE_MAX) {
+            cache.delete(cache.keys().next().value);
+          }
+        }
         return v;
       })
       .finally(() => {

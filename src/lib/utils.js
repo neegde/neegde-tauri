@@ -1,7 +1,7 @@
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
 const COVER_NAMES = ["cover", "folder", "front", "albumart", "album", "artwork", "thumb"];
 
-/** Max size for torrent image fetch / cover preview (matches backend cap). */
+/** Max size for torrent image fetch / cover preview (aligned with Tauri-side limit). */
 export const MAX_TORRENT_COVER_BYTES = 3 * 1024 * 1024;
 
 export function isImage(path) {
@@ -104,7 +104,13 @@ export function enrichMagnetWithOpenTrackers(magnet) {
   return out;
 }
 
-export function fmtSize(bytes) {
+/**
+ * Число и единица размера файла (для двухстрочной колонки без переноса).
+ *
+ * @param {number} bytes
+ * @returns {{ value: string, unit: string }}
+ */
+export function fmtSizeParts(bytes) {
   const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
   let n = Number(bytes);
   if (!Number.isFinite(n) || n < 0) n = 0;
@@ -115,7 +121,12 @@ export function fmtSize(bytes) {
   }
   const text =
     u === 0 || Number.isInteger(n) ? String(Math.round(n)) : n.toFixed(1);
-  return `${text} ${units[u]}`;
+  return { value: text, unit: units[u] };
+}
+
+export function fmtSize(bytes) {
+  const { value, unit } = fmtSizeParts(bytes);
+  return `${value} ${unit}`;
 }
 
 /** Sum of `file.size` for loaded torrent file rows (more reliable than tracker HTML for totals). */
