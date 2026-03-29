@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { login, logout, restoreSession } from "../../rutracker/auth.js";
 import { normalizeLoginStatus } from "../../rutracker/sessionStatus.js";
 import {
@@ -20,6 +21,12 @@ import {
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
+import {
+  fetchLatestGithubRelease,
+  compareSemver,
+  normalizeVersionTag,
+} from "../../githubReleaseCheck.js";
+import appIconSrc from "../../assets/app-icon.png";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -43,6 +50,58 @@ const emit = defineEmits([
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
 const appVersion = __APP_VERSION__;
+
+/** URL GitHub API «последний релиз»; пусто, если в `package.json` нет `repository` с GitHub. */
+const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
+const githubProjectUrl = __GITHUB_PROJECT_URL__;
+const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
+
+const releaseCheckState = ref(githubReleaseApiUrl ? "loading" : "idle");
+const releaseRemoteTag = ref(null);
+const releasePageUrl = ref(null);
+
+/**
+ * Fetches the latest GitHub release and compares it to `appVersion`.
+ *
+ * @returns {void}
+ */
+function runReleaseCheck() {
+  if (!githubReleaseApiUrl) return;
+  releaseCheckState.value = "loading";
+  fetchLatestGithubRelease(githubReleaseApiUrl)
+    .then((info) => {
+      if (!info) {
+        releaseCheckState.value = "none";
+        releaseRemoteTag.value = null;
+        releasePageUrl.value = null;
+        return;
+      }
+      releaseRemoteTag.value = info.tagName;
+      releasePageUrl.value = info.htmlUrl || null;
+      const cur = normalizeVersionTag(appVersion);
+      const remote = normalizeVersionTag(info.tagName);
+      const cmp = compareSemver(cur, remote);
+      if (cmp === 0) releaseCheckState.value = "latest";
+      else if (cmp < 0) releaseCheckState.value = "outdated";
+      else releaseCheckState.value = "ahead";
+    })
+    .catch(() => {
+      releaseCheckState.value = "error";
+    });
+}
+
+/**
+ * Opens an HTTPS URL in the system browser (Tauri) or a new tab as fallback.
+ *
+ * @param {string} url - URL to open.
+ * @returns {void}
+ */
+function openExternalUrl(url) {
+  if (!url) return;
+  openUrl(url).catch(() => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
+}
 
 // ── Rutracker login form ───────────────────────────────────────────────────────
 const rtUsername = ref("");
@@ -158,6 +217,7 @@ onMounted(() => {
   persistedMirrorMode.value = getMirrorMode();
   syncMirrorSelectFromStorage();
   activeMirrorDisplay.value = getMirror();
+  if (githubReleaseApiUrl) runReleaseCheck();
 });
 
 watch(mirrorMode, (v) => {
@@ -888,11 +948,84 @@ watch(nerdOpen, (open) => {
       <div class="settings-section-label">О приложении</div>
 
       <div class="settings-card">
-        <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">♫</div>
+        <div class="settings-card-header settings-card-header--about">
+          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
+            <img
+              class="settings-about-logo-img"
+              :src="appIconSrc"
+              alt="Нигде"
+              width="42"
+              height="42"
+            />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Нигде</div>
             <div class="settings-card-status">Версия {{ appVersion }} · Tauri + Vue 3</div>
+            <div
+              v-if="githubProjectUrl || telegramChannelUrl"
+              class="settings-about-links"
+            >
+              <a
+                v-if="githubProjectUrl"
+                class="settings-about-link"
+                :href="githubProjectUrl"
+                rel="noopener noreferrer"
+                @click.prevent="openExternalUrl(githubProjectUrl)"
+              >Проект на GitHub</a>
+              <span
+                v-if="githubProjectUrl && telegramChannelUrl"
+                class="settings-about-links-sep"
+                aria-hidden="true"
+              >·</span>
+              <a
+                v-if="telegramChannelUrl"
+                class="settings-about-link"
+                :href="telegramChannelUrl"
+                rel="noopener noreferrer"
+                title="Канал в Telegram"
+                @click.prevent="openExternalUrl(telegramChannelUrl)"
+              >Щитпост паблик</a>
+            </div>
+            <div v-if="githubReleaseApiUrl" class="settings-release-check">
+              <template v-if="releaseCheckState === 'loading'">
+                <span class="settings-status-dot status-loading" />
+                <span>Проверяем обновления…</span>
+              </template>
+              <template v-else-if="releaseCheckState === 'error'">
+                <span class="settings-status-dot status-off" />
+                <span>Не удалось проверить обновления</span>
+                <button
+                  type="button"
+                  class="settings-release-retry"
+                  @click="runReleaseCheck"
+                >
+                  Повторить
+                </button>
+              </template>
+              <template v-else-if="releaseCheckState === 'latest'">
+                <span class="settings-status-dot status-on" />
+                <span>Это последняя версия</span>
+              </template>
+              <template v-else-if="releaseCheckState === 'outdated'">
+                <span class="settings-status-dot status-off" />
+                <span>Доступна версия {{ releaseRemoteTag }}</span>
+                <a
+                  v-if="releasePageUrl"
+                  class="settings-release-link"
+                  :href="releasePageUrl"
+                  rel="noopener noreferrer"
+                  @click.prevent="openExternalUrl(releasePageUrl)"
+                >Релиз на GitHub</a>
+              </template>
+              <template v-else-if="releaseCheckState === 'ahead'">
+                <span class="settings-status-dot status-on" />
+                <span>Сборка новее опубликованного релиза ({{ releaseRemoteTag }})</span>
+              </template>
+              <template v-else-if="releaseCheckState === 'none'">
+                <span class="settings-status-dot status-off" />
+                <span>На GitHub пока нет релизов</span>
+              </template>
+            </div>
           </div>
         </div>
       </div>
@@ -1322,5 +1455,78 @@ watch(nerdOpen, (open) => {
 .nerd-policy-list strong {
   color: var(--accent);
   font-weight: 600;
+}
+
+.settings-card-header--about {
+  align-items: flex-start;
+}
+.settings-card-icon--about-logo {
+  padding: 0;
+  overflow: hidden;
+}
+.settings-about-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
+.settings-about-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 4px;
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.settings-about-links-sep {
+  color: var(--muted);
+  user-select: none;
+}
+.settings-about-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.settings-about-link:hover {
+  color: var(--text);
+}
+.settings-release-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.settings-release-check .settings-status-dot {
+  flex-shrink: 0;
+}
+.settings-release-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.settings-release-link:hover {
+  color: var(--text);
+}
+.settings-release-retry {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.settings-release-retry:hover {
+  color: var(--text);
 }
 </style>

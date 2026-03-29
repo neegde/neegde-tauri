@@ -7,9 +7,9 @@ mod rutracker;
 mod torrent_image;
 mod torrent_stream;
 
+use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use lru::LruCache;
 use tauri::{Manager, RunEvent};
 
 /// In-process LRU cache for MusicBrainz + Cover Art Archive results.
@@ -65,7 +65,11 @@ async fn fetch_album_cover(
     artist: String,
     album: String,
 ) -> Result<Option<String>, String> {
-    let key = format!("{}|{}", artist.trim().to_lowercase(), album.trim().to_lowercase());
+    let key = format!(
+        "{}|{}",
+        artist.trim().to_lowercase(),
+        album.trim().to_lowercase()
+    );
 
     // Fast path: cache hit (includes negative entries)
     {
@@ -87,6 +91,7 @@ pub fn run() {
     raise_nofile_limit();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));

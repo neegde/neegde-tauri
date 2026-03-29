@@ -26,8 +26,12 @@ use crate::cache_settings::{cache_settings_path, UserCacheSettings};
 
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
-use super::types::{DownloadMode, PrefetchNextResponse, PreparedStream, StreamMemoryCache, StreamReady};
-use super::{PREBUFFER_ADAPTIVE_MAX, PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS};
+use super::types::{
+    DownloadMode, PrefetchNextResponse, PreparedStream, StreamMemoryCache, StreamReady,
+};
+use super::{
+    PREBUFFER_ADAPTIVE_MAX, PREBUFFER_BYTES, PREBUFFER_MAX_WALL_SECS, PREBUFFER_READ_TIMEOUT_SECS,
+};
 
 /// Событие `torrent-prepare-progress` — статистика BitTorrent во время подготовки потока (плеер).
 #[derive(Serialize, Clone)]
@@ -132,8 +136,7 @@ fn resolve_info_hash_from_magnet_or_file(
         Err("Пустой magnet".into())
     } else {
         let m = Magnet::parse(magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
-        m.as_id20()
-            .ok_or_else(|| "В magnet нет BTIH".to_string())
+        m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())
     }
 }
 
@@ -259,10 +262,7 @@ impl TorrentStreamState {
                 server_addr: Mutex::new(None),
                 streams: DashMap::new(),
                 token_counter: AtomicU64::new(1),
-                stream_cache: Arc::new(StreamCache::new(
-                    cache_settings.clone(),
-                    debug_log.clone(),
-                )),
+                stream_cache: Arc::new(StreamCache::new(cache_settings.clone(), debug_log.clone())),
                 cache_settings,
                 debug_log,
                 export_cancel_requested: Arc::new(AtomicBool::new(false)),
@@ -337,9 +337,7 @@ impl TorrentStreamState {
         }
         self.check_prepare_cancel()?;
         let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
-        let info_hash = m
-            .as_id20()
-            .ok_or_else(|| "В magnet нет BTIH".to_string())?;
+        let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
         let id = TorrentIdOrHash::Hash(info_hash);
 
         let session = self.torrent_session().await?;
@@ -449,9 +447,7 @@ impl TorrentStreamState {
             let session = self.inner.ensure_session().await?;
             let handle = session
                 .get(TorrentIdOrHash::Hash(ih_cur))
-                .ok_or_else(|| {
-                    "Предзагрузка: торрент ещё не в сессии стриминга".to_string()
-                })?;
+                .ok_or_else(|| "Предзагрузка: торрент ещё не в сессии стриминга".to_string())?;
             let mut only = HashSet::new();
             only.insert(current_file_idx);
             only.insert(next_file_idx);
@@ -592,10 +588,7 @@ impl TorrentStreamState {
             }
             let result = match torrent_file {
                 Some(tf) => session
-                    .add_torrent(
-                        AddTorrent::TorrentFileBytes(Bytes::from(tf)),
-                        Some(opts),
-                    )
+                    .add_torrent(AddTorrent::TorrentFileBytes(Bytes::from(tf)), Some(opts))
                     .await
                     .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?,
                 None => session
@@ -851,13 +844,13 @@ impl TorrentStreamState {
                 let elapsed_secs = t_pre.elapsed().as_secs_f64().max(0.001);
                 let speed_kbps = filled as f64 / elapsed_secs / 1024.0;
                 let new_target = if speed_kbps > 2048.0 {
-                    PREBUFFER_ADAPTIVE_MAX  // > 2 MB/s  → 512 KB
+                    PREBUFFER_ADAPTIVE_MAX // > 2 MB/s  → 512 KB
                 } else if speed_kbps > 1024.0 {
-                    256 * 1024              // > 1 MB/s  → 256 KB
+                    256 * 1024 // > 1 MB/s  → 256 KB
                 } else if speed_kbps > 512.0 {
-                    128 * 1024              // > 512 KB/s → 128 KB
+                    128 * 1024 // > 512 KB/s → 128 KB
                 } else {
-                    initial_target          // slow       → keep 64 KB
+                    initial_target // slow       → keep 64 KB
                 };
                 adaptive_target = new_target.min(alloc_max);
                 if adaptive_target != initial_target {
@@ -876,7 +869,9 @@ impl TorrentStreamState {
                 }
             }
 
-            if (before / PREBUFFER_LOG_STEP) != (filled / PREBUFFER_LOG_STEP) || filled >= adaptive_target {
+            if (before / PREBUFFER_LOG_STEP) != (filled / PREBUFFER_LOG_STEP)
+                || filled >= adaptive_target
+            {
                 self.inner.debug_log.push(
                     "prepare",
                     "prebuffer progress",
@@ -950,11 +945,7 @@ impl TorrentStreamState {
         })
     }
 
-    fn spawn_priority_worker(
-        &self,
-        prepared: Arc<PreparedStream>,
-        torrent: Arc<ManagedTorrent>,
-    ) {
+    fn spawn_priority_worker(&self, prepared: Arc<PreparedStream>, torrent: Arc<ManagedTorrent>) {
         tauri::async_runtime::spawn(async move {
             let mut scheduler_stream = match torrent.clone().stream(prepared.file_idx) {
                 Ok(s) => s,
@@ -1002,7 +993,10 @@ impl TorrentStreamState {
                     )
                     .await;
                     let to_read = (target_end - scheduler_pos).min(tmp.len() as u64) as usize;
-                    if let Ok(n) = tokio::io::AsyncReadExt::read(&mut scheduler_stream, &mut tmp[..to_read]).await {
+                    if let Ok(n) =
+                        tokio::io::AsyncReadExt::read(&mut scheduler_stream, &mut tmp[..to_read])
+                            .await
+                    {
                         if n > 0 {
                             let mut cache = prepared.memory_cache.lock().await;
                             cache.push_sequential(scheduler_pos, &tmp[..n]);
@@ -1094,7 +1088,9 @@ impl TorrentStreamState {
 
     /// Запрос отмены из UI (кнопка «стоп» во время подготовки потока).
     pub fn prepare_cancel_trigger(&self) {
-        self.inner.debug_log.push("prepare", "cancel requested", None);
+        self.inner
+            .debug_log
+            .push("prepare", "cancel requested", None);
         self.inner
             .prepare_cancel_requested
             .store(true, Ordering::SeqCst);
@@ -1112,7 +1108,9 @@ impl TorrentStreamState {
         torrent: &TorrentHandle,
         file_index: usize,
     ) -> Result<(), String> {
-        let file_count = torrent.with_metadata(|meta| meta.file_infos.len()).unwrap_or(0);
+        let file_count = torrent
+            .with_metadata(|meta| meta.file_infos.len())
+            .unwrap_or(0);
         if file_index >= file_count {
             return Err(format!(
                 "Выбранный индекс файла вне диапазона: {file_index} (file_count={file_count})"
@@ -1206,11 +1204,8 @@ impl TorrentStreamInner {
     pub(super) async fn ensure_session(&self) -> Result<Arc<Session>, String> {
         let mut guard = self.session.lock().await;
         if let Some(existing) = &*guard {
-            self.debug_log.push(
-                "session",
-                "reuse existing librqbit session",
-                None,
-            );
+            self.debug_log
+                .push("session", "reuse existing librqbit session", None);
             return Ok(existing.clone());
         }
 

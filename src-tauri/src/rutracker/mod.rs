@@ -586,7 +586,11 @@ pub async fn rutracker_get_cover(
     }
 
     // Limit concurrent fetches to avoid hammering Rutracker.
-    let _permit = state.cover_semaphore.acquire().await.map_err(|e| format!("{e}"))?;
+    let _permit = state
+        .cover_semaphore
+        .acquire()
+        .await
+        .map_err(|e| format!("{e}"))?;
 
     // Check again: another task might have populated the disk cache while we waited.
     if let Some(cached) = state.read_cover(&topic_id) {

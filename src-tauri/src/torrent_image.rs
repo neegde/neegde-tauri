@@ -83,10 +83,7 @@ impl MagnetInner {
                 Some(tf) if !tf.is_empty() => AddTorrent::TorrentFileBytes(Bytes::from(tf)),
                 _ => AddTorrent::from_url(magnet),
             };
-            let added = match session
-                .add_torrent(add_src, Some(opts))
-                .await
-            {
+            let added = match session.add_torrent(add_src, Some(opts)).await {
                 Ok(a) => a,
                 Err(e) => {
                     self.rollback_refcount(file_idx);
@@ -222,7 +219,12 @@ impl TorrentImageState {
             .clone()
     }
 
-    pub async fn fetch(&self, magnet: String, file_idx: usize, torrent_file_bytes: Option<Vec<u8>>) -> Result<Option<String>, String> {
+    pub async fn fetch(
+        &self,
+        magnet: String,
+        file_idx: usize,
+        torrent_file_bytes: Option<Vec<u8>>,
+    ) -> Result<Option<String>, String> {
         let key = (magnet.clone(), file_idx);
         {
             let cache = self.data_url_cache.lock().await;
@@ -236,7 +238,10 @@ impl TorrentImageState {
 
         let handle = {
             let mut g = inner.lock().await;
-            match g.register_file(&session, &magnet, file_idx, torrent_file_bytes).await? {
+            match g
+                .register_file(&session, &magnet, file_idx, torrent_file_bytes)
+                .await?
+            {
                 Some(h) => h,
                 None => return Ok(None),
             }

@@ -132,8 +132,14 @@ fn extract_artist_from_post(html: &str) -> Option<String> {
 
     // Labels to look for (Russian + English, singular + plural)
     const LABELS: &[&str] = &[
-        "Исполнитель:", "Исполнители:", "Артист:", "Артисты:",
-        "Artist:", "Artists:", "Исполнитель :", "Artist :",
+        "Исполнитель:",
+        "Исполнители:",
+        "Артист:",
+        "Артисты:",
+        "Artist:",
+        "Artists:",
+        "Исполнитель :",
+        "Artist :",
     ];
 
     for label in LABELS {

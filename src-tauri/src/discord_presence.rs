@@ -130,7 +130,10 @@ pub fn discord_presence_sync(
         return discord_presence_clear(state);
     }
 
-    let mut guard = state.0.lock().map_err(|_| "discord presence lock poisoned".to_string())?;
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|_| "discord presence lock poisoned".to_string())?;
     let Some(client) = ensure_client(&mut guard) else {
         return Ok(());
     };
@@ -156,7 +159,10 @@ pub fn discord_presence_clear(state: State<'_, DiscordPresenceState>) -> Result<
         return Ok(());
     }
 
-    let mut guard = state.0.lock().map_err(|_| "discord presence lock poisoned".to_string())?;
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|_| "discord presence lock poisoned".to_string())?;
     let Some(client) = guard.as_mut() else {
         return Ok(());
     };
