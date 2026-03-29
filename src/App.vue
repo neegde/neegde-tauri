@@ -134,6 +134,9 @@ const RESTORE_UI_MAX_MS = 5_000;
 
 onMounted(async () => {
   window.addEventListener("beforeunload", flushPlayerSessionToStorage);
+  /* mousedown/mouseup: Wry на macOS шлёт только MouseEvent для кнопок 3/4; на mouseup без preventDefault — history.back/forward (см. wry synthetic_mouse_events). */
+  window.addEventListener("mousedown", onMouseSideButtonDown, MOUSE_NAV_CAPTURE);
+  window.addEventListener("mouseup", onMouseSideButtonUp, MOUSE_NAV_CAPTURE);
   document.documentElement.setAttribute("data-theme", theme.value);
   const unblockTimer = window.setTimeout(() => {
     restoringSession.value = false;
@@ -155,6 +158,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("beforeunload", flushPlayerSessionToStorage);
+  window.removeEventListener("mousedown", onMouseSideButtonDown, MOUSE_NAV_CAPTURE);
+  window.removeEventListener("mouseup", onMouseSideButtonUp, MOUSE_NAV_CAPTURE);
   appDebugUnlistenClick?.();
   if (appDebugVisibilityHandler) {
     document.removeEventListener("visibilitychange", appDebugVisibilityHandler);
@@ -976,6 +981,47 @@ function handleForwardNav() {
 
 function handleNavBack() {
   handleBack();
+}
+
+const MOUSE_NAV_CAPTURE = { capture: true, passive: false };
+
+function isMouseBackButton(e) {
+  const b = e.button;
+  if (b === 3 || b === 8) return true;
+  return (e.buttons & 8) === 8;
+}
+
+function isMouseForwardButton(e) {
+  const b = e.button;
+  if (b === 4 || b === 9) return true;
+  return (e.buttons & 16) === 16;
+}
+
+/** На mouseup после отпускания e.buttons часто 0 — смотрим только button. */
+function isSideButtonAny(e) {
+  const b = e.button;
+  return b === 3 || b === 4 || b === 8 || b === 9;
+}
+
+/** Назад / вперёд по приложению (mousedown). */
+function onMouseSideButtonDown(e) {
+  if (!isMouseBackButton(e) && !isMouseForwardButton(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (isMouseBackButton(e) && navCanGoBack.value) {
+    handleNavBack();
+  } else if (isMouseForwardButton(e) && forwardStack.value.length > 0) {
+    handleForwardNav();
+  }
+}
+
+/**
+ * Блокирует встроенный history.back/forward в Wry после синтетического mouseup.
+ */
+function onMouseSideButtonUp(e) {
+  if (!isSideButtonAny(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
 }
 </script>
 
