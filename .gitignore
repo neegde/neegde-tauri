@@ -5,6 +5,7 @@ dist
 !.env.example
 
 # Tauri
+/src-tauri/.cargo/config.toml
 /src-tauri/target
 /src-tauri/gen
 

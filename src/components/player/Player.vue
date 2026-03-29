@@ -27,6 +27,7 @@ import {
   reaffirmTrackSkipHandlers,
 } from "../../audio/mediaSession.js";
 import { appDebugLog } from "../../appDebugLog.js";
+import { syncDiscordPresence, clearDiscordPresence } from "../../discordPresence.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -455,6 +456,61 @@ watch(
   { flush: "post" }
 );
 
+function discordPresencePayload() {
+  const t = props.track;
+  if (!t?.magnet) return null;
+  return {
+    title: trackDisplayBasename(t.fileName) || "Трек",
+    subtitle: t.torrentName || "",
+    playing: playing.value,
+    positionSec: Number.isFinite(current.value) ? current.value : null,
+    durationSec:
+      Number.isFinite(duration.value) && duration.value > 0 ? duration.value : null,
+  };
+}
+
+/** Last `syncDiscordPresence` from track/play/phase — used so progress-only updates do not starve. */
+let discordPresenceLastSyncMs = 0;
+const DISCORD_PRESENCE_PROGRESS_MIN_MS = 4500;
+
+watch(
+  () => [props.track, playing.value, streamPhase.value],
+  () => {
+    const t = props.track;
+    if (!t?.magnet) {
+      void clearDiscordPresence();
+      return;
+    }
+    if (streamPhase.value === "error") {
+      void clearDiscordPresence();
+      return;
+    }
+    if (!playing.value) {
+      void clearDiscordPresence();
+      return;
+    }
+    const p = discordPresencePayload();
+    if (!p) return;
+    discordPresenceLastSyncMs = Date.now();
+    void syncDiscordPresence(p, { immediate: true });
+  },
+  { flush: "post", immediate: true }
+);
+
+watch(
+  () => [current.value, duration.value, playing.value, props.track?.magnet, streamPhase.value],
+  () => {
+    if (!props.track?.magnet || streamPhase.value === "error" || !playing.value) return;
+    const now = Date.now();
+    if (now - discordPresenceLastSyncMs < DISCORD_PRESENCE_PROGRESS_MIN_MS) return;
+    const p = discordPresencePayload();
+    if (!p) return;
+    discordPresenceLastSyncMs = now;
+    void syncDiscordPresence(p, { immediate: true });
+  },
+  { flush: "post" }
+);
+
 watch(volume, (v) => {
   try {
     localStorage.setItem("playerVolume", String(v));
@@ -781,6 +837,7 @@ onUnmounted(() => {
   unlistenPrepareProgress();
   clearMediaSessionHandlers();
   clearMediaSessionPresentation();
+  void clearDiscordPresence();
   destroyEqualizer();
   window.removeEventListener("keydown", onKey);
 });

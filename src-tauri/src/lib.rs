@@ -1,6 +1,7 @@
 mod cache_commands;
 mod cache_settings;
 mod cover_art;
+mod discord_presence;
 mod nerd_stats;
 mod rutracker;
 mod torrent_image;
@@ -16,6 +17,8 @@ use tauri::{Manager, RunEvent};
 type CoverArtCache = Mutex<LruCache<String, Option<String>>>;
 
 use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
+
+use discord_presence::DiscordPresenceState;
 
 /// librqbit opens every file in a torrent on disk at once; large discographies exceed the default
 /// macOS soft `RLIMIT_NOFILE` (~256) → "Too many open files (os error 24)".
@@ -94,6 +97,7 @@ pub fn run() {
                 app.handle().clone(),
             ));
             app.manage(torrent_image::TorrentImageState::new(app.handle()));
+            app.manage(DiscordPresenceState::new());
             let startup = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(ts) = startup.try_state::<TorrentStreamState>() {
@@ -134,12 +138,17 @@ pub fn run() {
             torrent_stream::debug_api::get_app_debug_log,
             torrent_stream::debug_api::clear_app_debug_log,
             torrent_stream::debug_api::app_debug_push,
+            discord_presence::discord_presence_sync,
+            discord_presence::discord_presence_clear,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
+            if let Some(dp) = app_handle.try_state::<DiscordPresenceState>() {
+                discord_presence::discord_presence_shutdown(&dp);
+            }
             let h = app_handle.clone();
             tauri::async_runtime::block_on(async move {
                 if let Some(ts) = h.try_state::<TorrentStreamState>() {
