@@ -252,7 +252,7 @@ const loadingFiles  = ref(false);
 const torrentFilesBeforeAlbumPreview = ref(null);
 const torrentSelectedBeforeAlbumPreview = ref(null);
 
-/** Стек для кнопки «вперёд» (как в Spotify): снимки экранов при «назад». */
+/** Стек для кнопки «вперёд»: снимки экранов при «назад». */
 const forwardStack = ref([]);
 /** История «назад» по поиску: результаты → раздача A → раздача B → … */
 const backStack = ref([]);

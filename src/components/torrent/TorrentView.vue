@@ -218,8 +218,8 @@ function trackOffset(idx) {
   return albums.value.slice(0, idx).reduce((s, a) => s + a.audioFiles.length, 0);
 }
 
-/** Один альбом в раздаче — экран как превью альбома в Spotify (герой + треклист). */
-const isSpotifyAlbumPage = computed(() => {
+/** Один альбом в раздаче — полноэкранный герой с обложкой и треклистом. */
+const isAlbumHeroPage = computed(() => {
   if (props.loading) return false;
   if (albums.value.length !== 1) return false;
   return totalAudio.value > 0;
@@ -227,11 +227,11 @@ const isSpotifyAlbumPage = computed(() => {
 
 const singleAlbumWrap = computed(() => displayAlbums.value[0] ?? null);
 
-const spotifyAlbumTitle = computed(
+const albumHeroTitle = computed(
   () => singleAlbumWrap.value?.displayName?.trim() || props.torrent?.name?.trim() || "Альбом"
 );
 
-const spotifyArtist = computed(() => {
+const albumHeroArtist = computed(() => {
   const album0 = albums.value[0];
   const enriched = enrichedAlbumData.value.get(album0?.dirPath ?? "");
   if (enriched?.artist) return enriched.artist;
@@ -329,7 +329,7 @@ watch(
 
 <template>
   <div
-    :class="['torrent-page', isSpotifyAlbumPage && 'torrent-page--spotify-album']"
+    :class="['torrent-page', isAlbumHeroPage && 'torrent-page--album-hero']"
   >
 
     <div v-if="loading" class="loading-tracks">
@@ -338,23 +338,23 @@ watch(
 
     <p v-else-if="albums.length === 0" class="empty-msg">Аудиофайлы не найдены.</p>
 
-    <!-- ── Spotify-style single album ───────────────────────────────────── -->
-    <template v-else-if="isSpotifyAlbumPage && singleAlbumWrap">
-      <div class="spotify-hero-bg" aria-hidden="true" />
-      <section class="spotify-hero" aria-label="Альбом">
-        <div class="spotify-hero-cover">
+    <!-- ── Один альбом: герой + треклист ───────────────────────────────── -->
+    <template v-else-if="isAlbumHeroPage && singleAlbumWrap">
+      <div class="album-hero-bg" aria-hidden="true" />
+      <section class="album-hero" aria-label="Альбом">
+        <div class="album-hero-cover">
           <AlbumFolderCover
             :magnet="magnet"
             :cover-file="singleAlbumWrap.raw.coverFile"
-            :label="spotifyAlbumTitle"
+            :label="albumHeroTitle"
             :cover="cover"
           />
         </div>
-        <div class="spotify-hero-text">
-          <span class="spotify-hero-kicker">Альбом</span>
-          <h1 class="spotify-hero-title">{{ spotifyAlbumTitle }}</h1>
-          <p class="spotify-hero-artist">{{ spotifyArtist }}</p>
-          <p class="spotify-hero-meta">
+        <div class="album-hero-text">
+          <span class="album-hero-kicker">Альбом</span>
+          <h1 class="album-hero-title">{{ albumHeroTitle }}</h1>
+          <p class="album-hero-artist">{{ albumHeroArtist }}</p>
+          <p class="album-hero-meta">
             {{ countLabel(singleAlbumWrap.raw.audioFiles.length) }}
             <span class="dot">·</span>
             {{ fmtSize(totalBytes) }}
@@ -370,10 +370,10 @@ watch(
         </div>
       </section>
 
-      <div class="spotify-toolbar">
+      <div class="album-hero-toolbar">
         <button
           type="button"
-          class="spotify-play-fab"
+          class="album-play-fab"
           title="Слушать"
           @click="emit('play-all')"
         >
@@ -381,7 +381,7 @@ watch(
         </button>
         <button
           type="button"
-          :class="['spotify-tool-btn', likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'liked' : '']"
+          :class="['album-tool-btn', likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'liked' : '']"
           :title="likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'Убрать из любимых' : 'В любимые'"
           @click="
             emit(
@@ -394,7 +394,7 @@ watch(
         </button>
         <button
           type="button"
-          class="spotify-tool-btn"
+          class="album-tool-btn"
           title="Скачать альбом"
           @click="emit('download-album', singleAlbumWrap.raw.audioFiles, singleAlbumWrap.displayName)"
         >
@@ -402,45 +402,45 @@ watch(
         </button>
       </div>
 
-      <div class="spotify-tracklist">
-        <div class="spotify-tracklist-head">
-          <span class="spotify-col-n">#</span>
-          <span class="spotify-col-title">Название</span>
-          <span class="spotify-col-time" />
+      <div class="album-tracklist">
+        <div class="album-tracklist-head">
+          <span class="album-col-n">#</span>
+          <span class="album-col-title">Название</span>
+          <span class="album-col-time" />
         </div>
         <div
           v-for="(f, i) in singleAlbumWrap.raw.audioFiles"
           :key="f.origIdx"
-          :class="['spotify-track-row', ...playingRowClass(f.origIdx)]"
+          :class="['album-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
           @mouseenter="onTrackHover(f.origIdx)"
           @mouseleave="onTrackLeave"
         >
-          <div class="spotify-col-n">
+          <div class="album-col-n">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
-              <span class="spotify-num">{{ i + 1 }}</span>
-              <span class="spotify-play-hint">▶</span>
+              <span class="album-num">{{ i + 1 }}</span>
+              <span class="album-play-hint">▶</span>
             </template>
           </div>
-          <div class="spotify-col-title">
+          <div class="album-col-title">
             <div class="track-name-wrap">
-              <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{
+              <span class="album-track-title" :title="trackDisplayBasename(f.path)">{{
                 enrichedAlbumData.get(singleAlbumWrap.raw.dirPath ?? '')?.tracksByNumber?.get(parseAudioTrackPrefix(basename(f.path))?.order)
                 || trackDisplayBasename(f.path)
               }}</span>
               <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
             </div>
           </div>
-          <div class="spotify-col-time">
-            <div v-if="f.size > 0" class="file-size-stack spotify-file-size-stack">
+          <div class="album-col-time">
+            <div v-if="f.size > 0" class="file-size-stack album-file-size-stack">
               <template v-for="p in [fmtSizeParts(f.size)]" :key="'sp-sz-' + f.origIdx">
                 <span class="file-size-stack__value">{{ p.value }}</span>
                 <span class="file-size-stack__unit">{{ p.unit }}</span>
               </template>
             </div>
-            <span v-else class="spotify-dur spotify-dur--empty">—</span>
-            <div class="spotify-track-actions">
+            <span v-else class="album-dur album-dur--empty">—</span>
+            <div class="album-track-actions">
               <button
                 :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
                 @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
