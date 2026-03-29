@@ -118,10 +118,6 @@ body {
 .source-btn.active        { color: var(--text); background: rgba(255,255,255,0.1); }
 .source-icon              { font-size: 18px; flex-shrink: 0; display: flex; align-items: center; }
 .search-nav-btn           { margin-bottom: 4px; }
-.rt-dot                   { width: 8px; height: 8px; border-radius: 50%; margin-left: auto; flex-shrink: 0; }
-.rt-dot-on                { background: var(--success); box-shadow: 0 0 8px rgba(75, 191, 122, 0.55); }
-.rt-dot-off               { background: var(--red); }
-.rt-dot-loading           { background: var(--muted); animation: rt-dot-pulse 1s ease-in-out infinite; }
 @keyframes rt-dot-pulse   { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 
 /* Компактный статус восстановления сессии — в сайдбаре, не перекрывает контент */

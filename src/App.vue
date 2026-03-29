@@ -1012,7 +1012,6 @@ function handleNavBack() {
             </svg>
           </span>
           Поиск
-          <span :class="['rt-dot', restoringSession ? 'rt-dot-loading' : rtLoggedIn ? 'rt-dot-on' : 'rt-dot-off']" />
         </button>
 
         <!-- Library -->
