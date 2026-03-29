@@ -8,6 +8,7 @@ import {
   trackDisplayBasename,
   audioFormatLabel,
   fmtSize,
+  fmtSizeParts,
   fmtDate,
   detectAlbums,
   sumFileSizes,
@@ -360,7 +361,13 @@ watch(
             </div>
           </div>
           <div class="spotify-col-time">
-            <span class="spotify-dur">{{ f.size > 0 ? fmtSize(f.size) : "—" }}</span>
+            <div v-if="f.size > 0" class="file-size-stack spotify-file-size-stack">
+              <template v-for="p in [fmtSizeParts(f.size)]" :key="'sp-sz-' + f.origIdx">
+                <span class="file-size-stack__value">{{ p.value }}</span>
+                <span class="file-size-stack__unit">{{ p.unit }}</span>
+              </template>
+            </div>
+            <span v-else class="spotify-dur spotify-dur--empty">—</span>
             <div class="spotify-track-actions">
               <button
                 :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
@@ -499,7 +506,12 @@ watch(
               <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
             </div>
           </div>
-          <div class="track-size">{{ f.size > 0 ? fmtSize(f.size) : "" }}</div>
+          <div class="track-size file-size-stack">
+            <template v-for="p in f.size > 0 ? [fmtSizeParts(f.size)] : []" :key="'sz-' + f.origIdx">
+              <span class="file-size-stack__value">{{ p.value }}</span>
+              <span class="file-size-stack__unit">{{ p.unit }}</span>
+            </template>
+          </div>
           <div class="track-actions">
             <button
               :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"

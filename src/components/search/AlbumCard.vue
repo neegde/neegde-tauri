@@ -1,6 +1,5 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from "vue";
-import { fmtSize } from "../../lib/utils.js";
 import { getRutrackerCoverDataUrl, peekRutrackerCover, prefetchTorrentDetails } from "../../rutracker/search.js";
 
 const props = defineProps({
@@ -130,8 +129,6 @@ watch(
       <span :class="['album-seeds', seeds > 0 ? 'seeds-ok' : 'seeds-dead']">
         {{ seedsLabel(seeds) }}
       </span>
-      <span>·</span>
-      <span>{{ fmtSize(torrent.size) }}</span>
     </div>
   </div>
 </template>

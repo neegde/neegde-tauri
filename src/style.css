@@ -634,7 +634,7 @@ body {
 }
 .torrent-page--spotify-album .spotify-tracklist-head {
   display: grid;
-  grid-template-columns: 48px 1fr 120px;
+  grid-template-columns: 48px 1fr 128px;
   align-items: center;
   padding: 8px 16px;
   margin: 0 0 4px;
@@ -654,7 +654,7 @@ body {
 }
 .torrent-page--spotify-album .spotify-track-row {
   display: grid;
-  grid-template-columns: 48px 1fr 120px;
+  grid-template-columns: 48px 1fr 128px;
   align-items: center;
   padding: 10px 16px;
   border-radius: 6px;
@@ -762,10 +762,11 @@ body {
   justify-content: flex-end;
   gap: 8px;
 }
-.torrent-page--spotify-album .spotify-dur {
+.torrent-page--spotify-album .spotify-dur--empty {
   font-size: 13px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .torrent-page--spotify-album .spotify-track-actions {
   display: flex;
@@ -775,6 +776,9 @@ body {
   transition: opacity 0.12s;
 }
 .torrent-page--spotify-album .spotify-track-row:hover .spotify-track-actions {
+  opacity: 1;
+}
+.torrent-page--spotify-album .spotify-track-row:has(.like-btn.liked) .spotify-track-actions {
   opacity: 1;
 }
 @media (max-width: 640px) {
@@ -1142,7 +1146,7 @@ body {
 /* ── Track List ───────────────────────────────────────────────────────── */
 .tracklist-header {
   display: grid;
-  grid-template-columns: 44px 1fr 88px 118px;
+  grid-template-columns: 44px 1fr 96px 118px;
   padding: 6px 16px;
   font-size: 11px;
   font-weight: 700;
@@ -1156,7 +1160,7 @@ body {
 
 .track-row {
   display: grid;
-  grid-template-columns: 44px 1fr 88px 118px;
+  grid-template-columns: 44px 1fr 96px 118px;
   align-items: center;
   padding: 8px 16px;
   border-radius: 6px;
@@ -1276,7 +1280,36 @@ body {
   font-weight: 500;
 }
 
-.track-size   { font-size: 12px; color: var(--muted); text-align: right; }
+/* Двухстрочный размер: число сверху, единица (КБ/МБ/ГБ) снизу — без переноса внутри строки */
+.file-size-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.file-size-stack__value,
+.file-size-stack__unit {
+  display: block;
+  white-space: nowrap;
+  line-height: 1.12;
+}
+.file-size-stack__value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.file-size-stack__unit {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.track-size.file-size-stack {
+  text-align: right;
+}
 
 .track-actions {
   display: flex;
