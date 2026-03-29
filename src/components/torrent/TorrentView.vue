@@ -14,7 +14,13 @@ import {
   sumFileSizes,
   MAX_TORRENT_COVER_BYTES,
   enrichMagnetWithOpenTrackers,
+  extractTrackArtist,
+  stripMetaTags,
+  parseAudioTrackPrefix,
+  isDiscMarker,
+  extractAlbumFromTorrentName,
 } from "../../lib/utils.js";
+import { enrichAlbumTracklist } from "../../audio/metadataEnrich.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
@@ -23,6 +29,12 @@ import { torrentFileB64ForTrack } from "../../torrent/api.js";
 const PREFETCH_ALBUM_COVERS = 12;
 
 const lastCoverPrefetchKey = ref("");
+
+/**
+ * iTunes-enriched data for albums keyed by album dirPath.
+ * { artist, album, coverUrl, tracksByNumber: Map<number, string> }
+ */
+const enrichedAlbumData = ref(/** @type {Map<string, object>} */ (new Map()));
 
 const props = defineProps({
   torrent: Object,
@@ -90,12 +102,29 @@ const displayAlbums = computed(() => {
 });
 
 function albumDisplayName(album, list) {
+  // Prefer iTunes-enriched album name
+  const enriched = enrichedAlbumData.value.get(album.dirPath ?? "");
+  if (enriched?.album) return enriched.album;
+
   const n = album.name?.trim();
-  if (n) return n;
-  if (list.length === 1) return props.torrent?.name?.trim() || "Альбом";
+  // Skip disc-marker dirs (CD1, Disc 2, etc.) and derive name from a better source
+  if (n && !isDiscMarker(n)) return stripMetaTags(n) || n;
+
+  // Single album: extract "Album" from "Artist - Album" torrent title
+  if (list.length === 1) {
+    const fromTorrent = extractAlbumFromTorrentName(props.torrent?.name?.trim() ?? "");
+    return fromTorrent || props.torrent?.name?.trim() || "Альбом";
+  }
+  // Multi-album: walk dirPath upward to find a non-disc folder name
   if (album.dirPath) {
-    const seg = album.dirPath.split("/").filter(Boolean).pop();
-    if (seg) return seg;
+    const parts = album.dirPath.split("/").filter(Boolean);
+    for (let i = parts.length - 2; i >= 0; i--) {
+      if (!isDiscMarker(parts[i])) {
+        return extractAlbumFromTorrentName(parts[i]) || stripMetaTags(parts[i]) || parts[i];
+      }
+    }
+    const seg = parts[parts.length - 1];
+    if (seg) return stripMetaTags(seg) || seg;
   }
   return "Альбом";
 }
@@ -203,10 +232,11 @@ const spotifyAlbumTitle = computed(
 );
 
 const spotifyArtist = computed(() => {
-  if (props.torrent?.fromLikes && props.torrent?.artist) return props.torrent.artist;
-  const m = props.torrent?.name?.match(/^(.+?)\s+[-–—]\s+/);
-  if (m) return m[1].trim();
-  return "Неизвестный исполнитель";
+  const album0 = albums.value[0];
+  const enriched = enrichedAlbumData.value.get(album0?.dirPath ?? "");
+  if (enriched?.artist) return enriched.artist;
+  const artist = extractTrackArtist(props.torrent?.name, album0?.dirPath ?? null, props.torrent?.artist ?? null, props.magnet);
+  return artist || "Неизвестный исполнитель";
 });
 
 async function prefetchAlbumCovers() {
@@ -248,10 +278,49 @@ async function prefetchAlbumCovers() {
   }
 }
 
+/** Enrich up to N albums with iTunes metadata (artist, album name, per-track titles). */
+async function enrichAlbums() {
+  if (props.loading || !props.files?.length) return;
+  const list = albums.value;
+  if (!list.length) return;
+
+  const MAX_ALBUMS = 6;
+  const toEnrich = list.slice(0, MAX_ALBUMS);
+
+  for (const album of toEnrich) {
+    const dirKey = album.dirPath ?? "";
+    if (enrichedAlbumData.value.has(dirKey)) continue;
+
+    const firstFile = album.audioFiles[0];
+    if (!firstFile) continue;
+
+    const artistRaw = extractTrackArtist(
+      props.torrent?.name,
+      album.dirPath ?? null,
+      props.torrent?.artist ?? null,
+      props.magnet
+    );
+    const albumIdx = list.indexOf(album);
+    const albumNameRaw = displayAlbums.value[albumIdx]?.displayName || stripMetaTags(album.name?.trim() || "");
+
+    if (!artistRaw || !albumNameRaw) continue;
+
+    // Fire in background — don't await sequentially
+    enrichAlbumTracklist(artistRaw, albumNameRaw).then((result) => {
+      if (!result) return;
+      const next = new Map(enrichedAlbumData.value);
+      next.set(dirKey, result);
+      enrichedAlbumData.value = next;
+    });
+  }
+}
+
 watch(
   () => [props.magnet, props.loading, props.files],
   () => {
+    enrichedAlbumData.value = new Map(); // reset on new torrent
     prefetchAlbumCovers();
+    void enrichAlbums();
   },
   { flush: "post" }
 );
@@ -356,7 +425,10 @@ watch(
           </div>
           <div class="spotify-col-title">
             <div class="track-name-wrap">
-              <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
+              <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{
+                enrichedAlbumData.get(singleAlbumWrap.raw.dirPath ?? '')?.tracksByNumber?.get(parseAudioTrackPrefix(basename(f.path))?.order)
+                || trackDisplayBasename(f.path)
+              }}</span>
               <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
             </div>
           </div>
@@ -502,7 +574,10 @@ watch(
           </div>
           <div class="track-info">
             <div class="track-name-wrap">
-              <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
+              <div class="track-name" :title="trackDisplayBasename(f.path)">{{
+                enrichedAlbumData.get(wrap.raw.dirPath ?? '')?.tracksByNumber?.get(parseAudioTrackPrefix(basename(f.path))?.order)
+                || trackDisplayBasename(f.path)
+              }}</div>
               <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
             </div>
           </div>

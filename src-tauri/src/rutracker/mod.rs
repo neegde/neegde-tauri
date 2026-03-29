@@ -45,6 +45,8 @@ pub struct TorrentDetails {
     pub cover_data_url: Option<String>,
     pub magnet: Option<String>,
     pub files: Vec<TorrentFile>,
+    /// Artist extracted from the post body (e.g. "Исполнитель: Кровосток"), if found.
+    pub artist: Option<String>,
 }
 
 // ── Session file helpers ──────────────────────────────────────────────────────

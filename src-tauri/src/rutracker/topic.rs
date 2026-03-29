@@ -46,7 +46,7 @@ pub async fn get_torrent_details(
     let (topic_html, _, _) = WINDOWS_1251.decode(&topic_bytes);
 
     // ── 3. Parse ──────────────────────────────────────────────────────────────
-    let (cover_img_url, magnet) = parse_topic_page(topic_html.as_ref(), base);
+    let (cover_img_url, magnet, artist) = parse_topic_page(topic_html.as_ref(), base);
     let files = parse_torrent_bytes(&torrent_bytes)?;
 
     let cover_data_url = match cover_img_url {
@@ -59,6 +59,7 @@ pub async fn get_torrent_details(
         cover_data_url,
         magnet,
         files,
+        artist,
     })
 }
 
@@ -96,7 +97,7 @@ pub async fn get_cover_data_url(
         .await
         .map_err(|e| format!("Ошибка чтения страницы: {}", e))?;
     let (topic_html, _, _) = WINDOWS_1251.decode(&topic_bytes);
-    let (cover_img_url, _) = parse_topic_page(topic_html.as_ref(), base);
+    let (cover_img_url, _, _) = parse_topic_page(topic_html.as_ref(), base);
     Ok(match cover_img_url {
         Some(url) => fetch_image_data_url(client, &url).await,
         None => None,
@@ -105,11 +106,82 @@ pub async fn get_cover_data_url(
 
 // ── Topic page parsing ────────────────────────────────────────────────────────
 
-/// Returns (cover_image_url, magnet_link) extracted from the topic HTML.
-fn parse_topic_page(html: &str, base: &str) -> (Option<String>, Option<String>) {
+/// Returns (cover_image_url, magnet_link, artist) extracted from the topic HTML.
+fn parse_topic_page(html: &str, base: &str) -> (Option<String>, Option<String>, Option<String>) {
     let image_url = extract_first_post_image(html, base);
     let magnet = extract_magnet(html);
-    (image_url, magnet)
+    let artist = extract_artist_from_post(html);
+    (image_url, magnet, artist)
+}
+
+/// Extract artist from structured post body fields.
+/// Handles patterns like:
+///   "Исполнитель: Кровосток"
+///   "Исполнители: Various Artists"
+///   "Artist: Radiohead"
+///   "Артист: ..."
+fn extract_artist_from_post(html: &str) -> Option<String> {
+    // Limit search to first post body
+    let body_start = html.find(r#"class="post_body""#)?;
+    let raw_end = (body_start + 60_000).min(html.len());
+    let area_end = html.floor_char_boundary(raw_end);
+    let area = &html[body_start..area_end];
+
+    // Strip HTML tags to plain text for simpler matching
+    let text = strip_html_tags_simple(area);
+
+    // Labels to look for (Russian + English, singular + plural)
+    const LABELS: &[&str] = &[
+        "Исполнитель:", "Исполнители:", "Артист:", "Артисты:",
+        "Artist:", "Artists:", "Исполнитель :", "Artist :",
+    ];
+
+    for label in LABELS {
+        if let Some(pos) = text.find(label) {
+            let after = text[pos + label.len()..].trim_start();
+            // Take until newline or next label-like boundary
+            let end = after
+                .find(|c: char| c == '\n' || c == '\r')
+                .unwrap_or(after.len().min(120));
+            let value = after[..end].trim();
+            if !value.is_empty() && value.len() < 100 {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Strip HTML tags from a snippet, collapsing whitespace.
+fn strip_html_tags_simple(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    let mut last_was_space = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                // Block-level tags produce line breaks in rendered text
+                if !last_was_space {
+                    out.push('\n');
+                    last_was_space = true;
+                }
+            }
+            '>' => in_tag = false,
+            _ if in_tag => {}
+            '\n' | '\r' => {
+                if !last_was_space {
+                    out.push('\n');
+                    last_was_space = true;
+                }
+            }
+            _ => {
+                out.push(ch);
+                last_was_space = ch == ' ';
+            }
+        }
+    }
+    out
 }
 
 /// Find `magnet:?xt=urn:btih:…` in the page HTML.

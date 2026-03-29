@@ -592,6 +592,7 @@ async function handleSelect(torrent) {
     const details = await getTorrentDetails(torrent.id);
     torrentMagnet.value = details.magnet ?? "";
     torrentCover.value  = details.cover_data_url ?? null;
+    if (details.artist) selected.value = { ...selected.value, artist: details.artist };
     files.value = details.files.map((f, i) => ({
       name:     f.path[f.path.length - 1] ?? "",
       path:     f.path.join("/"),
@@ -612,11 +613,13 @@ async function handleSelect(torrent) {
 
 function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
   let coverFileIdx = explicitCoverFileIdx ?? null;
-  if (coverFileIdx == null && fileList?.length) {
+  let albumDirPath = null;
+  if (fileList?.length) {
     const albs = detectAlbums(fileList);
     for (const a of albs) {
       if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
-        coverFileIdx = a.coverFile?.origIdx ?? null;
+        if (coverFileIdx == null) coverFileIdx = a.coverFile?.origIdx ?? null;
+        albumDirPath = a.dirPath || null;
         break;
       }
     }
@@ -628,12 +631,14 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
       : null;
   return {
     magnet,
-    fileIdx:     f.origIdx,
-    fileName:    trackDisplayBasename(f.path),
-    torrentName: torrent?.name    ?? "",
-    torrentId:   torrent?.id      ?? "",
-    source:      torrent?.source  ?? "rutracker",
+    fileIdx:      f.origIdx,
+    fileName:     trackDisplayBasename(f.path),
+    torrentName:  torrent?.name   ?? "",
+    torrentId:    torrent?.id     ?? "",
+    source:       torrent?.source ?? "rutracker",
+    artist:       torrent?.artist ?? null,
     coverFileIdx,
+    albumDirPath,
     seeders,
   };
 }

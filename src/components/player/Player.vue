@@ -3,7 +3,7 @@ import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } f
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
 import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
-import { trackDisplayBasename } from "../../lib/utils.js";
+import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
@@ -28,6 +28,7 @@ import {
 } from "../../audio/mediaSession.js";
 import { appDebugLog } from "../../appDebugLog.js";
 import { syncDiscordPresence, clearDiscordPresence } from "../../discordPresence.js";
+import { enrichTrackMeta } from "../../audio/metadataEnrich.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -89,6 +90,9 @@ function onVolumeWheel(e) {
   const next = volume.value + (e.deltaY < 0 ? step : -step);
   volume.value = Math.min(1, Math.max(0, next));
 }
+/** Enriched metadata from iTunes (artist/album/title/coverUrl). Null until resolved. */
+const enrichedMeta = ref(null);
+
 const playing = ref(false);
 const current = ref(0);
 const duration = ref(0);
@@ -435,11 +439,20 @@ watchEffect(() => {
 watch(
   () => props.track,
   (t) => {
+    enrichedMeta.value = null;
     if (!t?.magnet) {
       clearMediaSessionPresentation();
       return;
     }
     void syncMediaSessionMetadata(t);
+    // Fire iTunes enrichment in background — does NOT block playback
+    const artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
+    const titleLocal = trackDisplayBasename(t.fileName);
+    enrichTrackMeta(artistLocal, titleLocal, (meta) => {
+      if (props.track !== t) return; // track changed while request was in flight
+      enrichedMeta.value = meta;
+      void syncMediaSessionMetadata(t, meta);
+    });
   },
   { immediate: true }
 );
@@ -461,7 +474,7 @@ function discordPresencePayload() {
   if (!t?.magnet) return null;
   return {
     title: trackDisplayBasename(t.fileName) || "Трек",
-    subtitle: t.torrentName || "",
+    subtitle: extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet),
     playing: playing.value,
     positionSec: Number.isFinite(current.value) ? current.value : null,
     durationSec:
@@ -858,8 +871,8 @@ onUnmounted(() => {
           fallback="♪"
         />
         <div class="player-track-info">
-          <span class="player-name">{{ trackDisplayBasename(track.fileName) }}</span>
-          <span class="player-artist">{{ track.torrentName }}</span>
+          <span class="player-name">{{ enrichedMeta?.title || trackDisplayBasename(track.fileName) }}</span>
+          <span class="player-artist">{{ enrichedMeta?.artist || extractTrackArtist(track.torrentName, track.albumDirPath, track.artist, track.magnet) }}</span>
         </div>
       </div>
 
