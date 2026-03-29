@@ -100,7 +100,7 @@ const loadCancelledByUser = ref(false);
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
 
-/** Последняя статистика BitTorrent с бэкенда (событие torrent-prepare-progress). */
+/** Последняя статистика BitTorrent из Tauri (событие torrent-prepare-progress). */
 const prepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
 

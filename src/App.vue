@@ -33,7 +33,6 @@ import TorrentView  from "./components/torrent/TorrentView.vue";
 import LikesView    from "./components/likes/LikesView.vue";
 import SettingsView from "./components/settings/SettingsView.vue";
 import Player       from "./components/player/Player.vue";
-import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
 import NavArrows       from "./components/shell/NavArrows.vue";
 import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
@@ -136,8 +135,6 @@ const RESTORE_UI_MAX_MS = 5_000;
 onMounted(async () => {
   window.addEventListener("beforeunload", flushPlayerSessionToStorage);
   document.documentElement.setAttribute("data-theme", theme.value);
-  authPanelOpen.value = false;
-
   const unblockTimer = window.setTimeout(() => {
     restoringSession.value = false;
   }, RESTORE_UI_MAX_MS);
@@ -150,7 +147,7 @@ onMounted(async () => {
   } catch (_) { /* offline or no saved session — stay logged out */ }
   try {
     appDebugEnabled.value = await invoke("get_app_debug_enabled");
-  } catch (_) { /* web preview or old backend */ }
+  } catch (_) { /* нет Tauri API (превью в браузере) */ }
   setupAppDebugInstrumentation();
   window.clearTimeout(unblockTimer);
   restoringSession.value = false;
@@ -175,9 +172,6 @@ function handleThemeChange(newTheme) {
 const rtLoggedIn  = ref(false);
 const rtUsername  = ref(null);
 const rtAvatarUrl = ref(null);
-const appUser     = ref(null);
-const authPanelOpen = ref(false);
-
 // ── View ──────────────────────────────────────────────────────────────────────
 const view       = ref("search");  // "search" | "likes" | "settings"
 const returnView = ref("search");
@@ -381,18 +375,6 @@ function handleLogout(evt) {
   queue.value        = [];
   forwardStack.value = [];
   backStack.value    = [];
-}
-
-function handleAppLogin(username) {
-  appUser.value       = { username };
-  authPanelOpen.value = false;
-}
-
-function handleAppRegister() { /* stub */ }
-
-function handleAppLogout() {
-  appUser.value = null;
-  likes.value   = {};
 }
 
 async function handleSearch(query) {
@@ -1068,13 +1050,6 @@ function handleNavBack() {
         <span class="sidebar-rt-connecting-label">Проверяем доступность…</span>
       </div>
 
-      <!-- App account block -->
-      <div class="sidebar-account">
-        <button class="account-login-btn account-login-btn--wip" disabled title="В разработке">
-          Войти в аккаунт
-          <span class="account-wip-badge">скоро</span>
-        </button>
-      </div>
     </aside>
 
     <!-- ── Main ────────────────────────────────────────────────────── -->
@@ -1134,13 +1109,10 @@ function handleNavBack() {
             :rt-username="rtUsername"
             :rt-avatar-url="rtAvatarUrl"
             :restoring-session="restoringSession"
-            :app-user="appUser"
             :theme="theme"
             :app-debug-enabled="appDebugEnabled"
             @login="handleLogin"
             @logout="handleLogout"
-            @app-logout="handleAppLogout"
-            @open-auth="authPanelOpen = true"
             @theme-change="handleThemeChange"
             @update:app-debug-enabled="appDebugEnabled = $event"
           />
@@ -1151,22 +1123,13 @@ function handleNavBack() {
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->
-          <div v-if="!restoringSession && !rtLoggedIn && !appUser && !results.length && !selected && !loading" class="onboarding">
+          <div v-if="!restoringSession && !rtLoggedIn && !results.length && !selected && !loading" class="onboarding">
             <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
               <div class="onboarding-icon">🔗</div>
               <div class="onboarding-body">
                 <div class="onboarding-title">Подключите Rutracker</div>
                 <div class="onboarding-desc">
                   Зайдите в <strong style="color:var(--text)">Настройки</strong> и введите логин — поиск заработает сразу.
-                </div>
-              </div>
-            </div>
-            <div class="onboarding-card onboarding-card--dim" style="cursor:pointer" @click="authPanelOpen = true">
-              <div class="onboarding-icon">♥</div>
-              <div class="onboarding-body">
-                <div class="onboarding-title">Аккаунт — для библиотеки</div>
-                <div class="onboarding-desc">
-                  Лайки уже сохраняются на этом компьютере. Аккаунт — для синхронизации между устройствами (скоро).
                 </div>
               </div>
             </div>
@@ -1220,14 +1183,6 @@ function handleNavBack() {
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
       @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
-    />
-
-    <!-- ── App auth modal ──────────────────────────────────────────── -->
-    <AppAuthPanel
-      v-if="authPanelOpen"
-      @login="handleAppLogin"
-      @register="handleAppRegister"
-      @close="authPanelOpen = false"
     />
 
     <DownloadProgressOverlay

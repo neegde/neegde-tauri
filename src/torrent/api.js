@@ -78,7 +78,7 @@ function _cachedTorrentFileB64(tid) {
 
 /**
  * URL для воспроизведения или превью файла из торрента (обложка в папке, трек и т.д.).
- * Запускает нативный torrent-stream backend:
+ * Запускает нативный torrent-stream слой (Tauri):
  * magnet -> open -> optional prebuffer -> local HTTP URL (default: no blocking pre-read).
  * Для RuTracker при наличии `torrentId` подгружает `.torrent` по HTTP, чтобы librqbit не ждал
  * метаданные по magnet (DHT/трекеры).

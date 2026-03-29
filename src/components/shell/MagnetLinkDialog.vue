@@ -2,7 +2,7 @@
 import { toRefs } from "vue";
 
 const props = defineProps({
-  /** Validation / backend error message. */
+  /** Validation or resolver error message. */
   error: { type: String, default: null },
   /** Waiting for librqbit metadata (DHT / trackers). */
   resolving: { type: Boolean, default: false },

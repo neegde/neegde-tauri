@@ -22,7 +22,7 @@ export function releaseTorrentStreamUrl(url) {
   return invoke("torrent_release_stream", { token }).catch(() => {});
 }
 
-/** Просит бэкенд прервать долгий `torrent_prepare_stream` (prebuffer). */
+/** Просит Tauri прервать долгий `torrent_prepare_stream` (prebuffer). */
 export function torrentPrepareCancel() {
   return invoke("torrent_prepare_cancel").catch(() => {});
 }
