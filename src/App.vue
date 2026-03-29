@@ -4,7 +4,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { appDebugLog, appDebugClickDetail } from "./appDebugLog.js";
 import { APP_DEBUG_WINDOW_LABEL } from "./appDebugWindow.js";
-import { isAudio, detectAlbums, orderedAudioFiles, trackDisplayBasename } from "./lib/utils.js";
+import {
+  isAudio,
+  detectAlbums,
+  orderedAudioFiles,
+  trackDisplayBasename,
+  enrichMagnetWithOpenTrackers,
+} from "./lib/utils.js";
 import { trackCoverFileIdxForLike } from "./library/likesCover.js";
 import { loadLikes, saveLikes } from "./library/libraryStorage.js";
 import {
@@ -18,8 +24,8 @@ import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
-import { torrentFileB64ForTrack, streamUrl } from "./torrent/api.js";
-import { releaseTorrentStreamUrl } from "./torrent/torrentSession.js";
+import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
+import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -28,7 +34,8 @@ import LikesView    from "./components/likes/LikesView.vue";
 import SettingsView from "./components/settings/SettingsView.vue";
 import Player       from "./components/player/Player.vue";
 import AppAuthPanel from "./components/shell/AppAuthPanel.vue";
-import NavArrows    from "./components/shell/NavArrows.vue";
+import NavArrows       from "./components/shell/NavArrows.vue";
+import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
 
@@ -417,6 +424,164 @@ async function handleSearch(query) {
   } finally {
     loading.value = false;
   }
+}
+
+const magnetPanelOpen = ref(false);
+const magnetDraft = ref("");
+const magnetError = ref(null);
+
+/**
+ * Extracts a `magnet:?…` substring from pasted text (extra words or quotes allowed).
+ *
+ * Returns:
+ *     The magnet URI or null if none found.
+ */
+function extractMagnetUri(raw) {
+  const s = String(raw ?? "").trim();
+  const lower = s.toLowerCase();
+  const i = lower.indexOf("magnet:?");
+  if (i < 0) return null;
+  const slice = s.slice(i);
+  const end = slice.search(/\s/);
+  const core = end < 0 ? slice : slice.slice(0, end);
+  return core.replace(/[),.;>]+$/g, "");
+}
+
+/**
+ * Parses the BTIH (hex or base32) from a magnet link for stable synthetic ids.
+ *
+ * Returns:
+ *     Lowercase hash string or null.
+ */
+function parseBtihFromMagnet(magnet) {
+  const u = String(magnet ?? "");
+  const hex = /btih:([a-fA-F0-9]{40})/i.exec(u);
+  if (hex) return hex[1].toLowerCase();
+  const b32 = /btih:([a-z2-7]{32})/i.exec(u);
+  if (b32) return b32[1].toLowerCase();
+  return null;
+}
+
+/**
+ * Display name for a magnet-only torrent (`dn` parameter or short hash fallback).
+ *
+ * Returns:
+ *     Non-empty title string.
+ */
+function magnetTitleFromMagnet(magnet) {
+  const u = String(magnet ?? "");
+  const dn = /[?&]dn=([^&]+)/.exec(u);
+  if (dn) {
+    const spaced = dn[1].replace(/\+/g, " ");
+    const fixed = spaced.replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
+    const t = decodeURIComponent(fixed).trim();
+    if (t) return t;
+  }
+  const h = parseBtihFromMagnet(u);
+  return h ? `Раздача ${h.slice(0, 8)}…` : "Раздача по ссылке";
+}
+
+async function submitMagnetLink() {
+  magnetError.value = null;
+  const extracted = extractMagnetUri(magnetDraft.value);
+  if (!extracted) {
+    magnetError.value = "Вставьте magnet-ссылку (начинается с magnet:?)";
+    return;
+  }
+  if (!extracted.toLowerCase().includes("btih:")) {
+    magnetError.value = "В ссылке нет info hash (btih)";
+    return;
+  }
+  const enriched = enrichMagnetWithOpenTrackers(extracted);
+  const btih = parseBtihFromMagnet(enriched);
+  if (!btih) {
+    magnetError.value = "Не удалось разобрать hash раздачи";
+    return;
+  }
+  const syntheticId = `magnet-${btih}`;
+  if (selected.value?.id === syntheticId) {
+    magnetPanelOpen.value = false;
+    magnetDraft.value = "";
+    forwardStack.value = [];
+    backStack.value = [];
+    selected.value = null;
+    files.value = [];
+    torrentMagnet.value = "";
+    torrentCover.value = null;
+    torrentFilesBeforeAlbumPreview.value = null;
+    torrentSelectedBeforeAlbumPreview.value = null;
+    return;
+  }
+
+  const synthetic = {
+    id: syntheticId,
+    name: magnetTitleFromMagnet(enriched),
+    category: "—",
+    size: 0,
+    seeders: "?",
+    leechers: 0,
+    added: "—",
+    source: "magnet",
+  };
+
+  if (selected.value) {
+    backStack.value.push(snapshotTorrentForBack());
+  } else {
+    backStack.value.push(snapshotSearchForBack());
+  }
+  forwardStack.value = [];
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
+  selected.value = synthetic;
+  files.value = [];
+  torrentMagnet.value = "";
+  torrentCover.value = null;
+  loadingFiles.value = true;
+  view.value = "search";
+  error.value = null;
+
+  try {
+    const rawFiles = await magnetListFiles(enriched);
+    torrentMagnet.value = enriched;
+    files.value = rawFiles.map((f, i) => ({
+      name: f.path[f.path.length - 1] ?? "",
+      path: f.path.join("/"),
+      size: f.size,
+      idx: i,
+      origIdx: i,
+    }));
+    magnetPanelOpen.value = false;
+    magnetDraft.value = "";
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+  } catch (e) {
+    console.error("submitMagnetLink:", e);
+    magnetError.value = String(e?.message ?? e);
+    backStack.value.pop();
+    selected.value = null;
+    files.value = [];
+    torrentMagnet.value = "";
+    torrentCover.value = null;
+  } finally {
+    loadingFiles.value = false;
+  }
+}
+
+function closeMagnetPanel() {
+  if (
+    loadingFiles.value &&
+    selected.value?.source === "magnet" &&
+    !torrentMagnet.value
+  ) {
+    torrentPrepareCancel();
+    if (backStack.value.length > 0) backStack.value.pop();
+    selected.value = null;
+    files.value = [];
+    torrentMagnet.value = "";
+    torrentCover.value = null;
+    loadingFiles.value = false;
+  }
+  magnetPanelOpen.value = false;
+  magnetError.value = null;
 }
 
 async function handleSelect(torrent) {
@@ -905,15 +1070,35 @@ function handleNavBack() {
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
         <div v-if="view === 'search'" class="main-toolbar">
-          <div class="main-toolbar-search">
-            <SearchBar
-              v-model="searchQuery"
-              :loading="loading"
-              :show-categories="false"
-              @search="handleSearch"
-            />
+          <div class="main-toolbar-row">
+            <div class="main-toolbar-search">
+              <SearchBar
+                v-model="searchQuery"
+                :loading="loading"
+                :show-categories="false"
+                @search="handleSearch"
+              />
+            </div>
+            <button
+              type="button"
+              class="toolbar-magnet-btn"
+              title="Открыть раздачу по magnet-ссылке"
+              :disabled="loadingFiles"
+              @click="magnetPanelOpen = true"
+            >
+              По ссылке
+            </button>
           </div>
         </div>
+
+        <MagnetLinkDialog
+          v-model:open="magnetPanelOpen"
+          v-model:draft="magnetDraft"
+          :error="magnetError"
+          :resolving="loadingFiles && magnetPanelOpen"
+          @submit="submitMagnetLink"
+          @close="closeMagnetPanel"
+        />
 
         <!-- Likes view -->
         <KeepAlive>

@@ -137,3 +137,12 @@ pub async fn torrent_prefetch_next_track(
         )
         .await
 }
+
+/// Returns the list of files inside a torrent described by a magnet link (metadata via DHT/trackers).
+#[tauri::command]
+pub async fn torrent_magnet_list_files(
+    state: tauri::State<'_, TorrentStreamState>,
+    magnet: String,
+) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
+    state.magnet_resolve_files(magnet).await
+}

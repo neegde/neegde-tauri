@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use dashmap::DashMap;
-use librqbit::api::TorrentIdOrHash;
+use librqbit::api::{TorrentDetailsResponse, TorrentIdOrHash};
 use librqbit::dht::Id20;
 use librqbit::torrent_from_bytes_ext;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ByteBuf, Magnet, ManagedTorrent, Session,
-    SessionOptions, TorrentStats, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ByteBuf, Magnet, ManagedTorrent,
+    Session, SessionOptions, TorrentStats, TorrentStatsState,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -135,6 +135,38 @@ fn resolve_info_hash_from_magnet_or_file(
         m.as_id20()
             .ok_or_else(|| "В magnet нет BTIH".to_string())
     }
+}
+
+/// Maps librqbit API file rows to the same `TorrentFile` shape as Rutracker topic parsing.
+fn torrent_details_to_rutracker_files(
+    details: &TorrentDetailsResponse,
+) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
+    let root = details
+        .name
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .map(String::as_str)
+        .unwrap_or("Раздача")
+        .to_string();
+    let list = details
+        .files
+        .as_ref()
+        .ok_or_else(|| "Нет списка файлов в метаданных".to_string())?;
+    let mut out = Vec::with_capacity(list.len());
+    for f in list {
+        let path = if f.components.is_empty() {
+            vec![f.name.clone()]
+        } else {
+            let mut p = vec![root.clone()];
+            p.extend(f.components.iter().cloned());
+            p
+        };
+        out.push(crate::rutracker::TorrentFile {
+            path,
+            size: f.length,
+        });
+    }
+    Ok(out)
 }
 
 fn build_prepare_progress_payload(
@@ -290,6 +322,65 @@ impl TorrentStreamState {
         std::fs::create_dir_all(&base)
             .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;
         Ok(())
+    }
+
+    /// Resolves BitTorrent metadata for a magnet URI and returns the file list (Rutracker-compatible shape).
+    ///
+    /// Adds the torrent to the streaming session when it is not already managed; waits until
+    /// metadata is available (DHT/trackers). Does not start playback.
+    pub async fn magnet_resolve_files(
+        &self,
+        magnet: String,
+    ) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
+        if magnet.trim().is_empty() {
+            return Err("Пустой magnet".into());
+        }
+        self.check_prepare_cancel()?;
+        let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
+        let info_hash = m
+            .as_id20()
+            .ok_or_else(|| "В magnet нет BTIH".to_string())?;
+        let id = TorrentIdOrHash::Hash(info_hash);
+
+        let session = self.torrent_session().await?;
+
+        if session.get(id).is_none() {
+            let opts = AddTorrentOptions {
+                only_files: Some(vec![0]),
+                overwrite: true,
+                ..Default::default()
+            };
+            let added = session
+                .add_torrent(AddTorrent::from_url(&magnet), Some(opts))
+                .await
+                .map_err(|e| format!("Ошибка открытия торрента: {e:#}"))?;
+            let handle = match added {
+                AddTorrentResponse::Added(_, h) => h,
+                AddTorrentResponse::AlreadyManaged(_, h) => h,
+                AddTorrentResponse::ListOnly(_) => {
+                    return Err("Не удалось открыть торрент для списка файлов".into());
+                }
+            };
+            handle
+                .wait_until_initialized()
+                .await
+                .map_err(|e| format!("Ошибка метаданных торрента: {e:#}"))?;
+        } else {
+            let handle = session
+                .get(id)
+                .ok_or_else(|| "Торрент пропал из сессии".to_string())?;
+            handle
+                .wait_until_initialized()
+                .await
+                .map_err(|e| format!("Ошибка метаданных торрента: {e:#}"))?;
+        }
+        self.check_prepare_cancel()?;
+
+        let api = Api::new(session.clone(), None);
+        let details = api
+            .api_torrent_details(id)
+            .map_err(|e| format!("Метаданные торрента: {e}"))?;
+        torrent_details_to_rutracker_files(&details)
     }
 
     fn check_prepare_cancel(&self) -> Result<(), String> {

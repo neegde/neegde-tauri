@@ -3,6 +3,19 @@ import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 import { getMirror } from "../rutracker/config.js";
 
 /**
+ * Resolves torrent file list from a magnet URI (DHT/trackers). Same row shape as Rutracker details.files.
+ *
+ * Args:
+ *     magnet: Magnet URI (optionally enriched with open trackers).
+ *
+ * Returns:
+ *     Array of `{ path: string[], size: number }`.
+ */
+export async function magnetListFiles(magnet) {
+  return invoke("torrent_magnet_list_files", { magnet });
+}
+
+/**
  * In-memory LRU cache: topicId → Promise<string|null>.
  * Prevents re-downloading the same .torrent file when switching tracks or during prefetch.
  * Capped at 30 entries (LRU). Persisted to localStorage so restarts skip the network.
