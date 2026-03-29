@@ -14,6 +14,8 @@
   --red:         #e93544;
   --player-h:    90px;
   --sidebar-w:   248px;
+  --main-pad-inline: 32px;
+  --main-pad-top:    28px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -204,14 +206,18 @@ body {
   grid-row: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Длинный спад вместо «ступеньки» на ~360px — стык с баром поиска и героя альбома в тёмной теме */
   background: linear-gradient(
     180deg,
     rgba(var(--accent-rgb), 0.14) 0%,
-    rgba(30, 22, 18, 0.92) 42%,
-    var(--bg) 360px
+    rgba(38, 30, 26, 0.9) min(22vh, 240px),
+    rgba(26, 22, 18, 0.96) min(50vh, 540px),
+    var(--bg) min(82vh, 920px)
   );
 }
-.main-content { padding: 28px 32px 60px; }
+.main-content {
+  padding: var(--main-pad-top) var(--main-pad-inline) 60px;
+}
 .main-content:has(.likes-view) { padding-top: 0; }
 
 /* ── Search ───────────────────────────────────────────────────────────── */
@@ -366,21 +372,30 @@ body {
 .seeds-dead    { color: var(--red); }
 
 /* ── Single-album hero (обложка + треклист) ───────────────────────────── */
+/* Full-bleed в колонке, как у .likes-hero — иначе герой визуально «уже» поля .main-content */
+/* overflow-x: hidden ломает overflow-y: visible и обрезает box-shadow; clip+visible только в светлой теме (см. ниже). */
 .torrent-page--album-hero {
   position: relative;
   overflow-x: hidden;
+  margin-left: calc(-1 * var(--main-pad-inline));
+  margin-right: calc(-1 * var(--main-pad-inline));
+  padding: 20px var(--main-pad-inline) 0;
+  box-sizing: border-box;
 }
 .torrent-page--album-hero .album-hero-bg {
   position: absolute;
   left: 0;
   right: 0;
-  top: 0;
-  height: min(52vh, 380px);
+  top: -12px;
+  height: calc(min(56vh, 420px) + 12px);
+  /* Оверлей с прозрачным верхом — без резкой линии на стыке с баром поиска (тёмная тема). */
   background: linear-gradient(
     180deg,
-    rgba(var(--accent-rgb), 0.28) 0%,
-    rgba(18, 14, 12, 0.88) 72%,
-    var(--bg, #141210) 100%
+    transparent 0%,
+    rgba(var(--accent-rgb), 0.08) 16%,
+    rgba(var(--accent-rgb), 0.24) 42%,
+    rgba(20, 16, 14, 0.92) 76%,
+    transparent 100%
   );
   pointer-events: none;
   z-index: 0;
@@ -400,9 +415,15 @@ body {
   aspect-ratio: 1;
   flex-shrink: 0;
   border-radius: 4px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
   background: linear-gradient(135deg, #3d2e28, #161210);
+}
+/* overflow:hidden на обложке обрезает тень; картинку режем на корне AlbumFolderCover. */
+.torrent-page--album-hero .album-hero-cover .album-folder-cover-root {
+  border-radius: 4px;
+  overflow: hidden;
+  height: 100%;
 }
 .torrent-page--album-hero .album-hero-text {
   flex: 1;
@@ -692,6 +713,8 @@ body {
   flex-shrink: 0;
   width: 100%;
   box-sizing: border-box;
+  position: relative;
+  z-index: 2;
 }
 .main-toolbar-search {
   flex: 1;
@@ -1417,7 +1440,7 @@ body {
   display: flex;
   align-items: flex-end;
   gap: clamp(18px, 3vw, 28px);
-  margin: -28px -32px 0;
+  margin: calc(-1 * var(--main-pad-top)) calc(-1 * var(--main-pad-inline)) 0;
   padding: clamp(36px, 5vw, 48px) clamp(20px, 3vw, 32px) clamp(24px, 3.5vw, 32px);
   background: linear-gradient(
     180deg,
@@ -1909,14 +1932,32 @@ body {
 }
 
 [data-theme="light"] .main-wrap {
-  background: linear-gradient(180deg, #ffe8d0 0%, var(--bg) 360px);
-}
-[data-theme="light"] .torrent-page--album-hero .album-hero-bg {
+  /* Длинный мягкий градиент: иначе на стыке с баром поиска и героя альбома видна «ступенька». */
   background: linear-gradient(
     180deg,
-    rgba(var(--accent-rgb), 0.22) 0%,
-    rgba(248, 244, 240, 0.96) 76%,
-    var(--bg) 100%
+    #fff4ea 0%,
+    #f8ebe3 min(18vh, 200px),
+    #efe8e0 min(42vh, 440px),
+    var(--bg) min(78vh, 880px)
+  );
+}
+/* Воздух под баром + тень обложки: clip не режет вертикаль в отличие от hidden в WK. */
+[data-theme="light"] .torrent-page--album-hero {
+  overflow-x: clip;
+  overflow-y: visible;
+}
+[data-theme="light"] .torrent-page--album-hero .album-hero-bg {
+  /* Оверлей не начинается с акцента у верхней кромки — иначе резкая линия на стыке с зоной поиска. */
+  top: -12px;
+  height: calc(min(58vh, 460px) + 12px);
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(var(--accent-rgb), 0.04) 14%,
+    rgba(var(--accent-rgb), 0.1) 32%,
+    rgba(var(--accent-rgb), 0.06) 52%,
+    rgba(255, 248, 242, 0.22) 78%,
+    transparent 100%
   );
 }
 [data-theme="light"] .player               { background: var(--surface); }
