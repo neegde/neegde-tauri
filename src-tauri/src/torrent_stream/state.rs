@@ -754,8 +754,8 @@ impl TorrentStreamState {
                 .prebuffer_filled
                 .store(filled as u64, Ordering::Relaxed);
 
-            // Sample speed once at the halfway point of the initial target and adjust target.
-            if !speed_sampled && initial_target > 0 && filled >= initial_target / 2 {
+            // Sample speed at 25% of the initial target so we can extend it early on fast links.
+            if !speed_sampled && initial_target > 0 && filled >= initial_target / 4 {
                 speed_sampled = true;
                 let elapsed_secs = t_pre.elapsed().as_secs_f64().max(0.001);
                 let speed_kbps = filled as f64 / elapsed_secs / 1024.0;
@@ -1188,7 +1188,9 @@ impl TorrentStreamInner {
 
 type TorrentHandle = Arc<ManagedTorrent>;
 
-const HIGH_PRIORITY_WINDOW_PIECES: u64 = 32;
+/// High-priority lookahead window for the priority worker.
+/// 64 pieces × 256 KB/piece = 16 MB ahead — reduces stalls at high bitrates.
+const HIGH_PRIORITY_WINDOW_PIECES: u64 = 64;
 const LOW_PRIORITY_PIECE_STEP: u64 = 8;
 const HYBRID_SWITCH_BUFFER_BYTES: u64 = 15 * 1024 * 1024;
 

@@ -20,7 +20,9 @@ pub fn torrent_streams_dir_label() -> &'static str {
 }
 
 /// Minimum (initial) prebuffer target — fast start at any connection speed.
-pub(super) const PREBUFFER_BYTES: usize = 64 * 1024;
+/// 32 KB is enough to unblock Web Audio on most connections; speed is sampled
+/// at 25% (8 KB) so adaptive upsizing happens early on fast links.
+pub(super) const PREBUFFER_BYTES: usize = 32 * 1024;
 /// Maximum prebuffer when connection is fast (>2 MB/s measured during the first read).
 pub(super) const PREBUFFER_ADAPTIVE_MAX: usize = 512 * 1024;
 /// One `read` on the file stream — if the swarm sends nothing, bail out of this wait quickly.

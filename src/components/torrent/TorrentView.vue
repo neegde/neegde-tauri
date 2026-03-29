@@ -40,7 +40,26 @@ const emit = defineEmits([
   "download", "download-all", "download-album",
   "toggle-like",
   "open-album-preview",
+  "hover-track",
 ]);
+
+// ── Hover prefetch ────────────────────────────────────────────────────────────
+let _hoverTimer = null;
+let _lastHoveredIdx = null;
+
+function onTrackHover(origIdx) {
+  if (origIdx === props.nowPlayingIdx) return;
+  if (origIdx === _lastHoveredIdx) return;
+  clearTimeout(_hoverTimer);
+  _hoverTimer = setTimeout(() => {
+    _lastHoveredIdx = origIdx;
+    emit("hover-track", origIdx);
+  }, 280);
+}
+
+function onTrackLeave() {
+  clearTimeout(_hoverTimer);
+}
 
 // ── View mode ────────────────────────────────────────────────────────────────
 const viewMode = ref(localStorage.getItem("albumViewMode") || "list");
@@ -324,6 +343,8 @@ watch(
           :key="f.origIdx"
           :class="['spotify-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @mouseenter="onTrackHover(f.origIdx)"
+          @mouseleave="onTrackLeave"
         >
           <div class="spotify-col-n">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
@@ -463,6 +484,8 @@ watch(
           :key="f.origIdx"
           :class="['track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @mouseenter="onTrackHover(f.origIdx)"
+          @mouseleave="onTrackLeave"
         >
           <div class="track-num">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />

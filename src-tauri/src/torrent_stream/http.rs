@@ -25,6 +25,9 @@ impl TorrentStreamInner {
                 Ok(v) => v,
                 Err(_) => continue,
             };
+            // Disable Nagle's algorithm: first bytes reach Web Audio API faster,
+            // which matters for short initial range requests during buffering.
+            let _ = socket.set_nodelay(true);
             let inner = self.clone();
             tauri::async_runtime::spawn(async move {
                 let _ = inner.handle_connection(socket).await;

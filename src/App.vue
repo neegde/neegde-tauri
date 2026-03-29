@@ -18,7 +18,8 @@ import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
-import { torrentFileB64ForTrack } from "./torrent/api.js";
+import { torrentFileB64ForTrack, streamUrl } from "./torrent/api.js";
+import { releaseTorrentStreamUrl } from "./torrent/torrentSession.js";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -62,6 +63,42 @@ const nextInQueue = computed(() => {
   if (queuePos.value >= queue.value.length - 1) return null;
   return queue.value[queuePos.value + 1];
 });
+const secondNextInQueue = computed(() => {
+  if (queuePos.value >= queue.value.length - 2) return null;
+  return queue.value[queuePos.value + 2];
+});
+
+// ── Hover-prefetch state ──────────────────────────────────────────────────────
+// Stores a pre-prepared stream URL for the track the user is hovering over.
+const hoverPrefetchUrl = ref("");
+const hoverPrefetchKey = ref("");
+
+async function handleHoverTrack(fileIdx) {
+  if (!selected.value || !torrentMagnet.value) return;
+  const magnet = torrentMagnet.value;
+  const key = `${magnet}\0${fileIdx}`;
+  // Already prefetched or currently playing
+  if (key === hoverPrefetchKey.value) return;
+  if (nowPlaying.value && `${nowPlaying.value.magnet}\0${nowPlaying.value.fileIdx}` === key) return;
+  // Release previous hover prefetch if not used
+  if (hoverPrefetchUrl.value) {
+    void releaseTorrentStreamUrl(hoverPrefetchUrl.value);
+    hoverPrefetchUrl.value = "";
+    hoverPrefetchKey.value = "";
+  }
+  try {
+    const url = await streamUrl(magnet, fileIdx, {
+      source: selected.value?.source,
+      torrentId: selected.value?.id,
+    });
+    if (url) {
+      hoverPrefetchUrl.value = url;
+      hoverPrefetchKey.value = key;
+    }
+  } catch {
+    // Silently ignore hover-prefetch errors
+  }
+}
 
 watch(
   [queue, queuePos],
@@ -963,6 +1000,7 @@ function handleNavBack() {
             @download-all="handleDownloadAll"
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
+            @hover-track="handleHoverTrack"
           />
         </template>
 
@@ -973,14 +1011,18 @@ function handleNavBack() {
     <Player
       :track="nowPlaying"
       :next-track="nextInQueue"
+      :second-next-track="secondNextInQueue"
       :suppress-autoplay="suppressAutoplayAfterSessionRestore"
       :has-prev="queuePos > 0"
       :has-next="queuePos < queue.length - 1"
+      :hover-prefetch-url="hoverPrefetchUrl"
+      :hover-prefetch-key="hoverPrefetchKey"
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
+      @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
     />
 
     <!-- ── App auth modal ──────────────────────────────────────────── -->
