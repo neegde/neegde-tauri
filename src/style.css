@@ -1392,9 +1392,13 @@ body {
   justify-content: center;
   color: #000;
   font-size: 14px;
-  transition: transform 0.1s, background 0.15s;
+  transition: transform 0.1s;
 }
-.ctrl-btn-play:hover { transform: scale(1.07) !important; background: rgba(255,255,255,0.88); }
+.ctrl-btn.ctrl-btn-play:hover:not(:disabled) {
+  transform: scale(1.07) !important;
+  background: var(--text);
+  color: #000;
+}
 
 .player-progress {
   display: flex;
@@ -2064,7 +2068,10 @@ body {
 [data-theme="light"] .volume-slider::-webkit-slider-runnable-track { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .volume-slider::-moz-range-track    { background: rgba(0,0,0,0.15); }
 [data-theme="light"] .ctrl-btn-play                     { color: #fff; }
-[data-theme="light"] .ctrl-btn-play:hover               { background: #333 !important; }
+[data-theme="light"] .ctrl-btn.ctrl-btn-play:hover:not(:disabled) {
+  background: var(--text);
+  color: #fff;
+}
 [data-theme="light"] .likes-tab                         { background: rgba(0,0,0,0.07); }
 [data-theme="light"] .likes-tab:hover                   { background: rgba(0,0,0,0.12); }
 [data-theme="light"] .likes-tab.active                  { color: #fff; }

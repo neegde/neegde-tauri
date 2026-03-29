@@ -366,7 +366,6 @@ watch(
                 :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
                 @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
               >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
-              <button class="track-btn" title="Слушать" @click.stop="emit('play', f.origIdx, f.path)">▶</button>
               <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
             </div>
           </div>
@@ -507,7 +506,6 @@ watch(
               :title="likes?.[trackLikeId(torrent, f)] ? 'Убрать лайк' : 'Нравится'"
               @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
             >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
-            <button class="track-btn" title="Слушать" @click.stop="emit('play', f.origIdx, f.path)">▶</button>
             <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
           </div>
         </div>

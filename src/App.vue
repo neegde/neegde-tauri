@@ -822,6 +822,17 @@ function handleDownloadTrack(origIdx) {
   });
 }
 
+/** Скачивание трека из списка «Мне нравится» без открытия раздачи. */
+function handleDownloadTrackFromLike(like) {
+  if (!like?.magnet || like.fileIdx == null) return;
+  downloadOverlayExpanded.value = true;
+  const idx = Number(like.fileIdx);
+  const label = trackDisplayBasename(like.fileName);
+  exportTorrentFiles(like.magnet, [idx], [label], null, (p) => {
+    downloadProgress.value = p;
+  });
+}
+
 function handleDownloadAll() {
   downloadOverlayExpanded.value = true;
   const audio = files.value.filter((f) => isAudio(f.path));
@@ -1111,6 +1122,7 @@ function handleNavBack() {
             @play="handlePlayFromLike"
             @play-album="handlePlayAlbumFromLike"
             @open-torrent="handleOpenTorrentFromLike"
+            @download="handleDownloadTrackFromLike"
           />
         </KeepAlive>
 
