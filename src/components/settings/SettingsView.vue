@@ -26,7 +26,7 @@ import {
   compareSemver,
   normalizeVersionTag,
 } from "../../githubReleaseCheck.js";
-import appIconSrc from "../../assets/app-icon.png";
+import appIconSrc from "../../assets/neegde-logo.png";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
