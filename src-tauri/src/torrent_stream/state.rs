@@ -5,7 +5,7 @@ use librqbit::dht::Id20;
 use librqbit::torrent_from_bytes_ext;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ByteBuf, Magnet, ManagedTorrent,
-    Session, SessionOptions, TorrentStats, TorrentStatsState,
+    PeerConnectionOptions, Session, SessionOptions, TorrentStats, TorrentStatsState,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -526,6 +526,12 @@ impl TorrentStreamState {
         let opts = AddTorrentOptions {
             only_files: Some(vec![file_idx]),
             overwrite: true,
+            // Short connect timeout so hundreds of unresponsive peers (state: "connecting")
+            // don't linger and saturate the tokio thread-pool during streaming.
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(Duration::from_secs(4)),
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
@@ -725,6 +731,15 @@ impl TorrentStreamState {
         self.select_file_for_streaming(&session, &handle, file_idx)
             .await?;
 
+        // If the torrent was paused (e.g. after a previous export cancel or session reuse),
+        // unpause it so librqbit actually starts downloading the selected file.
+        if matches!(handle.stats().state, TorrentStatsState::Paused) {
+            self.inner
+                .debug_log
+                .push("prepare", "torrent was paused — unpausing", None);
+            let _ = session.unpause(&handle).await;
+        }
+
         self.check_prepare_cancel()?;
 
         let mime = handle
@@ -838,11 +853,28 @@ impl TorrentStreamState {
                 .prebuffer_filled
                 .store(filled as u64, Ordering::Relaxed);
 
-            // Sample speed at 25% of the initial target so we can extend it early on fast links.
+            // Sample speed after the first chunk arrives.
+            // Prefer the torrent's live download_mbps (already measured by librqbit over several
+            // seconds) over the local read speed, which is unreliable during peer cold-start
+            // (peers haven't connected yet, so the first bytes trickle in slowly and the local
+            // speed estimate is wildly pessimistic).
             if !speed_sampled && initial_target > 0 && filled >= initial_target / 4 {
                 speed_sampled = true;
+                let torrent_speed_kbps = handle
+                    .stats()
+                    .live
+                    .as_ref()
+                    .map(|l| l.download_speed.mbps * 1024.0)
+                    .unwrap_or(0.0);
+                // Fall back to local read speed if librqbit hasn't measured yet (e.g. all data
+                // came from disk cache and there is no active download).
                 let elapsed_secs = t_pre.elapsed().as_secs_f64().max(0.001);
-                let speed_kbps = filled as f64 / elapsed_secs / 1024.0;
+                let local_speed_kbps = filled as f64 / elapsed_secs / 1024.0;
+                let speed_kbps = if torrent_speed_kbps > 0.0 {
+                    torrent_speed_kbps
+                } else {
+                    local_speed_kbps
+                };
                 let new_target = if speed_kbps > 2048.0 {
                     PREBUFFER_ADAPTIVE_MAX // > 2 MB/s  → 512 KB
                 } else if speed_kbps > 1024.0 {
@@ -850,7 +882,7 @@ impl TorrentStreamState {
                 } else if speed_kbps > 512.0 {
                     128 * 1024 // > 512 KB/s → 128 KB
                 } else {
-                    initial_target // slow       → keep 64 KB
+                    initial_target // slow       → keep 32 KB
                 };
                 adaptive_target = new_target.min(alloc_max);
                 if adaptive_target != initial_target {
@@ -861,7 +893,8 @@ impl TorrentStreamState {
                         "prepare",
                         "prebuffer target adapted",
                         Some(json!({
-                            "speedKbps": speed_kbps as u64,
+                            "torrentSpeedKbps": torrent_speed_kbps as u64,
+                            "localSpeedKbps": local_speed_kbps as u64,
                             "newTargetBytes": adaptive_target,
                             "oldTargetBytes": initial_target,
                         })),
