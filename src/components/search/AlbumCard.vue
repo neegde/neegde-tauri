@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from "vue";
-import { getRutrackerCoverDataUrl, peekRutrackerCover, prefetchTorrentDetails } from "../../rutracker/search.js";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, prefetchTorrentDetails } from "../../rutracker/search.js";
 
 const props = defineProps({
   torrent: Object,
@@ -16,15 +16,22 @@ function seedsLabel(n) {
 }
 
 const cardRef = ref(null);
-const coverUrl = ref(null);
 const coverErr = ref(false);
 let observer = null;
-let fetchGen = 0;
 
-function resetCover() {
-  fetchGen += 1;
-  coverUrl.value = null;
-  coverErr.value = false;
+/**
+ * Reactive computed — auto-updates whenever coverCache is populated,
+ * regardless of which code path stored the cover.
+ */
+const coverUrl = computed(() => {
+  if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return null;
+  return getCoverReactive(String(props.torrent.id));
+});
+
+// Reset error state when torrent changes
+watch(() => [props.torrent?.id, props.torrent?.source], () => { coverErr.value = false; });
+
+function disconnectObserver() {
   if (observer) {
     observer.disconnect();
     observer = null;
@@ -32,29 +39,22 @@ function resetCover() {
 }
 
 function setupCoverObserver() {
-  resetCover();
+  disconnectObserver();
+  coverErr.value = false;
   if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
 
   const topicId = String(props.torrent.id);
-  const gen = fetchGen;
 
+  // Skip observer if cover already fetched (hit) or confirmed absent (null in LRU)
   const cached = peekRutrackerCover(topicId);
-  if (cached !== undefined) {
-    if (cached) coverUrl.value = cached;
-    return;
-  }
+  if (cached !== undefined) return;
 
   observer = new IntersectionObserver(
     ([entry]) => {
       if (!entry?.isIntersecting) return;
-      observer?.disconnect();
-      observer = null;
-      getRutrackerCoverDataUrl(topicId)
-        .then((u) => {
-          if (gen !== fetchGen) return;
-          if (u) coverUrl.value = u;
-        })
-        .catch(() => {});
+      disconnectObserver();
+      // Fire-and-forget: result stored in reactive coverCache → computed auto-updates
+      getRutrackerCoverDataUrl(topicId).catch(() => {});
     },
     { rootMargin: "400px" }
   );
@@ -65,7 +65,7 @@ function setupCoverObserver() {
 
 onMounted(setupCoverObserver);
 onUnmounted(() => {
-  resetCover();
+  disconnectObserver();
   clearTimeout(hoverTimer);
 });
 

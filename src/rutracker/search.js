@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getMirror } from "./config.js";
-import { rememberRutrackerCover, getRutrackerCoverDataUrl, peekRutrackerCover, clearRutrackerCoverCache } from "./coverCache.js";
+import { rememberRutrackerCover, getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, clearRutrackerCoverCache } from "./coverCache.js";
 
-export { getRutrackerCoverDataUrl, peekRutrackerCover, clearRutrackerCoverCache };
+export { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, clearRutrackerCoverCache };
 
 /**
  * Search Rutracker music sections.
