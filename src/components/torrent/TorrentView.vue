@@ -377,7 +377,9 @@ watch(
           title="Слушать"
           @click="emit('play-all')"
         >
-          ▶
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
         </button>
         <button
           type="button"
@@ -390,7 +392,12 @@ watch(
             )
           "
         >
-          {{ likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? "♥" : "♡" }}
+          <svg v-if="likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)]" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
         </button>
         <button
           type="button"
@@ -420,7 +427,11 @@ watch(
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
               <span class="album-num">{{ i + 1 }}</span>
-              <span class="album-play-hint">▶</span>
+              <span class="album-play-hint">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </span>
             </template>
           </div>
           <div class="album-col-title">
@@ -444,7 +455,14 @@ watch(
               <button
                 :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
                 @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
-              >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
+              >
+                <svg v-if="likes?.[trackLikeId(torrent, f)]" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+              </button>
               <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
             </div>
           </div>
@@ -457,7 +475,11 @@ watch(
     <div class="album-header">
       <div class="album-cover">
         <img v-if="cover" :src="cover" alt="Обложка" class="cover-img" />
-        <span v-else>🎵</span>
+        <svg v-else width="64" height="64" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.4" aria-hidden="true">
+          <path d="M9 18V5l12-2v13"/>
+          <circle cx="6" cy="18" r="3"/>
+          <circle cx="18" cy="16" r="3"/>
+        </svg>
       </div>
       <div class="album-info">
         <div class="album-type">
@@ -486,7 +508,10 @@ watch(
 
     <div v-if="!loading && totalAudio > 0" class="album-actions">
       <button class="btn-play-all" @click="emit('play-all')">
-        ▶&nbsp; Слушать всё
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <polygon points="5,3 19,12 5,21"/>
+        </svg>
+        Слушать всё
       </button>
       <button class="btn-dl-all" @click="emit('download-all')">
         ↓&nbsp; Скачать всё ({{ totalAudio }})
@@ -546,8 +571,19 @@ watch(
             :class="['track-btn', 'like-btn', 'album-like-btn', likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? 'liked' : '']"
             :title="likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? 'Убрать лайк' : 'Нравится'"
             @click="emit('toggle-like', makeAlbumLike(torrent, magnet, wrap.raw, wrap.displayName))"
-          >{{ likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? "♥" : "♡" }}</button>
-          <button class="btn-play-album" title="Слушать альбом" @click="emit('play-album', wrap.raw.audioFiles)">▶</button>
+          >
+            <svg v-if="likes?.[albumLikeId(torrent, wrap.raw.dirPath)]" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+          </button>
+          <button class="btn-play-album" title="Слушать альбом" @click="emit('play-album', wrap.raw.audioFiles)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,3 19,12 5,21"/>
+            </svg>
+          </button>
           <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles, wrap.displayName)">↓</button>
         </div>
 
@@ -569,7 +605,11 @@ watch(
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
               <span class="track-num-val">{{ trackOffset(albumIdx) + i + 1 }}</span>
-              <span class="track-num-icon">▶</span>
+              <span class="track-num-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </span>
             </template>
           </div>
           <div class="track-info">
@@ -592,7 +632,14 @@ watch(
               :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
               :title="likes?.[trackLikeId(torrent, f)] ? 'Убрать лайк' : 'Нравится'"
               @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
-            >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
+            >
+              <svg v-if="likes?.[trackLikeId(torrent, f)]" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+            </button>
             <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
           </div>
         </div>
@@ -621,7 +668,11 @@ watch(
                 class="gallery-play-btn"
                 title="Слушать альбом"
                 @click.stop="emit('play-album', wrap.raw.audioFiles)"
-              >▶</button>
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </button>
             </div>
           </div>
           <div class="gallery-card-name" :title="wrap.displayName">{{ wrap.displayName }}</div>

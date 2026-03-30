@@ -494,7 +494,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-left: 4px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   transition: transform 0.12s, background 0.15s, box-shadow 0.15s;
 }
@@ -512,6 +511,9 @@ body {
   padding: 8px;
   border-radius: 50%;
   transition: color 0.15s, transform 0.1s, background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .torrent-page--album-hero .album-tool-btn:hover {
   color: var(--text);
@@ -861,6 +863,9 @@ body {
   border-radius: 500px;
   color: var(--muted);
   font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-weight: 700;
   padding: 7px 20px;
   cursor: pointer;
@@ -1221,6 +1226,9 @@ body {
   background: none;
   border: none;
   color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 16px;
   cursor: pointer;
   padding: 4px 6px;
@@ -1309,6 +1317,9 @@ body {
   line-height: 1;
   border-radius: 50%;
   transition: color 0.15s, transform 0.1s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .ctrl-btn:hover:not(:disabled) { color: var(--text); transform: scale(1.1); }
 .ctrl-btn:disabled             { opacity: 0.3; cursor: default; }
@@ -1556,8 +1567,14 @@ body {
   display: block;
 }
 .cover-thumb-fallback {
-  font-size: 1.1em;
-  line-height: 1;
+  width: 40%;
+  height: 40%;
+  opacity: 0.4;
+}
+.album-art-fallback {
+  width: 40%;
+  height: 40%;
+  opacity: 0.4;
 }
 
 /* Likes: 3 колонки — # (узко, вправо) | обложка + название | действия */

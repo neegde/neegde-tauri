@@ -898,21 +898,41 @@ onUnmounted(() => {
             class="ctrl-btn"
             :disabled="!hasPrev"
             @click="emit('prev')"
-          >⏮</button>
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="19,5 9,12 19,19"/>
+              <rect x="5" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
 
           <button
             class="ctrl-btn ctrl-btn-play"
             type="button"
             @click="onPlayButtonClick"
           >
-            {{ (isLoading || playing) ? "⏸" : "▶" }}
+            <template v-if="isLoading || playing">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="5" y="4" width="4.5" height="16" rx="1"/>
+                <rect x="14.5" y="4" width="4.5" height="16" rx="1"/>
+              </svg>
+            </template>
+            <template v-else>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            </template>
           </button>
 
           <button
             class="ctrl-btn"
             :disabled="!hasNext"
             @click="emit('next')"
-          >⏭</button>
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,5 15,12 5,19"/>
+              <rect x="16" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
         </div>
 
         <div class="player-progress">
@@ -997,7 +1017,13 @@ onUnmounted(() => {
 
     <template v-else>
       <div class="player-left">
-        <div class="player-art player-art--idle" aria-hidden="true">♪</div>
+        <div class="player-art player-art--idle" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.5" aria-hidden="true">
+            <path d="M9 18V5l12-2v13"/>
+            <circle cx="6" cy="18" r="3"/>
+            <circle cx="18" cy="16" r="3"/>
+          </svg>
+        </div>
         <div class="player-track-info">
           <span class="player-name">Ничего не играет</span>
           <span class="player-artist">Выберите трек в раздаче</span>
@@ -1005,9 +1031,23 @@ onUnmounted(() => {
       </div>
       <div class="player-center">
         <div class="player-controls">
-          <button class="ctrl-btn" disabled>⏮</button>
-          <button class="ctrl-btn ctrl-btn-play" disabled>▶</button>
-          <button class="ctrl-btn" disabled>⏭</button>
+          <button class="ctrl-btn" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="19,5 9,12 19,19"/>
+              <rect x="5" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
+          <button class="ctrl-btn ctrl-btn-play" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,3 19,12 5,21"/>
+            </svg>
+          </button>
+          <button class="ctrl-btn" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,5 15,12 5,19"/>
+              <rect x="16" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
         </div>
         <div class="player-progress">
           <span class="progress-time">0:00</span>

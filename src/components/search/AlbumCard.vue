@@ -9,17 +9,6 @@ const props = defineProps({
 
 const emit = defineEmits(["select"]);
 
-const EMOJIS = ["🎵", "🎶", "🎸", "🎹", "🥁", "🎤", "🎼", "🎷", "🎺", "🪗"];
-
-function hashStr(s) {
-  let h = 0;
-  const str = String(s ?? "");
-  for (let i = 0; i < str.length; i++)
-    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-const emoji = EMOJIS[hashStr(props.torrent.id ?? props.torrent.name) % EMOJIS.length];
 const seeds = Number(props.torrent.seeders) || 0;
 
 function seedsLabel(n) {
@@ -117,12 +106,20 @@ watch(
         alt=""
         @error="coverErr = true"
       />
-      <span v-else>{{ emoji }}</span>
+      <svg v-else class="album-art-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M9 18V5l12-2v13"/>
+        <circle cx="6" cy="18" r="3"/>
+        <circle cx="18" cy="16" r="3"/>
+      </svg>
       <button
         class="album-art-play"
         title="Открыть"
         @click.stop="emit('select', torrent)"
-      >▶</button>
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <polygon points="5,3 19,12 5,21"/>
+        </svg>
+      </button>
     </div>
     <div class="album-name">{{ torrent.name }}</div>
     <div class="album-meta">

@@ -13,7 +13,6 @@ const props = defineProps({
   coverFileIdx: { type: [Number, null], default: null },
   size: { type: Number, default: 44 },
   radius: { type: Number, default: 4 },
-  fallback: { type: String, default: "🎵" },
   /** Заполняет родителя (например `.album-art` в сетке лайков). */
   fill: { type: Boolean, default: false },
 });
@@ -132,6 +131,10 @@ onUnmounted(resetCover);
       alt=""
       @error="coverErr = true"
     />
-    <span v-else class="cover-thumb-fallback">{{ fallback }}</span>
+    <svg v-else class="cover-thumb-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M9 18V5l12-2v13"/>
+      <circle cx="6" cy="18" r="3"/>
+      <circle cx="18" cy="16" r="3"/>
+    </svg>
   </div>
 </template>
