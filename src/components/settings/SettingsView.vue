@@ -566,13 +566,17 @@ watch(nerdOpen, (open) => {
           <div class="settings-card-icon settings-card-icon--app">🎨</div>
           <div class="settings-card-info">
             <div class="settings-card-name">Тема</div>
-            <div class="settings-card-status">{{ theme === 'light' ? 'Светлая' : 'Тёмная' }}</div>
+            <div class="settings-card-status">{{ theme === 'light' ? 'Светлая' : theme === 'system' ? 'Системная' : 'Тёмная' }}</div>
           </div>
           <div class="theme-toggle">
             <button
-              :class="['theme-btn', theme !== 'light' ? 'active' : '']"
+              :class="['theme-btn', theme === 'dark' ? 'active' : '']"
               @click="emit('theme-change', 'dark')"
             >Тёмная</button>
+            <button
+              :class="['theme-btn', theme === 'system' ? 'active' : '']"
+              @click="emit('theme-change', 'system')"
+            >Авто</button>
             <button
               :class="['theme-btn', theme === 'light' ? 'active' : '']"
               @click="emit('theme-change', 'light')"

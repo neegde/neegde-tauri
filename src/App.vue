@@ -127,6 +127,15 @@ function allowPlayerAutoplay() {
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
 
+function getSystemTheme() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyEffectiveTheme(mode) {
+  const effective = mode === "system" ? getSystemTheme() : mode;
+  document.documentElement.setAttribute("data-theme", effective);
+}
+
 const restoringSession = ref(true);
 
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
@@ -137,7 +146,11 @@ onMounted(async () => {
   /* mousedown/mouseup: Wry на macOS шлёт только MouseEvent для кнопок 3/4; на mouseup без preventDefault — history.back/forward (см. wry synthetic_mouse_events). */
   window.addEventListener("mousedown", onMouseSideButtonDown, MOUSE_NAV_CAPTURE);
   window.addEventListener("mouseup", onMouseSideButtonUp, MOUSE_NAV_CAPTURE);
-  document.documentElement.setAttribute("data-theme", theme.value);
+  applyEffectiveTheme(theme.value);
+  const _sysMQ = window.matchMedia("(prefers-color-scheme: dark)");
+  _sysMQ.addEventListener("change", () => {
+    if (theme.value === "system") applyEffectiveTheme("system");
+  });
   const unblockTimer = window.setTimeout(() => {
     restoringSession.value = false;
   }, RESTORE_UI_MAX_MS);
@@ -170,7 +183,7 @@ onUnmounted(() => {
 function handleThemeChange(newTheme) {
   theme.value = newTheme;
   localStorage.setItem("theme", newTheme);
-  document.documentElement.setAttribute("data-theme", newTheme);
+  applyEffectiveTheme(newTheme);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
