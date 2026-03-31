@@ -956,14 +956,14 @@ onUnmounted(() => {
             @click="onPlayButtonClick"
           >
             <template v-if="isLoading || playing">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <rect x="5" y="4" width="4.5" height="16" rx="1"/>
-                <rect x="14.5" y="4" width="4.5" height="16" rx="1"/>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="4.5" y="4" width="5" height="16" rx="1.5"/>
+                <rect x="14.5" y="4" width="5" height="16" rx="1.5"/>
               </svg>
             </template>
             <template v-else>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <polygon points="5,3 19,12 5,21"/>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="7.5,3 21,12 7.5,21"/>
               </svg>
             </template>
           </button>
@@ -1084,8 +1084,8 @@ onUnmounted(() => {
             </svg>
           </button>
           <button class="ctrl-btn ctrl-btn-play" disabled>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <polygon points="5,3 19,12 5,21"/>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="7.5,3 21,12 7.5,21"/>
             </svg>
           </button>
           <button class="ctrl-btn" disabled>
@@ -1223,12 +1223,15 @@ onUnmounted(() => {
 .player-controls {
   flex-wrap: wrap;
   justify-content: center;
+  position: relative;
 }
 .prepare-hint {
-  position: relative;
+  position: absolute;
+  left: -36px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
-  margin-right: 4px;
 }
 .prepare-hint-trigger {
   display: flex;
@@ -1284,9 +1287,9 @@ onUnmounted(() => {
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--text);
-  background: var(--bg-elevated, rgba(32, 32, 38, 0.98));
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f0ece8;
+  background: rgba(22, 20, 18, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
   pointer-events: none;
   text-align: left;
