@@ -32,7 +32,7 @@ src/
     settings/EqualizerPanel.vue
     torrent/TorrentView.vue # Список файлов раздачи, лайки треков/альбомов/раздач
     likes/LikesView.vue
-    search/Results.vue, SearchBar.vue, AlbumCard.vue  # AlbumCard: liked prop + toggle-like
+    search/Results.vue, SearchBar.vue, AlbumCard.vue  # AlbumCard: format badge; Results фильтрует неиграбельные раздачи
     shared/CoverThumb.vue, CoverLightbox.vue, PlayingIndicator.vue
     shell/NavArrows.vue, MagnetLinkDialog.vue, DownloadProgressOverlay.vue
     debug/AppDebugConsole.vue
@@ -50,7 +50,8 @@ src/
     auth.js, search.js, config.js, sessionStatus.js, coverCache.js
   discordPresence.js        # syncDiscordPresence / clearDiscordPresence
   githubReleaseCheck.js
-  lib/utils.js              # trackDisplayBasename, extractTrackArtist, и др.
+  lib/utils.js              # trackDisplayBasename, extractTrackArtist, dominantFormatFromName, isLikelyPlayable, и др.
+  appDebugLog.js            # appDebugLog(category, message, detail), appDebugClickDetail
 src-tauri/src/
   lib.rs                    # Tauri builder, tray, managed state, команды
   rutracker/                # HTTP к Rutracker (логин, поиск, торрент-файл)
@@ -91,8 +92,8 @@ handleToggleLike(like) // toggle presence in likes dict
 
 ### Где лайкают раздачу (type === "torrent")
 
-- **`AlbumCard.vue`** — кнопка ♥ на обложке (hover), `liked` prop + `toggle-like` emit; `Results.vue` строит объект лайка через `makeTorrentLike(torrent)` и проксирует событие в `App.vue`
 - **`TorrentView.vue`** — кнопка ♥ в `.album-actions` (многоальбомный вид); функции `torrentLikeId(torrent)` и `makeTorrentLike(torrent, magnet)`
+- **`AlbumCard.vue`** — кнопки лайка **нет**; лайк раздачи доступен только из TorrentView
 
 ### LikesView — вкладки
 
@@ -101,6 +102,28 @@ handleToggleLike(like) // toggle presence in likes dict
 | Треки | `type === "track"` | список строк с `CoverThumb` |
 | Альбомы | `type === "album"` | сетка карточек с `CoverThumb` |
 | Раздачи | `type === "torrent"` | сетка карточек с обложкой Rutracker (`getCoverReactive`) |
+
+## Search Results Filtering
+
+`Results.vue` фильтрует массив `props.results` через `isLikelyPlayable(name, category)` перед рендерингом:
+- Скрывает раздачи с видео-форматами в названии (`x264`, `xvid`, `720p`, `hdtv`, …)
+- Скрывает SACD/DSD-раздачи (`sacd`, `sacd-r`, `dsd`, `dsf`, `dff`)
+- Скрывает раздачи из видео-категорий (`видео`, `клип`, `video`, `clip`)
+- Показывает счётчик `(скрыто N видео)` рядом с количеством результатов
+
+`AlbumCard.vue` показывает бейдж доминирующего аудиоформата (`dominantFormatFromName`) в левом нижнем углу обложки (FLAC, MP3, APE и т.д.).
+
+## Debug Logging (`appDebugLog`)
+
+`appDebugLog.js` — `appDebugLog(category, message, detail?)` пишет строку в дебаг-журнал через `invoke("app_debug_push")`. Все вызовы обёрнуты в `if (appDebugEnabled.value)`.
+
+Категории, используемые в `App.vue`:
+
+| Категория | Сообщения |
+|-----------|-----------|
+| `ui` | `click`, `view`, `visibility` |
+| `player` | `queuePos`, `nowPlaying` |
+| `search` | `query`, `results`, `error`, `open`, `files`, `openError`, `deselect`, `artistClick` |
 
 ## Theme System
 

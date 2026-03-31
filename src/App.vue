@@ -410,17 +410,21 @@ async function handleSearch(query) {
   if (cached) {
     results.value = cached;
     if (!results.value.length) error.value = "Ничего не найдено.";
+    if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: true, count: cached.length });
     return;
   }
 
+  if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: false });
   loading.value = true;
   results.value = [];
   try {
     results.value = await searchMusic(q);
     if (!results.value.length) error.value = "Ничего не найдено.";
     else _searchCacheSet(q.toLowerCase(), results.value);
+    if (appDebugEnabled.value) appDebugLog("search", "results", { q, count: results.value.length });
   } catch (e) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
+    if (appDebugEnabled.value) appDebugLog("search", "error", { q, err: String(e) });
   } finally {
     loading.value = false;
   }
@@ -591,8 +595,10 @@ async function handleSelect(torrent) {
     selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
     torrentFilesBeforeAlbumPreview.value = null;
     torrentSelectedBeforeAlbumPreview.value = null;
+    if (appDebugEnabled.value) appDebugLog("search", "deselect", { id: torrent.id, name: torrent.name });
     return;
   }
+  if (appDebugEnabled.value) appDebugLog("search", "open", { id: torrent.id, name: torrent.name, seeders: torrent.seeders });
   if (selected.value) {
     backStack.value.push(snapshotTorrentForBack());
   } else {
@@ -618,11 +624,13 @@ async function handleSelect(torrent) {
       idx:      i,
       origIdx:  i,
     }));
+    if (appDebugEnabled.value) appDebugLog("search", "files", { id: torrent.id, fileCount: files.value.length, hasMagnet: !!details.magnet });
     // Warm .torrent file cache while user browses the track list.
     // By the time they click play it'll already be resolved → streamUrl skips the fetch.
     void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
   } catch (e) {
     console.error("handleSelect:", e);
+    if (appDebugEnabled.value) appDebugLog("search", "openError", { id: torrent.id, err: String(e) });
     // Leave files empty — TorrentView shows "Аудиофайлы не найдены."
   } finally {
     loadingFiles.value = false;
@@ -867,6 +875,7 @@ function handleDownloadAlbum(albumFiles, albumName = "") {
 function handleSearchArtist(artist) {
   if (!artist?.trim()) return;
   searchQuery.value = artist.trim();
+  if (appDebugEnabled.value) appDebugLog("search", "artistClick", { artist: artist.trim() });
   void handleSearch(artist.trim());
 }
 
@@ -1314,9 +1323,7 @@ function onMouseSideButtonUp(e) {
             v-if="!selected && results.length > 0"
             :results="results"
             :selected-id="null"
-            :likes="likes"
             @select="handleSelect"
-            @toggle-like="handleToggleLike"
           />
 
           <TorrentView

@@ -174,6 +174,51 @@ export function isAudio(path) {
   return AUDIO_EXTS.has(ext);
 }
 
+const FORMAT_NAME_RE = /\b(flac|mp3|ape|wav|m4a|ogg|wv|aac|opus)\b/i;
+
+// Keywords in torrent names that indicate content the player cannot play:
+// video codecs/resolutions and lossless disc formats (SACD/DSD) whose files
+// (.dsf, .dff, .iso) are not in AUDIO_EXTS.
+const NON_PLAYABLE_RE =
+  /\b(xvid|divx|x264|x265|h\.?264|h\.?265|hevc|avc|720p|1080p|2160p|480p|4k|dvdrip|bdrip|hdrip|webrip|web-?dl|hdtv|sacd|sacd-r|dsd|dsf|dff)\b/i;
+
+// Category substrings that indicate video sections (e.g. "Музыкальное видео", "Клипы").
+const VIDEO_CATEGORY_RE = /\b(видео|клип|video|clip)\b/i;
+
+/**
+ * Returns false when a torrent is unlikely to contain playable audio files.
+ * Checks for video codec/resolution keywords in the name and video-section
+ * keywords in the category (e.g. "Музыкальное видео", "Клипы").
+ *
+ * Args:
+ *     name: Torrent display name.
+ *     category: Rutracker subforum category string (may be empty).
+ *
+ * Returns:
+ *     True if the torrent is probably audio, false if it looks like video.
+ */
+export function isLikelyPlayable(name, category) {
+  if (NON_PLAYABLE_RE.test(String(name ?? ""))) return false;
+  if (VIDEO_CATEGORY_RE.test(String(category ?? ""))) return false;
+  return true;
+}
+
+/**
+ * Extracts the dominant audio format from a torrent display name.
+ * RuTracker names typically embed format tags like "[FLAC]", "[MP3 320]", "(APE)", etc.
+ *
+ * Args:
+ *     name: Torrent display name string.
+ *
+ * Returns:
+ *     Uppercase format label (e.g. "FLAC", "MP3") or null if not detected.
+ */
+export function dominantFormatFromName(name) {
+  if (!name) return null;
+  const m = String(name).match(FORMAT_NAME_RE);
+  return m ? m[1].toUpperCase() : null;
+}
+
 /**
  * Extracts normalized human-readable audio format from a file path.
  *

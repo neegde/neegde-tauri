@@ -1,16 +1,17 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, prefetchTorrentDetails } from "../../rutracker/search.js";
+import { dominantFormatFromName } from "../../lib/utils.js";
 
 const props = defineProps({
   torrent: Object,
   selected: Boolean,
-  liked: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["select", "toggle-like"]);
+const emit = defineEmits(["select"]);
 
 const seeds = Number(props.torrent.seeders) || 0;
+const formatLabel = computed(() => dominantFormatFromName(props.torrent?.name));
 
 function seedsLabel(n) {
   return `${n} сид${n === 1 ? "" : n < 5 ? "а" : "ов"}`;
@@ -121,18 +122,7 @@ watch(
           <polygon points="5,3 19,12 5,21"/>
         </svg>
       </button>
-      <button
-        :class="['album-art-like', liked ? 'liked' : '']"
-        :title="liked ? 'Убрать из любимых' : 'В любимые'"
-        @click.stop="emit('toggle-like', torrent)"
-      >
-        <svg v-if="liked" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-        </svg>
-        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-        </svg>
-      </button>
+      <span v-if="formatLabel" class="album-format-badge">{{ formatLabel }}</span>
     </div>
     <div class="album-name">{{ torrent.name }}</div>
     <div class="album-meta">
