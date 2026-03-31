@@ -50,9 +50,11 @@ const props = defineProps({
   /** Hover-prefetch URL + ключ, переданные из App.vue (пользователь навёл на трек). */
   hoverPrefetchUrl: { type: String, default: "" },
   hoverPrefetchKey: { type: String, default: "" },
+  /** Словарь лайков из App.vue — для отображения состояния лайка текущего трека. */
+  likes: { type: Object, default: null },
 });
 
-const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed"]);
+const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed", "toggle-like"]);
 
 function loadSavedVolume() {
   try {
@@ -67,6 +69,35 @@ function loadSavedVolume() {
 }
 
 const hasTrack = computed(() => Boolean(props.track?.magnet));
+
+const currentLikeId = computed(() => {
+  const t = props.track;
+  if (!t?.torrentId || t.fileIdx == null) return null;
+  return `track:${t.source}:${t.torrentId}:${t.fileIdx}`;
+});
+
+const isCurrentTrackLiked = computed(() => {
+  const id = currentLikeId.value;
+  return id ? Boolean(props.likes?.[id]) : false;
+});
+
+function toggleCurrentLike() {
+  const t = props.track;
+  const id = currentLikeId.value;
+  if (!t || !id) return;
+  emit("toggle-like", {
+    id,
+    type: "track",
+    torrentId: t.torrentId,
+    torrentName: t.torrentName,
+    source: t.source,
+    magnet: t.magnet,
+    fileIdx: t.fileIdx,
+    fileName: t.fileName,
+    coverFileIdx: t.coverFileIdx ?? null,
+    coverFile: null,
+  });
+}
 
 const audioRef = ref(null);
 const volume = ref(loadSavedVolume());
@@ -874,6 +905,20 @@ onUnmounted(() => {
           <span class="player-name">{{ enrichedMeta?.title || trackDisplayBasename(track.fileName) }}</span>
           <span class="player-artist">{{ enrichedMeta?.artist || extractTrackArtist(track.torrentName, track.albumDirPath, track.artist, track.magnet) }}</span>
         </div>
+        <button
+          type="button"
+          :class="['player-like-btn', isCurrentTrackLiked ? 'player-like-btn--liked' : '']"
+          :title="isCurrentTrackLiked ? 'Убрать из любимых' : 'В любимые'"
+          :aria-label="isCurrentTrackLiked ? 'Убрать из любимых' : 'В любимые'"
+          @click="toggleCurrentLike"
+        >
+          <svg v-if="isCurrentTrackLiked" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+        </button>
       </div>
 
       <!-- Center: controls + progress -->
@@ -1254,5 +1299,40 @@ onUnmounted(() => {
   word-break: break-word;
   font-family: ui-sans-serif, system-ui, sans-serif;
   font-size: 11.5px;
+}
+
+.player-like-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, transform 0.12s;
+  line-height: 0;
+}
+.player-like-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.player-like-btn:active {
+  transform: scale(0.88);
+}
+.player-like-btn--liked {
+  color: var(--accent);
+}
+.player-like-btn--liked:hover {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+.player-like-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 </style>

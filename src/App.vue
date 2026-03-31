@@ -1244,12 +1244,14 @@ function onMouseSideButtonUp(e) {
       :has-next="queuePos < queue.length - 1"
       :hover-prefetch-url="hoverPrefetchUrl"
       :hover-prefetch-key="hoverPrefetchKey"
+      :likes="likes"
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
       @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
+      @toggle-like="handleToggleLike"
     />
 
     <DownloadProgressOverlay
