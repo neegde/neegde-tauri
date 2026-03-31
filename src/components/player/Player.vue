@@ -54,7 +54,33 @@ const props = defineProps({
   likes: { type: Object, default: null },
 });
 
-const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed", "toggle-like"]);
+const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed", "toggle-like", "search-artist", "open-torrent"]);
+
+const currentArtist = computed(() =>
+  enrichedMeta.value?.artist ||
+  extractTrackArtist(props.track?.torrentName, props.track?.albumDirPath, props.track?.artist, props.track?.magnet) ||
+  ""
+);
+
+function onArtistClick() {
+  const a = currentArtist.value;
+  if (a) emit("search-artist", a);
+}
+
+function onTrackClick() {
+  const t = props.track;
+  if (!t) return;
+  emit("open-torrent", {
+    torrentId: t.torrentId,
+    torrentName: t.torrentName,
+    source: t.source,
+    magnet: t.magnet,
+    artist: t.artist,
+    seeders: t.seeders ?? null,
+    fileIdx: t.fileIdx,
+    albumDirPath: t.albumDirPath ?? null,
+  });
+}
 
 function loadSavedVolume() {
   try {
@@ -902,8 +928,20 @@ onUnmounted(() => {
           fallback="♪"
         />
         <div class="player-track-info">
-          <span class="player-name">{{ enrichedMeta?.title || trackDisplayBasename(track.fileName) }}</span>
-          <span class="player-artist">{{ enrichedMeta?.artist || extractTrackArtist(track.torrentName, track.albumDirPath, track.artist, track.magnet) }}</span>
+          <button
+            type="button"
+            class="player-name player-name--link"
+            :title="`Открыть альбом`"
+            @click="onTrackClick"
+          >{{ enrichedMeta?.title || trackDisplayBasename(track.fileName) }}</button>
+          <button
+            v-if="currentArtist"
+            type="button"
+            class="player-artist player-artist--link"
+            :title="`Найти: ${currentArtist}`"
+            @click="onArtistClick"
+          >{{ currentArtist }}</button>
+          <span v-else class="player-artist" />
         </div>
         <button
           type="button"
@@ -1338,5 +1376,42 @@ onUnmounted(() => {
 .player-like-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.player-name--link {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  transition: color 0.12s;
+}
+.player-name--link:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.player-name--link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.player-artist--link {
+  all: unset;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.player-artist--link:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.player-artist--link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 </style>

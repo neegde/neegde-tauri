@@ -864,6 +864,114 @@ function handleDownloadAlbum(albumFiles, albumName = "") {
   );
 }
 
+function handleSearchArtist(artist) {
+  if (!artist?.trim()) return;
+  searchQuery.value = artist.trim();
+  void handleSearch(artist.trim());
+}
+
+/**
+ * Applies album-scoped view for the given track after full file list is loaded.
+ * Locates the album by fileIdx in detectAlbums result; falls back to albumDirPath match.
+ * No-op when only one album exists (full list is already the album) or no match found.
+ *
+ * Args:
+ *     fileIdx: origIdx of the playing track used to locate the containing album.
+ *     albumDirPath: optional hint from queue item for matching when fileIdx lookup fails.
+ */
+function _applyAlbumScopeForTrack(fileIdx, albumDirPath) {
+  const albs = detectAlbums(files.value);
+  if (albs.length <= 1) return;
+  let album = null;
+  if (fileIdx != null) {
+    album = albs.find((a) => a.audioFiles.some((f) => f.origIdx === fileIdx)) ?? null;
+  }
+  if (!album && albumDirPath) {
+    album = albs.find((a) => a.dirPath === albumDirPath) ?? null;
+  }
+  if (!album?.audioFiles?.length) return;
+  torrentFilesBeforeAlbumPreview.value = files.value;
+  torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
+  files.value = album.coverFile
+    ? [...album.audioFiles, album.coverFile]
+    : [...album.audioFiles];
+  const dirName = album.dirPath.split("/").filter(Boolean).pop() || "";
+  const base = torrentSelectedBeforeAlbumPreview.value;
+  const m = base?.name?.match(/^(.+?)\s+[-–—]\s+/);
+  selected.value = {
+    ...base,
+    name: dirName || base?.name || "",
+    fromLikes: true,
+    artist: m ? m[1].trim() : (base?.artist ?? ""),
+  };
+}
+
+function handleOpenTorrentFromPlayer(track) {
+  if (!track?.torrentId && !track?.magnet) return;
+  if (selected.value?.id === track.torrentId) {
+    view.value = "search";
+    if (!torrentFilesBeforeAlbumPreview.value) {
+      _applyAlbumScopeForTrack(track.fileIdx, track.albumDirPath ?? null);
+    }
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+    return;
+  }
+  forwardStack.value = [];
+  if (selected.value) {
+    backStack.value.push(snapshotTorrentForBack());
+  } else {
+    backStack.value.push(snapshotSearchForBack());
+  }
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
+  view.value = "search";
+  returnView.value = "search";
+  selected.value = {
+    id: track.torrentId,
+    name: track.torrentName,
+    source: track.source,
+    seeders: track.seeders ?? "?",
+    size: 0,
+    category: "—",
+    added: "—",
+    artist: track.artist ?? "",
+  };
+  torrentCover.value = null;
+  torrentMagnet.value = track.magnet ?? "";
+  files.value = [];
+  loadingFiles.value = true;
+  const fetching = track.source === "magnet"
+    ? magnetListFiles(track.magnet).then((rawFiles) => {
+        torrentMagnet.value = track.magnet;
+        files.value = rawFiles.map((f, i) => ({
+          name: f.path[f.path.length - 1] ?? "",
+          path: f.path.join("/"),
+          size: f.size,
+          idx: i,
+          origIdx: i,
+        }));
+        _applyAlbumScopeForTrack(track.fileIdx, track.albumDirPath);
+      })
+    : getTorrentDetails(track.torrentId).then((details) => {
+        torrentMagnet.value = details.magnet ?? track.magnet ?? "";
+        torrentCover.value = details.cover_data_url ?? null;
+        if (details.artist) selected.value = { ...selected.value, artist: details.artist };
+        files.value = details.files.map((f, i) => ({
+          name: f.path[f.path.length - 1] ?? "",
+          path: f.path.join("/"),
+          size: f.size,
+          idx: i,
+          origIdx: i,
+        }));
+        void torrentFileB64ForTrack({ source: track.source, torrentId: track.torrentId });
+        _applyAlbumScopeForTrack(track.fileIdx, track.albumDirPath);
+      });
+  void fetching.finally(() => {
+    loadingFiles.value = false;
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+  });
+}
+
 function handleNext() {
   allowPlayerAutoplay();
   if (queuePos.value < queue.value.length - 1) queuePos.value++;
@@ -1252,6 +1360,8 @@ function onMouseSideButtonUp(e) {
       @playing-change="playerPlaying = $event"
       @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
       @toggle-like="handleToggleLike"
+      @search-artist="handleSearchArtist"
+      @open-torrent="handleOpenTorrentFromPlayer"
     />
 
     <DownloadProgressOverlay

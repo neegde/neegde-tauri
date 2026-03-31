@@ -1,0 +1,160 @@
+---
+description: Общие знания о проекте neegde-tauri — стек, архитектура, конвенции
+alwaysApply: true
+---
+
+# neegde-tauri — Project Knowledge
+
+## Stack
+
+- **Frontend**: Vue 3 (Composition API, `<script setup>`), plain JavaScript (no TypeScript), Vite 6
+- **Desktop shell**: Tauri 2 (Rust backend — `src-tauri/`)
+- **Audio**: Web Audio API (equalizer graph), BitTorrent streaming via librqbit (Rust), MediaSession API
+- **No router**: hash `#/app-debug` в `main.js` только для debug-окна
+- **No state manager**: весь state — `ref`/`shallowRef`/`computed` в `App.vue`
+
+## Directory Structure
+
+```
+src/
+  App.vue                   # Root: весь глобальный state, все обработчики
+  main.js                   # createApp, монтирует App или AppDebugWindow
+  style.css                 # Единый глобальный CSS
+  audio/
+    equalizerConfig.js      # EQ_BANDS, EQ_PRESETS, константы
+    equalizerGraph.js       # Web Audio граф (ensureEqualizer, destroyEqualizer)
+    equalizerState.js       # Реактивные ref'ы полос, applyEqPreset, setEqBand
+    mediaSession.js         # OS media keys + метаданные
+    metadataEnrich.js       # Обогащение метаданных через iTunes
+  components/
+    player/Player.vue       # <audio> + controls + EQ wiring + Discord presence
+    settings/SettingsView.vue
+    settings/EqualizerPanel.vue
+    torrent/TorrentView.vue # Список файлов раздачи, лайки треков/альбомов
+    likes/LikesView.vue
+    search/Results.vue, SearchBar.vue, AlbumCard.vue
+    shared/CoverThumb.vue, CoverLightbox.vue, PlayingIndicator.vue
+    shell/NavArrows.vue, MagnetLinkDialog.vue, DownloadProgressOverlay.vue
+    debug/AppDebugConsole.vue
+    unused/                 # Не используется — не трогать
+  library/
+    libraryStorage.js       # loadLikes() / saveLikes() → localStorage
+    likesCover.js           # trackCoverFileIdxForLike()
+  player/
+    playerSessionStorage.js # Персист очереди и позиции между запусками
+  torrent/
+    api.js                  # invoke-обёртки: streamUrl, prefetchNextInQueue
+    torrentSession.js       # releaseTorrentStreamUrl, torrentPrepareCancel
+    torrentExport.js        # Экспорт файлов на диск
+  rutracker/
+    auth.js, search.js, config.js, sessionStatus.js, coverCache.js
+  discordPresence.js        # syncDiscordPresence / clearDiscordPresence
+  githubReleaseCheck.js
+  lib/utils.js              # trackDisplayBasename, extractTrackArtist, и др.
+src-tauri/src/
+  lib.rs                    # Tauri builder, tray, managed state, команды
+  rutracker/                # HTTP к Rutracker (логин, поиск, торрент-файл)
+  torrent_stream/           # librqbit streaming, HTTP /stream/..., экспорт
+  cover_art.rs              # MusicBrainz / Cover Art Archive
+  discord_presence.rs
+```
+
+## State Architecture
+
+- **Centralized in `App.vue`**: search, results, selected torrent, files, queue (`queue` + `queuePos`), likes, theme, auth, navigation stacks
+- **Props down, events up**: без provide/inject, без Pinia
+- **`shallowRef`** для больших массивов (queue, results, files) — избегать глубокой реактивности
+- **`KeepAlive`** на LikesView и SettingsView
+
+## Likes System
+
+```js
+// ID формат:
+`track:${source}:${torrentId}:${fileIdx}`   // трек
+`album:${source}:${torrentId}:${dirPath}`   // альбом
+
+// Объект лайка трека:
+{ id, type: "track", torrentId, torrentName, source, magnet,
+  fileIdx, fileName, coverFileIdx, coverFile }
+
+// Управление в App.vue:
+handleToggleLike(like) // toggle presence in likes dict
+```
+
+## Theme System
+
+- CSS-переменные на `:root` (тёмная) и `[data-theme="light"]` (светлая)
+- `App.vue`: `theme` ref — `"dark" | "light" | "system"`
+- `applyEffectiveTheme(mode)` → `document.documentElement.setAttribute("data-theme", effective)`
+- `system` следит за `window.matchMedia("(prefers-color-scheme: dark)")`
+
+### Ключевые CSS-переменные
+
+| Var | Назначение |
+|-----|-----------|
+| `--bg` | Фон приложения |
+| `--sidebar-bg` | Фон сайдбара |
+| `--surface` | Карточки, панели |
+| `--surface-h` | Hover-состояние surface |
+| `--border` | Границы |
+| `--accent` | Акцентный цвет (оранжевый `#fc741d`) |
+| `--accent-h` | Hover акцента |
+| `--text` | Основной текст |
+| `--muted` | Вторичный текст |
+| `--muted2` | Третичный текст |
+| `--player-h` | Высота плеера |
+| `--sidebar-w` | Ширина сайдбара |
+| `--vol` | Inline на `<input>` слайдера громкости (в %) |
+
+## Player Architecture
+
+- **`Player.vue`** принимает: `track`, `nextTrack`, `secondNextTrack`, `likes`, `hasPrev/hasNext`, `suppressAutoplay`, hover-prefetch URL/key
+- **Эмитит**: `prev`, `next`, `ended`, `playing-change`, `request-stream`, `hover-prefetch-consumed`, `toggle-like`, `search-artist`, `open-torrent`
+- Поток: `idle → preparing → buffering → ready | error`
+- Prefetch: автоматический prefetch следующего трека после ~30 с или ~22% длительности
+
+### Интерактивные элементы плеера
+
+- **Название трека** (`.player-name--link`) — клик эмитит `open-torrent` → `App.vue` открывает альбом трека через `handleOpenTorrentFromPlayer`
+- **Имя артиста** (`.player-artist--link`) — клик эмитит `search-artist` → `App.vue` запускает поиск через `handleSearchArtist`
+
+### Навигация к альбому из плеера (`App.vue`)
+
+```js
+// handleOpenTorrentFromPlayer(track) — вызывается по @open-torrent от Player
+// 1. Если раздача уже открыта (selected.id === track.torrentId) — применяет скоп альбома на месте
+// 2. Иначе — загружает раздачу (getTorrentDetails / magnetListFiles), затем сужает до альбома
+
+// _applyAlbumScopeForTrack(fileIdx, albumDirPath) — внутренний хелпер
+// Ищет альбом по fileIdx в detectAlbums(files.value), fallback по albumDirPath
+// No-op если в раздаче только один альбом (albs.length <= 1)
+// Заполняет torrentFilesBeforeAlbumPreview — кнопка «Назад» возвращает к полной раздаче
+```
+
+### Queue item (объект в `queue[]`)
+
+```js
+{
+  magnet, fileIdx, fileName,
+  torrentName, torrentId, source,
+  artist,        // из torrent.artist
+  coverFileIdx,  // origIdx обложки
+  albumDirPath,  // dirPath из detectAlbums (null для корневых файлов)
+  seeders,
+}
+```
+
+## Code Conventions
+
+- **Язык**: строки UI — русский, идентификаторы — английский
+- **No try-catch блоков** — запрещено правилами проекта
+- **Docstrings**: Google-style, только на английском, только для функций (не для файлов)
+- **Комментарии**: только неочевидный intent, без пересказа кода
+- **Стили**: scoped CSS в компонентах + глобальный `style.css`; не создавать отдельные CSS-файлы
+
+## Tauri / Build
+
+- `invoke("command_name", { args })` для вызова Rust команд
+- Vite `define` инжектирует `__APP_VERSION__`, `__TELEGRAM_CHANNEL_URL__`, GitHub URLs
+- `tauri dev` убивает порт 5173 перед запуском (`beforeDevCommand`)
+- Capabilities: `core:default`, event listen, create webview window, dialog, opener
