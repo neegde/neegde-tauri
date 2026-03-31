@@ -44,16 +44,15 @@ defineEmits(["back", "forward"]);
   height: 44px;
 }
 
-/* Верхняя полоса сайдбара: светлее кружки на чёрном фоне */
 .nav-arrows.sidebar-nav-arrows {
   height: auto;
   min-height: 32px;
 }
 .nav-arrows.sidebar-nav-arrows .nav-arrow-btn {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--nav-btn-sidebar-bg, rgba(255, 255, 255, 0.1));
 }
 .nav-arrows.sidebar-nav-arrows .nav-arrow-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--nav-btn-sidebar-bg-hover, rgba(255, 255, 255, 0.18));
 }
 
 .nav-arrow-btn {
@@ -66,13 +65,13 @@ defineEmits(["back", "forward"]);
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.55);
+  color: var(--nav-btn-color, #fff);
+  background: var(--nav-btn-bg, rgba(0, 0, 0, 0.55));
   transition: background 0.15s, transform 0.1s, opacity 0.15s;
   flex-shrink: 0;
 }
 .nav-arrow-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--nav-btn-bg-hover, rgba(0, 0, 0, 0.75));
   transform: scale(1.06);
 }
 .nav-arrow-btn:active:not(:disabled) {
@@ -81,19 +80,5 @@ defineEmits(["back", "forward"]);
 .nav-arrow-btn:disabled {
   opacity: 0.28;
   cursor: default;
-}
-
-:global([data-theme="light"]) .nav-arrow-btn {
-  color: #121212;
-  background: rgba(0, 0, 0, 0.07);
-}
-:global([data-theme="light"]) .nav-arrow-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.12);
-}
-:global([data-theme="light"]) .nav-arrows.sidebar-nav-arrows .nav-arrow-btn {
-  background: rgba(0, 0, 0, 0.07);
-}
-:global([data-theme="light"]) .nav-arrows.sidebar-nav-arrows .nav-arrow-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.12);
 }
 </style>
