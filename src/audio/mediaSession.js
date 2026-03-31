@@ -1,6 +1,6 @@
 import { peekTorrentImage, getTorrentImageDataUrl } from "../torrent/torrentImageCache.js";
 import { peekRutrackerCover, getRutrackerCoverDataUrl } from "../rutracker/search.js";
-import { trackDisplayBasename } from "../lib/utils.js";
+import { trackDisplayBasename, extractTrackArtist } from "../lib/utils.js";
 
 /** Обновляется из плеера — обработчики всегда вызывают актуальные действия. */
 let api = {
@@ -147,31 +147,38 @@ async function resolveCoverDataUrl(track) {
 
 /**
  * Метаданные для системного «Сейчас играет» (обложка подгружается при необходимости).
+ *
+ * @param {object} track
+ * @param {object|null} enriched - optional enriched metadata from iTunes:
+ *   { artist, album, title, coverUrl }
  */
-export async function syncMediaSessionMetadata(track) {
+export async function syncMediaSessionMetadata(track, enriched = null) {
   if (typeof navigator === "undefined" || !navigator.mediaSession) return;
   if (!track?.magnet) {
     navigator.mediaSession.metadata = null;
     return;
   }
   const keyAtStart = trackKey(track);
-  const title = trackDisplayBasename(track.fileName) || "Трек";
-  const artist = track.torrentName || "";
+  const title = enriched?.title || trackDisplayBasename(track.fileName) || "Трек";
+  const artist = enriched?.artist || extractTrackArtist(track.torrentName, track.albumDirPath, track.artist, track.magnet);
+  const album = enriched?.album || artist;
   navigator.mediaSession.metadata = new MediaMetadata({
     title,
     artist,
-    album: artist,
+    album,
     artwork: [],
   });
   reaffirmTrackSkipHandlers();
-  const art = await resolveCoverDataUrl(track);
+  // Prefer iTunes cover URL (direct HTTPS, no Rust round-trip), fall back to torrent/rutracker cover
+  let art = enriched?.coverUrl ?? null;
+  if (!art) art = await resolveCoverDataUrl(track);
   if (trackKey(track) !== keyAtStart) return;
   if (!art) return;
   try {
     navigator.mediaSession.metadata = new MediaMetadata({
       title,
       artist,
-      album: artist,
+      album,
       artwork: [{ src: art }],
     });
   } catch {

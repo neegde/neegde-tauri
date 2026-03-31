@@ -72,8 +72,6 @@ watch(displaySrc, () => {
 async function loadCover() {
   const gen = loadGen;
   torrentCover.value = null;
-  imgLoaded.value     = false;
-  imgFailed.value     = false;
 
   const f = props.coverFile;
 
@@ -103,7 +101,6 @@ function scheduleCoverLoad() {
   disconnectObserver();
   loadGen += 1;
   torrentCover.value = null;
-  imgLoaded.value = false;
   imgFailed.value = false;
   fetching.value = false;
 

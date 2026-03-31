@@ -1,6 +1,6 @@
-pub mod export;
 pub mod debug_api;
 mod debug_log;
+pub mod export;
 mod http;
 mod state;
 mod stream_cache;
@@ -32,9 +32,9 @@ pub(super) const PREBUFFER_MAX_WALL_SECS: u64 = 20;
 pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 pub(super) const COPY_CHUNK_BYTES: usize = 256 * 1024;
 
-pub use state::TorrentStreamState;
 use base64::Engine;
 use serde_json::json;
+pub use state::TorrentStreamState;
 use types::{PrefetchNextResponse, StreamReady};
 
 #[tauri::command]

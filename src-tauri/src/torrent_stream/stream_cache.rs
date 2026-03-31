@@ -30,10 +30,7 @@ struct StreamCacheState {
 
 impl StreamCache {
     /// Builds bookkeeping with shared user-tunable limits.
-    pub fn new(
-        user_settings: Arc<RwLock<UserCacheSettings>>,
-        debug_log: Arc<AppDebugLog>,
-    ) -> Self {
+    pub fn new(user_settings: Arc<RwLock<UserCacheSettings>>, debug_log: Arc<AppDebugLog>) -> Self {
         Self {
             last_access: DashMap::new(),
             ref_count: DashMap::new(),
@@ -142,7 +139,13 @@ impl StreamCache {
             let over_budget = size > max_bytes;
             let victim = {
                 let g = self.inner.lock().await;
-                g.pick_victim(session, over_budget, ttl, &self.last_access, &self.ref_count)
+                g.pick_victim(
+                    session,
+                    over_budget,
+                    ttl,
+                    &self.last_access,
+                    &self.ref_count,
+                )
             };
             let Some(hash) = victim else {
                 break;

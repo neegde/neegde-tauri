@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { reactive } from "vue";
 import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 
 /** @type {Map<string, Promise<string | null>>} */
 const pending = new Map();
-/** @type {Map<string, string>} — только успешные data URL */
-const cache = new Map();
+/** @type {Map<string, string>} — только успешные data URL; reactive so Vue computed auto-updates */
+const cache = reactive(new Map());
 const TORRENT_IMAGE_CACHE_MAX = 200;
 
 function cacheKey(magnet, fileIdx) {

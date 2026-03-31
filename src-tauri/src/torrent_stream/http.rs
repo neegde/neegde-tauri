@@ -43,12 +43,9 @@ impl TorrentStreamInner {
             };
             let dbg = &self.debug_log;
             if !req.path.starts_with("/stream/") {
-                dbg.push(
-                    "http",
-                    format!("404 not /stream: {}", req.path),
-                    None,
-                );
-                write_response_head(&mut socket, 404, "text/plain", 0, None, req.keep_alive).await?;
+                dbg.push("http", format!("404 not /stream: {}", req.path), None);
+                write_response_head(&mut socket, 404, "text/plain", 0, None, req.keep_alive)
+                    .await?;
                 if !req.keep_alive {
                     break;
                 }
@@ -57,7 +54,8 @@ impl TorrentStreamInner {
             let token = req.path.trim_start_matches("/stream/").to_string();
             if token.is_empty() {
                 dbg.push("http", "404 empty token", None);
-                write_response_head(&mut socket, 404, "text/plain", 0, None, req.keep_alive).await?;
+                write_response_head(&mut socket, 404, "text/plain", 0, None, req.keep_alive)
+                    .await?;
                 if !req.keep_alive {
                     break;
                 }
@@ -70,7 +68,8 @@ impl TorrentStreamInner {
                     format!("404 unknown token {}", &token[..token.len().min(24)]),
                     None,
                 );
-                write_response_head(&mut socket, 404, "text/plain", 0, None, req.keep_alive).await?;
+                write_response_head(&mut socket, 404, "text/plain", 0, None, req.keep_alive)
+                    .await?;
                 if !req.keep_alive {
                     break;
                 }
@@ -85,7 +84,14 @@ impl TorrentStreamInner {
                     "totalLen": stream_entry.total_len,
                 })),
             );
-            serve_stream(&mut socket, &stream_entry, req.range, req.keep_alive, Some(dbg)).await?;
+            serve_stream(
+                &mut socket,
+                &stream_entry,
+                req.range,
+                req.keep_alive,
+                Some(dbg),
+            )
+            .await?;
             if !req.keep_alive {
                 break;
             }
@@ -178,8 +184,7 @@ async fn write_response_head(
          Access-Control-Allow-Origin: *\r\n\
          Access-Control-Allow-Headers: Range\r\n\
          Content-Type: {content_type}\r\n\
-         Content-Length: {content_len}\r\n"
-        ,
+         Content-Length: {content_len}\r\n",
         if keep_alive { "keep-alive" } else { "close" }
     );
     if let Some(range) = content_range {
@@ -241,7 +246,15 @@ async fn serve_stream(
     } else {
         None
     };
-    write_response_head(socket, status, &prepared.mime, content_len, content_range, keep_alive).await?;
+    write_response_head(
+        socket,
+        status,
+        &prepared.mime,
+        content_len,
+        content_range,
+        keep_alive,
+    )
+    .await?;
 
     let pre_len = prepared.prebuffer.len() as u64;
     let content_len_start = content_len;

@@ -26,6 +26,7 @@ import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
+import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -127,6 +128,15 @@ function allowPlayerAutoplay() {
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const theme = ref(localStorage.getItem("theme") || "dark");
 
+function getSystemTheme() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyEffectiveTheme(mode) {
+  const effective = mode === "system" ? getSystemTheme() : mode;
+  document.documentElement.setAttribute("data-theme", effective);
+}
+
 const restoringSession = ref(true);
 
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
@@ -134,7 +144,14 @@ const RESTORE_UI_MAX_MS = 5_000;
 
 onMounted(async () => {
   window.addEventListener("beforeunload", flushPlayerSessionToStorage);
-  document.documentElement.setAttribute("data-theme", theme.value);
+  /* mousedown/mouseup: Wry на macOS шлёт только MouseEvent для кнопок 3/4; на mouseup без preventDefault — history.back/forward (см. wry synthetic_mouse_events). */
+  window.addEventListener("mousedown", onMouseSideButtonDown, MOUSE_NAV_CAPTURE);
+  window.addEventListener("mouseup", onMouseSideButtonUp, MOUSE_NAV_CAPTURE);
+  applyEffectiveTheme(theme.value);
+  const _sysMQ = window.matchMedia("(prefers-color-scheme: dark)");
+  _sysMQ.addEventListener("change", () => {
+    if (theme.value === "system") applyEffectiveTheme("system");
+  });
   const unblockTimer = window.setTimeout(() => {
     restoringSession.value = false;
   }, RESTORE_UI_MAX_MS);
@@ -151,10 +168,17 @@ onMounted(async () => {
   setupAppDebugInstrumentation();
   window.clearTimeout(unblockTimer);
   restoringSession.value = false;
+
+  // Deep link: app already running (neegde://torrent/...)
+  onOpenUrl((urls) => { if (urls?.[0]) void handleDeepLink(urls[0]); });
+  // Deep link: cold start — URL passed at launch
+  getCurrent().then((urls) => { if (urls?.[0]) void handleDeepLink(urls[0]); }).catch(() => {});
 });
 
 onUnmounted(() => {
   window.removeEventListener("beforeunload", flushPlayerSessionToStorage);
+  window.removeEventListener("mousedown", onMouseSideButtonDown, MOUSE_NAV_CAPTURE);
+  window.removeEventListener("mouseup", onMouseSideButtonUp, MOUSE_NAV_CAPTURE);
   appDebugUnlistenClick?.();
   if (appDebugVisibilityHandler) {
     document.removeEventListener("visibilitychange", appDebugVisibilityHandler);
@@ -165,7 +189,7 @@ onUnmounted(() => {
 function handleThemeChange(newTheme) {
   theme.value = newTheme;
   localStorage.setItem("theme", newTheme);
-  document.documentElement.setAttribute("data-theme", newTheme);
+  applyEffectiveTheme(newTheme);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -252,7 +276,7 @@ const loadingFiles  = ref(false);
 const torrentFilesBeforeAlbumPreview = ref(null);
 const torrentSelectedBeforeAlbumPreview = ref(null);
 
-/** Стек для кнопки «вперёд» (как в Spotify): снимки экранов при «назад». */
+/** Стек для кнопки «вперёд»: снимки экранов при «назад». */
 const forwardStack = ref([]);
 /** История «назад» по поиску: результаты → раздача A → раздача B → … */
 const backStack = ref([]);
@@ -392,17 +416,21 @@ async function handleSearch(query) {
   if (cached) {
     results.value = cached;
     if (!results.value.length) error.value = "Ничего не найдено.";
+    if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: true, count: cached.length });
     return;
   }
 
+  if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: false });
   loading.value = true;
   results.value = [];
   try {
     results.value = await searchMusic(q);
     if (!results.value.length) error.value = "Ничего не найдено.";
     else _searchCacheSet(q.toLowerCase(), results.value);
+    if (appDebugEnabled.value) appDebugLog("search", "results", { q, count: results.value.length });
   } catch (e) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
+    if (appDebugEnabled.value) appDebugLog("search", "error", { q, err: String(e) });
   } finally {
     loading.value = false;
   }
@@ -573,8 +601,10 @@ async function handleSelect(torrent) {
     selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
     torrentFilesBeforeAlbumPreview.value = null;
     torrentSelectedBeforeAlbumPreview.value = null;
+    if (appDebugEnabled.value) appDebugLog("search", "deselect", { id: torrent.id, name: torrent.name });
     return;
   }
+  if (appDebugEnabled.value) appDebugLog("search", "open", { id: torrent.id, name: torrent.name, seeders: torrent.seeders });
   if (selected.value) {
     backStack.value.push(snapshotTorrentForBack());
   } else {
@@ -592,6 +622,7 @@ async function handleSelect(torrent) {
     const details = await getTorrentDetails(torrent.id);
     torrentMagnet.value = details.magnet ?? "";
     torrentCover.value  = details.cover_data_url ?? null;
+    if (details.artist) selected.value = { ...selected.value, artist: details.artist };
     files.value = details.files.map((f, i) => ({
       name:     f.path[f.path.length - 1] ?? "",
       path:     f.path.join("/"),
@@ -599,11 +630,13 @@ async function handleSelect(torrent) {
       idx:      i,
       origIdx:  i,
     }));
+    if (appDebugEnabled.value) appDebugLog("search", "files", { id: torrent.id, fileCount: files.value.length, hasMagnet: !!details.magnet });
     // Warm .torrent file cache while user browses the track list.
     // By the time they click play it'll already be resolved → streamUrl skips the fetch.
     void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
   } catch (e) {
     console.error("handleSelect:", e);
+    if (appDebugEnabled.value) appDebugLog("search", "openError", { id: torrent.id, err: String(e) });
     // Leave files empty — TorrentView shows "Аудиофайлы не найдены."
   } finally {
     loadingFiles.value = false;
@@ -612,11 +645,13 @@ async function handleSelect(torrent) {
 
 function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
   let coverFileIdx = explicitCoverFileIdx ?? null;
-  if (coverFileIdx == null && fileList?.length) {
+  let albumDirPath = null;
+  if (fileList?.length) {
     const albs = detectAlbums(fileList);
     for (const a of albs) {
       if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
-        coverFileIdx = a.coverFile?.origIdx ?? null;
+        if (coverFileIdx == null) coverFileIdx = a.coverFile?.origIdx ?? null;
+        albumDirPath = a.dirPath || null;
         break;
       }
     }
@@ -628,12 +663,14 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
       : null;
   return {
     magnet,
-    fileIdx:     f.origIdx,
-    fileName:    trackDisplayBasename(f.path),
-    torrentName: torrent?.name    ?? "",
-    torrentId:   torrent?.id      ?? "",
-    source:      torrent?.source  ?? "rutracker",
+    fileIdx:      f.origIdx,
+    fileName:     trackDisplayBasename(f.path),
+    torrentName:  torrent?.name   ?? "",
+    torrentId:    torrent?.id     ?? "",
+    source:       torrent?.source ?? "rutracker",
+    artist:       torrent?.artist ?? null,
     coverFileIdx,
+    albumDirPath,
     seeders,
   };
 }
@@ -841,6 +878,162 @@ function handleDownloadAlbum(albumFiles, albumName = "") {
   );
 }
 
+function handleSearchArtist(artist) {
+  if (!artist?.trim()) return;
+  searchQuery.value = artist.trim();
+  if (appDebugEnabled.value) appDebugLog("search", "artistClick", { artist: artist.trim() });
+  void handleSearch(artist.trim());
+}
+
+/**
+ * Applies album-scoped view for the given track after full file list is loaded.
+ * Locates the album by fileIdx in detectAlbums result; falls back to albumDirPath match.
+ * No-op when only one album exists (full list is already the album) or no match found.
+ *
+ * Args:
+ *     fileIdx: origIdx of the playing track used to locate the containing album.
+ *     albumDirPath: optional hint from queue item for matching when fileIdx lookup fails.
+ */
+function _applyAlbumScopeForTrack(fileIdx, albumDirPath) {
+  const albs = detectAlbums(files.value);
+  if (albs.length <= 1) return;
+  let album = null;
+  if (fileIdx != null) {
+    album = albs.find((a) => a.audioFiles.some((f) => f.origIdx === fileIdx)) ?? null;
+  }
+  if (!album && albumDirPath) {
+    album = albs.find((a) => a.dirPath === albumDirPath) ?? null;
+  }
+  if (!album?.audioFiles?.length) return;
+  torrentFilesBeforeAlbumPreview.value = files.value;
+  torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
+  files.value = album.coverFile
+    ? [...album.audioFiles, album.coverFile]
+    : [...album.audioFiles];
+  const dirName = album.dirPath.split("/").filter(Boolean).pop() || "";
+  const base = torrentSelectedBeforeAlbumPreview.value;
+  const m = base?.name?.match(/^(.+?)\s+[-–—]\s+/);
+  selected.value = {
+    ...base,
+    name: dirName || base?.name || "",
+    fromLikes: true,
+    artist: m ? m[1].trim() : (base?.artist ?? ""),
+  };
+}
+
+function handleOpenTorrentFromPlayer(track) {
+  if (!track?.torrentId && !track?.magnet) return;
+  if (selected.value?.id === track.torrentId) {
+    view.value = "search";
+    if (!torrentFilesBeforeAlbumPreview.value) {
+      _applyAlbumScopeForTrack(track.fileIdx, track.albumDirPath ?? null);
+    }
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+    return;
+  }
+  forwardStack.value = [];
+  if (selected.value) {
+    backStack.value.push(snapshotTorrentForBack());
+  } else {
+    backStack.value.push(snapshotSearchForBack());
+  }
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
+  view.value = "search";
+  returnView.value = "search";
+  selected.value = {
+    id: track.torrentId,
+    name: track.torrentName,
+    source: track.source,
+    seeders: track.seeders ?? "?",
+    size: 0,
+    category: "—",
+    added: "—",
+    artist: track.artist ?? "",
+  };
+  torrentCover.value = null;
+  torrentMagnet.value = track.magnet ?? "";
+  files.value = [];
+  loadingFiles.value = true;
+  const fetching = track.source === "magnet"
+    ? magnetListFiles(track.magnet).then((rawFiles) => {
+        torrentMagnet.value = track.magnet;
+        files.value = rawFiles.map((f, i) => ({
+          name: f.path[f.path.length - 1] ?? "",
+          path: f.path.join("/"),
+          size: f.size,
+          idx: i,
+          origIdx: i,
+        }));
+        _applyAlbumScopeForTrack(track.fileIdx, track.albumDirPath);
+      })
+    : getTorrentDetails(track.torrentId).then((details) => {
+        torrentMagnet.value = details.magnet ?? track.magnet ?? "";
+        torrentCover.value = details.cover_data_url ?? null;
+        if (details.artist) selected.value = { ...selected.value, artist: details.artist };
+        files.value = details.files.map((f, i) => ({
+          name: f.path[f.path.length - 1] ?? "",
+          path: f.path.join("/"),
+          size: f.size,
+          idx: i,
+          origIdx: i,
+        }));
+        void torrentFileB64ForTrack({ source: track.source, torrentId: track.torrentId });
+        _applyAlbumScopeForTrack(track.fileIdx, track.albumDirPath);
+      });
+  void fetching.finally(() => {
+    loadingFiles.value = false;
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+  });
+}
+
+/**
+ * Open a torrent by source and ID from a neegde:// deep link.
+ * Navigates to search view, loads files from Rutracker.
+ * @param {string} source - e.g. "rutracker"
+ * @param {string} torrentId
+ */
+async function openTorrentByDeepLink(source, torrentId) {
+  forwardStack.value = [];
+  backStack.value = [];
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
+  view.value = "search";
+  returnView.value = "search";
+  selected.value = { id: torrentId, name: "", source, seeders: "?", size: 0, category: "—", added: "—" };
+  files.value = [];
+  torrentCover.value = null;
+  torrentMagnet.value = "";
+  loadingFiles.value = true;
+  const details = await getTorrentDetails(torrentId);
+  torrentMagnet.value = details.magnet ?? "";
+  torrentCover.value = details.cover_data_url ?? null;
+  if (details.artist) selected.value = { ...selected.value, artist: details.artist };
+  files.value = details.files.map((f, i) => ({
+    name: f.path[f.path.length - 1] ?? "",
+    path: f.path.join("/"),
+    size: f.size,
+    idx: i,
+    origIdx: i,
+  }));
+  void torrentFileB64ForTrack({ source, torrentId });
+  loadingFiles.value = false;
+}
+
+/**
+ * Handle a neegde:// URL dispatched by the OS (deep link).
+ * Supports: neegde://torrent/{source}/{torrentId}
+ * @param {string} urlStr
+ */
+async function handleDeepLink(urlStr) {
+  const url = new URL(urlStr);
+  if (url.host === "torrent") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const [source, torrentId] = parts;
+    if (source && torrentId) void openTorrentByDeepLink(source, torrentId);
+  }
+}
+
 function handleNext() {
   allowPlayerAutoplay();
   if (queuePos.value < queue.value.length - 1) queuePos.value++;
@@ -972,6 +1165,47 @@ function handleForwardNav() {
 function handleNavBack() {
   handleBack();
 }
+
+const MOUSE_NAV_CAPTURE = { capture: true, passive: false };
+
+function isMouseBackButton(e) {
+  const b = e.button;
+  if (b === 3 || b === 8) return true;
+  return (e.buttons & 8) === 8;
+}
+
+function isMouseForwardButton(e) {
+  const b = e.button;
+  if (b === 4 || b === 9) return true;
+  return (e.buttons & 16) === 16;
+}
+
+/** На mouseup после отпускания e.buttons часто 0 — смотрим только button. */
+function isSideButtonAny(e) {
+  const b = e.button;
+  return b === 3 || b === 4 || b === 8 || b === 9;
+}
+
+/** Назад / вперёд по приложению (mousedown). */
+function onMouseSideButtonDown(e) {
+  if (!isMouseBackButton(e) && !isMouseForwardButton(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (isMouseBackButton(e) && navCanGoBack.value) {
+    handleNavBack();
+  } else if (isMouseForwardButton(e) && forwardStack.value.length > 0) {
+    handleForwardNav();
+  }
+}
+
+/**
+ * Блокирует встроенный history.back/forward в Wry после синтетического mouseup.
+ */
+function onMouseSideButtonUp(e) {
+  if (!isSideButtonAny(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+}
 </script>
 
 <template>
@@ -1007,7 +1241,6 @@ function handleNavBack() {
             </svg>
           </span>
           Поиск
-          <span :class="['rt-dot', restoringSession ? 'rt-dot-loading' : rtLoggedIn ? 'rt-dot-on' : 'rt-dot-off']" />
         </button>
 
         <!-- Library -->
@@ -1016,7 +1249,11 @@ function handleNavBack() {
           :class="['source-btn', view === 'likes' ? 'active' : '']"
           @click="view = view === 'likes' ? 'search' : 'likes'"
         >
-          <span class="source-icon">♥</span>
+          <span class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+          </span>
           Мне нравится
         </button>
 
@@ -1177,12 +1414,16 @@ function handleNavBack() {
       :has-next="queuePos < queue.length - 1"
       :hover-prefetch-url="hoverPrefetchUrl"
       :hover-prefetch-key="hoverPrefetchKey"
+      :likes="likes"
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
       @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
+      @toggle-like="handleToggleLike"
+      @search-artist="handleSearchArtist"
+      @open-torrent="handleOpenTorrentFromPlayer"
     />
 
     <DownloadProgressOverlay

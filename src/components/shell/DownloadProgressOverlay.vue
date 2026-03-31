@@ -258,7 +258,7 @@ async function requestStop() {
   width: 16px;
   height: 16px;
   border: 2px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-top-color: var(--accent, #1db954);
+  border-top-color: var(--accent, #fc741d);
   border-radius: 50%;
   animation: dl-spin 0.7s linear infinite;
   flex-shrink: 0;
@@ -275,7 +275,7 @@ async function requestStop() {
 }
 
 .dl-dock-pct {
-  color: var(--accent, #1db954);
+  color: var(--accent, #fc741d);
   font-variant-numeric: tabular-nums;
 }
 
@@ -374,7 +374,7 @@ async function requestStop() {
   width: 22px;
   height: 22px;
   border: 2px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-top-color: var(--accent, #1db954);
+  border-top-color: var(--accent, #fc741d);
   border-radius: 50%;
   animation: dl-spin 0.7s linear infinite;
   flex-shrink: 0;
@@ -404,7 +404,7 @@ async function requestStop() {
 .dl-bar {
   height: 100%;
   border-radius: 3px;
-  background: linear-gradient(90deg, var(--accent, #1db954), var(--accent-h, #1ed760));
+  background: linear-gradient(90deg, var(--accent, #fc741d), var(--accent-h, #ff9350));
   transition: width 0.25s ease-out;
 }
 

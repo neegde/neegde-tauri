@@ -8,9 +8,46 @@ const pkg = JSON.parse(
   readFileSync(new URL("./package.json", import.meta.url), "utf-8")
 );
 
+/**
+ * Builds GitHub REST URL for the latest release from npm `repository.url`.
+ *
+ * @param {typeof pkg} packageJson
+ * @returns {string} Empty string if the repo is not on GitHub.
+ */
+function githubLatestReleaseApiUrl(packageJson) {
+  const raw = packageJson.repository?.url;
+  if (!raw || typeof raw !== "string") return "";
+  const m = raw.match(/github\.com[/:]([^/]+)\/([^/.]+)/i);
+  if (!m) return "";
+  return `https://api.github.com/repos/${m[1]}/${m[2]}/releases/latest`;
+}
+
+/**
+ * Public GitHub repo URL from npm `repository.url`.
+ *
+ * @param {typeof pkg} packageJson
+ * @returns {string} Empty string if the repo is not on GitHub.
+ */
+function githubRepoWebUrl(packageJson) {
+  const raw = packageJson.repository?.url;
+  if (!raw || typeof raw !== "string") return "";
+  const m = raw.match(/github\.com[/:]([^/]+)\/([^/.]+)/i);
+  if (!m) return "";
+  return `https://github.com/${m[1]}/${m[2]}`;
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __GITHUB_RELEASES_LATEST_API__: JSON.stringify(
+      githubLatestReleaseApiUrl(pkg)
+    ),
+    __GITHUB_PROJECT_URL__: JSON.stringify(githubRepoWebUrl(pkg)),
+    __TELEGRAM_CHANNEL_URL__: JSON.stringify(
+      typeof pkg.neegde?.telegramChannel === "string"
+        ? pkg.neegde.telegramChannel
+        : ""
+    ),
   },
   plugins: [vue()],
   clearScreen: false,

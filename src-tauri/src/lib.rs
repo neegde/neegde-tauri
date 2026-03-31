@@ -1,21 +1,28 @@
 mod cache_commands;
 mod cache_settings;
 mod cover_art;
+mod discord_presence;
 mod nerd_stats;
 mod rutracker;
 mod torrent_image;
 mod torrent_stream;
 
+use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use lru::LruCache;
-use tauri::{Manager, RunEvent};
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, RunEvent,
+};
 
 /// In-process LRU cache for MusicBrainz + Cover Art Archive results.
 /// Avoids repeat HTTP round-trips for the same artist/album.
 type CoverArtCache = Mutex<LruCache<String, Option<String>>>;
 
 use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
+
+use discord_presence::DiscordPresenceState;
 
 /// librqbit opens every file in a torrent on disk at once; large discographies exceed the default
 /// macOS soft `RLIMIT_NOFILE` (~256) → "Too many open files (os error 24)".
@@ -62,7 +69,11 @@ async fn fetch_album_cover(
     artist: String,
     album: String,
 ) -> Result<Option<String>, String> {
-    let key = format!("{}|{}", artist.trim().to_lowercase(), album.trim().to_lowercase());
+    let key = format!(
+        "{}|{}",
+        artist.trim().to_lowercase(),
+        album.trim().to_lowercase()
+    );
 
     // Fast path: cache hit (includes negative entries)
     {
@@ -84,7 +95,15 @@ pub fn run() {
     raise_nofile_limit();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+        })
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
@@ -94,6 +113,48 @@ pub fn run() {
                 app.handle().clone(),
             ));
             app.manage(torrent_image::TorrentImageState::new(app.handle()));
+            app.manage(DiscordPresenceState::new());
+
+            // System tray
+            let open_item = MenuItem::with_id(app, "open", "Открыть нигде", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let tray_menu = Menu::with_items(app, &[&open_item, &separator, &quit_item])?;
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&tray_menu)
+                .tooltip("нигде")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            if w.is_visible().unwrap_or(false) {
+                                let _ = w.hide();
+                            } else {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
+
             let startup = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(ts) = startup.try_state::<TorrentStreamState>() {
@@ -134,12 +195,17 @@ pub fn run() {
             torrent_stream::debug_api::get_app_debug_log,
             torrent_stream::debug_api::clear_app_debug_log,
             torrent_stream::debug_api::app_debug_push,
+            discord_presence::discord_presence_sync,
+            discord_presence::discord_presence_clear,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
+            if let Some(dp) = app_handle.try_state::<DiscordPresenceState>() {
+                discord_presence::discord_presence_shutdown(&dp);
+            }
             let h = app_handle.clone();
             tauri::async_runtime::block_on(async move {
                 if let Some(ts) = h.try_state::<TorrentStreamState>() {

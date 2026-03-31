@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from "vue";
-import { getRutrackerCoverDataUrl, peekRutrackerCover } from "../../rutracker/search.js";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive } from "../../rutracker/search.js";
 import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
 
@@ -13,21 +13,40 @@ const props = defineProps({
   coverFileIdx: { type: [Number, null], default: null },
   size: { type: Number, default: 44 },
   radius: { type: Number, default: 4 },
-  fallback: { type: String, default: "🎵" },
   /** Заполняет родителя (например `.album-art` в сетке лайков). */
   fill: { type: Boolean, default: false },
 });
 
 const rootRef = ref(null);
-const coverUrl = ref(null);
 const coverErr = ref(false);
 let observer = null;
-let fetchGen = 0;
 
-function resetCover() {
-  fetchGen += 1;
-  coverUrl.value = null;
-  coverErr.value = false;
+/**
+ * Reactive computed — auto-updates whenever either cover cache is populated,
+ * regardless of which code path stored the cover (own fetch, hover-prefetch, torrent details, etc.).
+ */
+const coverUrl = computed(() => {
+  const magnet = (props.magnet && props.magnet.trim()) || "";
+  const idx =
+    props.coverFileIdx != null && Number.isFinite(Number(props.coverFileIdx))
+      ? Number(props.coverFileIdx)
+      : null;
+
+  if (magnet && idx != null) {
+    return peekTorrentImage(magnet, idx) || null;
+  }
+
+  if (props.source !== "rutracker" || props.torrentId == null || props.torrentId === "") return null;
+  return getCoverReactive(props.torrentId);
+});
+
+// Reset error state when the cover source changes
+watch(
+  () => [props.torrentId, props.source, props.magnet, props.coverFileIdx],
+  () => { coverErr.value = false; }
+);
+
+function disconnectObserver() {
   if (observer) {
     observer.disconnect();
     observer = null;
@@ -35,7 +54,8 @@ function resetCover() {
 }
 
 function setupCover() {
-  resetCover();
+  disconnectObserver();
+  coverErr.value = false;
 
   const magnet = (props.magnet && props.magnet.trim()) || "";
   const idx =
@@ -47,30 +67,17 @@ function setupCover() {
       ? String(props.torrentId)
       : null;
 
-  const gen = fetchGen;
-
-  const tryTorrentFirst = magnet && idx != null;
-
-  if (tryTorrentFirst) {
-    const hit = peekTorrentImage(magnet, idx);
-    if (hit) {
-      coverUrl.value = hit;
-      return;
-    }
+  if (magnet && idx != null) {
+    // Already cached → computed shows it immediately, no fetch needed
+    if (peekTorrentImage(magnet, idx)) return;
 
     observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry?.isIntersecting) return;
-        observer?.disconnect();
-        observer = null;
-        // Pass cached .torrent bytes so the image session skips DHT metadata wait.
+        disconnectObserver();
+        // Fire-and-forget: result stored in reactive torrentImageCache → computed auto-updates
         torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
           .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
-          .then((u) => {
-            if (gen !== fetchGen) return;
-            if (u) coverUrl.value = u;
-            /* Не подставляем обложку темы форума — это другая картинка, чем файл из папки альбома. */
-          })
           .catch(() => {});
       },
       { rootMargin: "400px" }
@@ -82,23 +89,16 @@ function setupCover() {
 
   if (props.source !== "rutracker" || !topicId) return;
 
+  // Skip observer if cover already fetched (hit) or confirmed absent (null in LRU)
   const cached = peekRutrackerCover(topicId);
-  if (cached !== undefined) {
-    if (cached) coverUrl.value = cached;
-    return;
-  }
+  if (cached !== undefined) return;
 
   observer = new IntersectionObserver(
     ([entry]) => {
       if (!entry?.isIntersecting) return;
-      observer?.disconnect();
-      observer = null;
-      getRutrackerCoverDataUrl(topicId)
-        .then((u) => {
-          if (gen !== fetchGen) return;
-          if (u) coverUrl.value = u;
-        })
-        .catch(() => {});
+      disconnectObserver();
+      // Fire-and-forget: result stored in reactive coverCache → computed auto-updates
+      getRutrackerCoverDataUrl(topicId).catch(() => {});
     },
     { rootMargin: "400px" }
   );
@@ -112,7 +112,7 @@ watch(
   () => [props.torrentId, props.source, props.magnet, props.coverFileIdx],
   () => setupCover()
 );
-onUnmounted(resetCover);
+onUnmounted(disconnectObserver);
 </script>
 
 <template>
@@ -132,6 +132,10 @@ onUnmounted(resetCover);
       alt=""
       @error="coverErr = true"
     />
-    <span v-else class="cover-thumb-fallback">{{ fallback }}</span>
+    <svg v-else class="cover-thumb-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M9 18V5l12-2v13"/>
+      <circle cx="6" cy="18" r="3"/>
+      <circle cx="18" cy="16" r="3"/>
+    </svg>
   </div>
 </template>

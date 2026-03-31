@@ -152,7 +152,7 @@ function onKeydown(e) {
   width: 22px;
   height: 22px;
   border: 2px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-top-color: var(--accent, #1db954);
+  border-top-color: var(--accent, #fc741d);
   border-radius: 50%;
   animation: magnet-link-spin 0.7s linear infinite;
   flex-shrink: 0;
@@ -188,8 +188,8 @@ function onKeydown(e) {
   border-radius: 3px;
   background: linear-gradient(
     90deg,
-    var(--accent, #1db954),
-    var(--accent-h, #1ed760)
+    var(--accent, #fc741d),
+    var(--accent-h, #ff9350)
   );
   transition: width 0.25s ease-out;
 }
@@ -231,8 +231,8 @@ function onKeydown(e) {
 
 .magnet-link-input:focus {
   outline: none;
-  border-color: rgba(29, 185, 84, 0.45);
-  box-shadow: 0 0 0 1px rgba(29, 185, 84, 0.2);
+  border-color: rgba(252, 116, 29, 0.45);
+  box-shadow: 0 0 0 1px rgba(252, 116, 29, 0.2);
 }
 
 .magnet-link-input::placeholder {
@@ -293,15 +293,15 @@ function onKeydown(e) {
 }
 
 .magnet-link-btn--primary {
-  background: linear-gradient(180deg, #1ed760 0%, var(--accent, #1db954) 100%);
-  color: #0a0a0a;
+  background: linear-gradient(180deg, var(--accent-h, #ff9350) 0%, var(--accent, #fc741d) 100%);
+  color: #141210;
   border-color: transparent;
-  box-shadow: 0 4px 16px rgba(29, 185, 84, 0.25);
+  box-shadow: 0 4px 16px rgba(252, 116, 29, 0.28);
 }
 
 .magnet-link-btn--primary:hover:not(:disabled) {
   filter: brightness(1.06);
-  box-shadow: 0 6px 20px rgba(29, 185, 84, 0.35);
+  box-shadow: 0 6px 20px rgba(252, 116, 29, 0.38);
 }
 
 .magnet-link-btn--primary:disabled {

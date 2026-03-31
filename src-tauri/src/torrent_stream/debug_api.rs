@@ -53,8 +53,7 @@ fn load_enabled_from_disk(app: &AppHandle) -> bool {
 fn save_enabled_to_disk(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let path = settings_path(app)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Не удалось создать каталог: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Не удалось создать каталог: {e}"))?;
     }
     let json = serde_json::to_string_pretty(&AppDebugFile { enabled })
         .map_err(|e| format!("Сериализация: {e}"))?;
@@ -82,7 +81,9 @@ pub async fn set_app_debug_enabled(
 
 /// Returns all buffered debug lines (oldest first).
 #[tauri::command]
-pub async fn get_app_debug_log(state: State<'_, TorrentStreamState>) -> Result<Vec<DebugLine>, String> {
+pub async fn get_app_debug_log(
+    state: State<'_, TorrentStreamState>,
+) -> Result<Vec<DebugLine>, String> {
     Ok(state.inner.debug_log.snapshot())
 }
 

@@ -174,6 +174,51 @@ export function isAudio(path) {
   return AUDIO_EXTS.has(ext);
 }
 
+const FORMAT_NAME_RE = /\b(flac|mp3|ape|wav|m4a|ogg|wv|aac|opus)\b/i;
+
+// Keywords in torrent names that indicate content the player cannot play:
+// video codecs/resolutions and lossless disc formats (SACD/DSD) whose files
+// (.dsf, .dff, .iso) are not in AUDIO_EXTS.
+const NON_PLAYABLE_RE =
+  /\b(xvid|divx|x264|x265|h\.?264|h\.?265|hevc|avc|720p|1080p|2160p|480p|4k|dvdrip|bdrip|hdrip|webrip|web-?dl|hdtv|sacd|sacd-r|dsd|dsf|dff)\b/i;
+
+// Category substrings that indicate video sections (e.g. "Музыкальное видео", "Клипы").
+const VIDEO_CATEGORY_RE = /\b(видео|клип|video|clip)\b/i;
+
+/**
+ * Returns false when a torrent is unlikely to contain playable audio files.
+ * Checks for video codec/resolution keywords in the name and video-section
+ * keywords in the category (e.g. "Музыкальное видео", "Клипы").
+ *
+ * Args:
+ *     name: Torrent display name.
+ *     category: Rutracker subforum category string (may be empty).
+ *
+ * Returns:
+ *     True if the torrent is probably audio, false if it looks like video.
+ */
+export function isLikelyPlayable(name, category) {
+  if (NON_PLAYABLE_RE.test(String(name ?? ""))) return false;
+  if (VIDEO_CATEGORY_RE.test(String(category ?? ""))) return false;
+  return true;
+}
+
+/**
+ * Extracts the dominant audio format from a torrent display name.
+ * RuTracker names typically embed format tags like "[FLAC]", "[MP3 320]", "(APE)", etc.
+ *
+ * Args:
+ *     name: Torrent display name string.
+ *
+ * Returns:
+ *     Uppercase format label (e.g. "FLAC", "MP3") or null if not detected.
+ */
+export function dominantFormatFromName(name) {
+  if (!name) return null;
+  const m = String(name).match(FORMAT_NAME_RE);
+  return m ? m[1].toUpperCase() : null;
+}
+
 /**
  * Extracts normalized human-readable audio format from a file path.
  *
@@ -198,22 +243,153 @@ export function basename(path) {
   return path.replace(/\\/g, "/").split("/").pop() ?? path;
 }
 
+// Keywords that mark bracket content as release metadata noise (case-insensitive).
+const META_TAG_WORDS_RE =
+  /\b(flac|mp3|ape|wav|wv|aac|ogg|opus|m4a|wma|ac3|dts|lossless|lossy|320|256|192|128|v0|v2|cbr|vbr|kbps|web|cd|vinyl|dvd|hdtv|sacd|blu-?ray|remaster(?:ed)?|deluxe|expanded|bonus|edition|rip|scan|of|tr\d+)\b/i;
+
 /**
- * Leading track index in the basename (e.g. "01. Title.flac", "02 - Title.mp3").
+ * Strip common audio release tags from a name:
+ *   [FLAC], [MP3 320], (Deluxe Edition), [TR24][OF], 2023 Artist, [2005], etc.
+ * Keeps feat., remix, and other creative annotations intact.
+ */
+export function stripMetaTags(str) {
+  if (!str) return str;
+  return str
+    // Leading short tag clusters e.g. [TR24][OF], [320] etc. (≤10 chars per tag, no spaces)
+    .replace(/^(\[[\w\d]{1,10}\]\s*)+/, "")
+    // Leading bare year: "2023 Artist" → "Artist"
+    .replace(/^(19|20)\d{2}\s+/, "")
+    // Leading year in brackets: [2005] Artist → Artist
+    .replace(/^\[\d{4}\]\s*/, "")
+    // Leading genre/category bracket: "(Hip-hop / Rap) Artist" → "Artist"
+    .replace(/^([\[(][^\[\]()]*[\])]\s*)+/, "")
+    // Bracket/paren groups that look like release metadata
+    // Decision: strip if the content (≤40 chars) contains a known meta keyword,
+    //           or is a 4-digit year alone. Keep groups with feat./remix/live/etc.
+    .replace(/\s*[\[(]([^\[\]()]{1,40})[\])]/g, (match, inner) => {
+      const s = inner.trim();
+      if (/^\d{4}$/.test(s)) return ""; // bare year
+      if (META_TAG_WORDS_RE.test(s)) return ""; // known meta word
+      return match; // keep (feat., remix, live, …)
+    })
+    .trim();
+}
+
+/**
+ * Leading track index in the basename (e.g. "01. Title.flac", "02 - Title.mp3", "01 Title.mp3").
  * Returns { order, title } with `title` = rest of filename (incl. extension), or null.
  */
 export function parseAudioTrackPrefix(basenameStr) {
+  // With separator: "01. Title" / "02 - Title"
   const m = basenameStr.match(/^(\d{1,3})\s*[.\-–—]\s*(.+)$/);
-  if (!m) return null;
-  const title = m[2].trim();
-  if (!title) return null;
-  return { order: parseInt(m[1], 10), title };
+  if (m) {
+    const title = m[2].trim();
+    if (title) return { order: parseInt(m[1], 10), title };
+  }
+  // Space only: "01 Title" — only if followed by a letter (avoid "128 kbps.mp3")
+  const m2 = basenameStr.match(/^(\d{1,3})\s+([A-Za-zА-Яа-яЁё\u00C0-\u024F].+)$/);
+  if (m2) {
+    const title = m2[2].trim();
+    if (title) return { order: parseInt(m2[1], 10), title };
+  }
+  return null;
 }
 
 function stripFilenameExtension(name) {
   const dot = name.lastIndexOf(".");
   if (dot < 1) return name;
   return name.slice(0, dot);
+}
+
+const VARIOUS_ARTISTS_RE = /^(va|v\.a\.?|various(\s+artists?)?|разные(\s+исполнители)?)$/i;
+
+const DISC_MARKER_RE = /^(cd|disc|disk|part|диск)\s*\d+$/i;
+
+/** True if `name` is a disc/part marker like "CD1", "Disc 2", "Диск 1". */
+export function isDiscMarker(name) {
+  return DISC_MARKER_RE.test((name ?? "").trim());
+}
+
+/**
+ * Extracts the album title from a torrent name like "Artist - Album [tags]".
+ * Strips meta tags first, then returns the part after the first " - " separator,
+ * or the cleaned name if no separator is found.
+ */
+export function extractAlbumFromTorrentName(torrentName) {
+  if (!torrentName) return "";
+  const cleaned = stripMetaTags(torrentName.trim());
+  if (!cleaned) return "";
+  const m = cleaned.match(/^.+?\s+[-–—]\s+(.+)$/);
+  return m ? m[1].trim() : cleaned;
+}
+
+/**
+ * Extracts artist from a torrent name in "Artist - Album" format.
+ * Falls back to the full torrent name if no separator is found.
+ */
+export function extractArtist(torrentName) {
+  if (!torrentName) return "";
+  // Strip leading year bracket before parsing
+  let name = stripMetaTags(torrentName);
+  // Strip remaining leading category/genre brackets that stripMetaTags missed
+  // (>40 chars, e.g. "(Underground hip-hop, gangsta rap, hyperrealism) Artist - Album")
+  name = name.replace(/^([\[(][^\[\]()]*[\])]\s*)+/, "").trim();
+  const m = name.match(/^(.+?)\s+[-–—]\s+/);
+  const artist = m ? m[1].trim() : name;
+  // Reject VA placeholders
+  return VARIOUS_ARTISTS_RE.test(artist) ? "" : artist;
+}
+
+function isYearLike(s) {
+  return /^\d{4}$/.test(s);
+}
+
+/**
+ * Extracts artist from a track.
+ * Priority:
+ *   1. `explicitArtist` — from RuTracker post body ("Исполнитель: ...")
+ *   2. torrentName — part before the first separator, if not a year
+ *   3. magnet dn= — torrent internal name (often "Artist - Album", distinct from topic title)
+ *   4. Each segment of albumDirPath (outermost first) — e.g. "Кровосток/2005 - Река крови" → "Кровосток"
+ *
+ * @param {string} torrentName
+ * @param {string|null} albumDirPath  - dirPath from detectAlbums
+ * @param {string|null} explicitArtist - artist from torrent details post body
+ * @param {string|null} magnet - magnet link (dn= contains torrent internal name)
+ */
+export function extractTrackArtist(torrentName, albumDirPath, explicitArtist, magnet) {
+  // Best source: parsed from RuTracker post body — strip genre prefixes just in case
+  if (explicitArtist) {
+    const cleaned = extractArtist(explicitArtist);
+    return cleaned || explicitArtist;
+  }
+
+  const fromTorrent = extractArtist(torrentName);
+  if (fromTorrent && !isYearLike(fromTorrent)) return fromTorrent;
+
+  // Magnet dn= is the torrent's internal name — often "Artist - Album [Format]"
+  // and may differ from the search result topic title
+  if (magnet) {
+    const m = magnet.match(/[?&]dn=([^&]+)/);
+    if (m) {
+      try {
+        const dn = decodeURIComponent(m[1]);
+        const fromDn = extractArtist(dn);
+        if (fromDn && !isYearLike(fromDn)) return fromDn;
+      } catch { /* malformed encoding — skip */ }
+    }
+  }
+
+  // Walk all dirPath segments (outermost to innermost) looking for a non-year artist
+  if (albumDirPath) {
+    for (const seg of albumDirPath.split("/").filter(Boolean)) {
+      if (isYearLike(seg)) continue;
+      const fromSeg = extractArtist(seg);
+      if (fromSeg && !isYearLike(fromSeg)) return fromSeg;
+    }
+  }
+
+  return stripMetaTags(fromTorrent) || stripMetaTags(torrentName) || "";
 }
 
 /** Basename for UI: no leading "01. " / "02 - ", no file extension. */

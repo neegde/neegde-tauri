@@ -45,6 +45,8 @@ pub struct TorrentDetails {
     pub cover_data_url: Option<String>,
     pub magnet: Option<String>,
     pub files: Vec<TorrentFile>,
+    /// Artist extracted from the post body (e.g. "Исполнитель: Кровосток"), if found.
+    pub artist: Option<String>,
 }
 
 // ── Session file helpers ──────────────────────────────────────────────────────
@@ -371,10 +373,13 @@ pub async fn rutracker_login(
     let bytes = resp.bytes().await.unwrap_or_default();
     let (decoded, _, _) = WINDOWS_1251.decode(&bytes);
 
+    // `profile.php` must not be used here: the guest login page links to
+    // registration (`profile.php?mode=register`, etc.), which would falsely
+    // mark any credentials as valid.
     let redirected_away = !final_url.contains("/login.php");
-    let body_says_logged_in = decoded.contains("logout.php") || decoded.contains("profile.php");
+    let body_has_logout_link = decoded.contains("logout.php");
 
-    if redirected_away || body_says_logged_in {
+    if redirected_away || body_has_logout_link {
         // Fetch avatar through the authenticated client → base64 data: URL
         let avatar_data_url = fetch_avatar(&client, &decoded, &base).await;
 
@@ -584,7 +589,11 @@ pub async fn rutracker_get_cover(
     }
 
     // Limit concurrent fetches to avoid hammering Rutracker.
-    let _permit = state.cover_semaphore.acquire().await.map_err(|e| format!("{e}"))?;
+    let _permit = state
+        .cover_semaphore
+        .acquire()
+        .await
+        .map_err(|e| format!("{e}"))?;
 
     // Check again: another task might have populated the disk cache while we waited.
     if let Some(cached) = state.read_cover(&topic_id) {

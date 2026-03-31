@@ -132,6 +132,10 @@ function onPresetSelect(ev) {
   margin: 0;
   cursor: pointer;
 }
+.eq-preset-select option {
+  background: var(--bg, #141210);
+  color: var(--text, #f5f2ef);
+}
 
 .eq-reset {
   font-size: 12px;

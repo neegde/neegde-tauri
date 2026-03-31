@@ -3,7 +3,7 @@ import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } f
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
 import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
-import { trackDisplayBasename } from "../../lib/utils.js";
+import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
@@ -27,6 +27,8 @@ import {
   reaffirmTrackSkipHandlers,
 } from "../../audio/mediaSession.js";
 import { appDebugLog } from "../../appDebugLog.js";
+import { syncDiscordPresence, clearDiscordPresence } from "../../discordPresence.js";
+import { enrichTrackMeta } from "../../audio/metadataEnrich.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -48,9 +50,37 @@ const props = defineProps({
   /** Hover-prefetch URL + ключ, переданные из App.vue (пользователь навёл на трек). */
   hoverPrefetchUrl: { type: String, default: "" },
   hoverPrefetchKey: { type: String, default: "" },
+  /** Словарь лайков из App.vue — для отображения состояния лайка текущего трека. */
+  likes: { type: Object, default: null },
 });
 
-const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed"]);
+const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed", "toggle-like", "search-artist", "open-torrent"]);
+
+const currentArtist = computed(() =>
+  enrichedMeta.value?.artist ||
+  extractTrackArtist(props.track?.torrentName, props.track?.albumDirPath, props.track?.artist, props.track?.magnet) ||
+  ""
+);
+
+function onArtistClick() {
+  const a = currentArtist.value;
+  if (a) emit("search-artist", a);
+}
+
+function onTrackClick() {
+  const t = props.track;
+  if (!t) return;
+  emit("open-torrent", {
+    torrentId: t.torrentId,
+    torrentName: t.torrentName,
+    source: t.source,
+    magnet: t.magnet,
+    artist: t.artist,
+    seeders: t.seeders ?? null,
+    fileIdx: t.fileIdx,
+    albumDirPath: t.albumDirPath ?? null,
+  });
+}
 
 function loadSavedVolume() {
   try {
@@ -65,6 +95,35 @@ function loadSavedVolume() {
 }
 
 const hasTrack = computed(() => Boolean(props.track?.magnet));
+
+const currentLikeId = computed(() => {
+  const t = props.track;
+  if (!t?.torrentId || t.fileIdx == null) return null;
+  return `track:${t.source}:${t.torrentId}:${t.fileIdx}`;
+});
+
+const isCurrentTrackLiked = computed(() => {
+  const id = currentLikeId.value;
+  return id ? Boolean(props.likes?.[id]) : false;
+});
+
+function toggleCurrentLike() {
+  const t = props.track;
+  const id = currentLikeId.value;
+  if (!t || !id) return;
+  emit("toggle-like", {
+    id,
+    type: "track",
+    torrentId: t.torrentId,
+    torrentName: t.torrentName,
+    source: t.source,
+    magnet: t.magnet,
+    fileIdx: t.fileIdx,
+    fileName: t.fileName,
+    coverFileIdx: t.coverFileIdx ?? null,
+    coverFile: null,
+  });
+}
 
 const audioRef = ref(null);
 const volume = ref(loadSavedVolume());
@@ -88,6 +147,9 @@ function onVolumeWheel(e) {
   const next = volume.value + (e.deltaY < 0 ? step : -step);
   volume.value = Math.min(1, Math.max(0, next));
 }
+/** Enriched metadata from iTunes (artist/album/title/coverUrl). Null until resolved. */
+const enrichedMeta = ref(null);
+
 const playing = ref(false);
 const current = ref(0);
 const duration = ref(0);
@@ -434,11 +496,20 @@ watchEffect(() => {
 watch(
   () => props.track,
   (t) => {
+    enrichedMeta.value = null;
     if (!t?.magnet) {
       clearMediaSessionPresentation();
       return;
     }
     void syncMediaSessionMetadata(t);
+    // Fire iTunes enrichment in background — does NOT block playback
+    const artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
+    const titleLocal = trackDisplayBasename(t.fileName);
+    enrichTrackMeta(artistLocal, titleLocal, (meta) => {
+      if (props.track !== t) return; // track changed while request was in flight
+      enrichedMeta.value = meta;
+      void syncMediaSessionMetadata(t, meta);
+    });
   },
   { immediate: true }
 );
@@ -451,6 +522,61 @@ watch(
     const p = current.value;
     if (!Number.isFinite(d) || d <= 0) return;
     syncMediaSessionPositionState(d, p, 1);
+  },
+  { flush: "post" }
+);
+
+function discordPresencePayload() {
+  const t = props.track;
+  if (!t?.magnet) return null;
+  return {
+    title: trackDisplayBasename(t.fileName) || "Трек",
+    subtitle: extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet),
+    playing: playing.value,
+    positionSec: Number.isFinite(current.value) ? current.value : null,
+    durationSec:
+      Number.isFinite(duration.value) && duration.value > 0 ? duration.value : null,
+  };
+}
+
+/** Last `syncDiscordPresence` from track/play/phase — used so progress-only updates do not starve. */
+let discordPresenceLastSyncMs = 0;
+const DISCORD_PRESENCE_PROGRESS_MIN_MS = 4500;
+
+watch(
+  () => [props.track, playing.value, streamPhase.value],
+  () => {
+    const t = props.track;
+    if (!t?.magnet) {
+      void clearDiscordPresence();
+      return;
+    }
+    if (streamPhase.value === "error") {
+      void clearDiscordPresence();
+      return;
+    }
+    if (!playing.value) {
+      void clearDiscordPresence();
+      return;
+    }
+    const p = discordPresencePayload();
+    if (!p) return;
+    discordPresenceLastSyncMs = Date.now();
+    void syncDiscordPresence(p, { immediate: true });
+  },
+  { flush: "post", immediate: true }
+);
+
+watch(
+  () => [current.value, duration.value, playing.value, props.track?.magnet, streamPhase.value],
+  () => {
+    if (!props.track?.magnet || streamPhase.value === "error" || !playing.value) return;
+    const now = Date.now();
+    if (now - discordPresenceLastSyncMs < DISCORD_PRESENCE_PROGRESS_MIN_MS) return;
+    const p = discordPresencePayload();
+    if (!p) return;
+    discordPresenceLastSyncMs = now;
+    void syncDiscordPresence(p, { immediate: true });
   },
   { flush: "post" }
 );
@@ -781,6 +907,7 @@ onUnmounted(() => {
   unlistenPrepareProgress();
   clearMediaSessionHandlers();
   clearMediaSessionPresentation();
+  void clearDiscordPresence();
   destroyEqualizer();
   window.removeEventListener("keydown", onKey);
 });
@@ -801,9 +928,35 @@ onUnmounted(() => {
           fallback="♪"
         />
         <div class="player-track-info">
-          <span class="player-name">{{ trackDisplayBasename(track.fileName) }}</span>
-          <span class="player-artist">{{ track.torrentName }}</span>
+          <button
+            type="button"
+            class="player-name player-name--link"
+            :title="`Открыть альбом`"
+            @click="onTrackClick"
+          >{{ enrichedMeta?.title || trackDisplayBasename(track.fileName) }}</button>
+          <button
+            v-if="currentArtist"
+            type="button"
+            class="player-artist player-artist--link"
+            :title="`Найти: ${currentArtist}`"
+            @click="onArtistClick"
+          >{{ currentArtist }}</button>
+          <span v-else class="player-artist" />
         </div>
+        <button
+          type="button"
+          :class="['player-like-btn', isCurrentTrackLiked ? 'player-like-btn--liked' : '']"
+          :title="isCurrentTrackLiked ? 'Убрать из любимых' : 'В любимые'"
+          :aria-label="isCurrentTrackLiked ? 'Убрать из любимых' : 'В любимые'"
+          @click="toggleCurrentLike"
+        >
+          <svg v-if="isCurrentTrackLiked" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+        </button>
       </div>
 
       <!-- Center: controls + progress -->
@@ -828,21 +981,41 @@ onUnmounted(() => {
             class="ctrl-btn"
             :disabled="!hasPrev"
             @click="emit('prev')"
-          >⏮</button>
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="19,5 9,12 19,19"/>
+              <rect x="5" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
 
           <button
             class="ctrl-btn ctrl-btn-play"
             type="button"
             @click="onPlayButtonClick"
           >
-            {{ (isLoading || playing) ? "⏸" : "▶" }}
+            <template v-if="isLoading || playing">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="4.5" y="4" width="5" height="16" rx="1.5"/>
+                <rect x="14.5" y="4" width="5" height="16" rx="1.5"/>
+              </svg>
+            </template>
+            <template v-else>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="7.5,3 21,12 7.5,21"/>
+              </svg>
+            </template>
           </button>
 
           <button
             class="ctrl-btn"
             :disabled="!hasNext"
             @click="emit('next')"
-          >⏭</button>
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,5 15,12 5,19"/>
+              <rect x="16" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
         </div>
 
         <div class="player-progress">
@@ -897,6 +1070,7 @@ onUnmounted(() => {
             max="100"
             step="1"
             :value="Math.round(volume * 100)"
+            :style="{ '--vol': Math.round(volume * 100) + '%' }"
             @input="volume = Number($event.target.value) / 100"
           />
         </div>
@@ -927,7 +1101,13 @@ onUnmounted(() => {
 
     <template v-else>
       <div class="player-left">
-        <div class="player-art player-art--idle" aria-hidden="true">♪</div>
+        <div class="player-art player-art--idle" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.5" aria-hidden="true">
+            <path d="M9 18V5l12-2v13"/>
+            <circle cx="6" cy="18" r="3"/>
+            <circle cx="18" cy="16" r="3"/>
+          </svg>
+        </div>
         <div class="player-track-info">
           <span class="player-name">Ничего не играет</span>
           <span class="player-artist">Выберите трек в раздаче</span>
@@ -935,9 +1115,23 @@ onUnmounted(() => {
       </div>
       <div class="player-center">
         <div class="player-controls">
-          <button class="ctrl-btn" disabled>⏮</button>
-          <button class="ctrl-btn ctrl-btn-play" disabled>▶</button>
-          <button class="ctrl-btn" disabled>⏭</button>
+          <button class="ctrl-btn" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="19,5 9,12 19,19"/>
+              <rect x="5" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
+          <button class="ctrl-btn ctrl-btn-play" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="7.5,3 21,12 7.5,21"/>
+            </svg>
+          </button>
+          <button class="ctrl-btn" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,5 15,12 5,19"/>
+              <rect x="16" y="5" width="3" height="14" rx="1.5"/>
+            </svg>
+          </button>
         </div>
         <div class="player-progress">
           <span class="progress-time">0:00</span>
@@ -1067,12 +1261,15 @@ onUnmounted(() => {
 .player-controls {
   flex-wrap: wrap;
   justify-content: center;
+  position: relative;
 }
 .prepare-hint {
-  position: relative;
+  position: absolute;
+  left: -36px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
-  margin-right: 4px;
 }
 .prepare-hint-trigger {
   display: flex;
@@ -1128,9 +1325,9 @@ onUnmounted(() => {
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--text);
-  background: var(--bg-elevated, rgba(32, 32, 38, 0.98));
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f0ece8;
+  background: rgba(22, 20, 18, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
   pointer-events: none;
   text-align: left;
@@ -1144,5 +1341,77 @@ onUnmounted(() => {
   word-break: break-word;
   font-family: ui-sans-serif, system-ui, sans-serif;
   font-size: 11.5px;
+}
+
+.player-like-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, transform 0.12s;
+  line-height: 0;
+}
+.player-like-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.player-like-btn:active {
+  transform: scale(0.88);
+}
+.player-like-btn--liked {
+  color: var(--accent);
+}
+.player-like-btn--liked:hover {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+.player-like-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.player-name--link {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  transition: color 0.12s;
+}
+.player-name--link:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.player-name--link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.player-artist--link {
+  all: unset;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.player-artist--link:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.player-artist--link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 </style>

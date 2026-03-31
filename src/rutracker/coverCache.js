@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { reactive } from "vue";
 import { getMirror } from "./config.js";
 
 /** Max entries — only covers that were actually loaded (see IntersectionObserver in UI). */
@@ -12,6 +13,13 @@ const MAX_SINGLE_BYTES = 4 * 1024 * 1024;
 const lru = new Map();
 /** @type {Map<string, Promise<string | null>>} */
 const pending = new Map();
+
+/**
+ * Reactive store keyed by raw topicId — Vue components read from this via getCoverReactive().
+ * Updated whenever rememberRutrackerCover() stores a successful cover.
+ * @type {Map<string, string>}
+ */
+const _reactive = reactive(new Map());
 
 let totalBytes = 0;
 
@@ -69,11 +77,30 @@ export function rememberRutrackerCover(topicId, dataUrl) {
   }
   lru.set(key, normalized);
   totalBytes += b;
+
+  // Sync to reactive store so Vue components auto-update
+  const tid = String(topicId);
+  if (normalized) {
+    _reactive.set(tid, normalized);
+  } else {
+    _reactive.delete(tid);
+  }
+}
+
+/**
+ * Reactive read for Vue components: returns the cover data URL for topicId,
+ * or null if not yet loaded. Reading this inside a computed/watchEffect is tracked.
+ * @param {string | number} topicId
+ * @returns {string | null}
+ */
+export function getCoverReactive(topicId) {
+  return _reactive.get(String(topicId)) ?? null;
 }
 
 export function clearRutrackerCoverCache() {
   lru.clear();
   pending.clear();
+  _reactive.clear();
   totalBytes = 0;
 }
 

@@ -14,7 +14,13 @@ import {
   sumFileSizes,
   MAX_TORRENT_COVER_BYTES,
   enrichMagnetWithOpenTrackers,
+  extractTrackArtist,
+  stripMetaTags,
+  parseAudioTrackPrefix,
+  isDiscMarker,
+  extractAlbumFromTorrentName,
 } from "../../lib/utils.js";
+import { enrichAlbumTracklist } from "../../audio/metadataEnrich.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
@@ -23,6 +29,12 @@ import { torrentFileB64ForTrack } from "../../torrent/api.js";
 const PREFETCH_ALBUM_COVERS = 12;
 
 const lastCoverPrefetchKey = ref("");
+
+/**
+ * iTunes-enriched data for albums keyed by album dirPath.
+ * { artist, album, coverUrl, tracksByNumber: Map<number, string> }
+ */
+const enrichedAlbumData = ref(/** @type {Map<string, object>} */ (new Map()));
 
 const props = defineProps({
   torrent: Object,
@@ -90,12 +102,29 @@ const displayAlbums = computed(() => {
 });
 
 function albumDisplayName(album, list) {
+  // Prefer iTunes-enriched album name
+  const enriched = enrichedAlbumData.value.get(album.dirPath ?? "");
+  if (enriched?.album) return enriched.album;
+
   const n = album.name?.trim();
-  if (n) return n;
-  if (list.length === 1) return props.torrent?.name?.trim() || "Альбом";
+  // Skip disc-marker dirs (CD1, Disc 2, etc.) and derive name from a better source
+  if (n && !isDiscMarker(n)) return stripMetaTags(n) || n;
+
+  // Single album: extract "Album" from "Artist - Album" torrent title
+  if (list.length === 1) {
+    const fromTorrent = extractAlbumFromTorrentName(props.torrent?.name?.trim() ?? "");
+    return fromTorrent || props.torrent?.name?.trim() || "Альбом";
+  }
+  // Multi-album: walk dirPath upward to find a non-disc folder name
   if (album.dirPath) {
-    const seg = album.dirPath.split("/").filter(Boolean).pop();
-    if (seg) return seg;
+    const parts = album.dirPath.split("/").filter(Boolean);
+    for (let i = parts.length - 2; i >= 0; i--) {
+      if (!isDiscMarker(parts[i])) {
+        return extractAlbumFromTorrentName(parts[i]) || stripMetaTags(parts[i]) || parts[i];
+      }
+    }
+    const seg = parts[parts.length - 1];
+    if (seg) return stripMetaTags(seg) || seg;
   }
   return "Альбом";
 }
@@ -135,6 +164,28 @@ function trackLikeId(torrent, f) {
 
 function albumLikeId(torrent, dirPath) {
   return `album:${torrent.source}:${torrent.id}:${dirPath || "root"}`;
+}
+
+function torrentLikeId(torrent) {
+  return `torrent:${torrent.source}:${torrent.id}`;
+}
+
+/**
+ * Builds a torrent-level like payload.
+ * @param {object} torrent
+ * @param {string} magnet
+ * @returns {object}
+ */
+function makeTorrentLike(torrent, magnet) {
+  return {
+    id: torrentLikeId(torrent),
+    type: "torrent",
+    torrentId: torrent.id,
+    torrentName: torrent.name,
+    source: torrent.source,
+    magnet: magnet || null,
+    seeders: torrent.seeders,
+  };
 }
 
 function makeTrackLike(torrent, magnet, f) {
@@ -189,8 +240,25 @@ function trackOffset(idx) {
   return albums.value.slice(0, idx).reduce((s, a) => s + a.audioFiles.length, 0);
 }
 
-/** Один альбом в раздаче — экран как превью альбома в Spotify (герой + треклист). */
-const isSpotifyAlbumPage = computed(() => {
+// ── Share ─────────────────────────────────────────────────────────────────────
+const shareCopied = ref(false);
+let _shareCopiedTimer = null;
+
+/**
+ * Builds a neegde:// deep link for the current torrent and copies it to clipboard.
+ * @param {object} torrent
+ */
+function shareLink(torrent) {
+  const url = `neegde://torrent/${torrent.source}/${torrent.id}`;
+  navigator.clipboard.writeText(url).then(() => {
+    shareCopied.value = true;
+    clearTimeout(_shareCopiedTimer);
+    _shareCopiedTimer = setTimeout(() => { shareCopied.value = false; }, 2000);
+  });
+}
+
+/** Один альбом в раздаче — полноэкранный герой с обложкой и треклистом. */
+const isAlbumHeroPage = computed(() => {
   if (props.loading) return false;
   if (albums.value.length !== 1) return false;
   return totalAudio.value > 0;
@@ -198,15 +266,16 @@ const isSpotifyAlbumPage = computed(() => {
 
 const singleAlbumWrap = computed(() => displayAlbums.value[0] ?? null);
 
-const spotifyAlbumTitle = computed(
+const albumHeroTitle = computed(
   () => singleAlbumWrap.value?.displayName?.trim() || props.torrent?.name?.trim() || "Альбом"
 );
 
-const spotifyArtist = computed(() => {
-  if (props.torrent?.fromLikes && props.torrent?.artist) return props.torrent.artist;
-  const m = props.torrent?.name?.match(/^(.+?)\s+[-–—]\s+/);
-  if (m) return m[1].trim();
-  return "Неизвестный исполнитель";
+const albumHeroArtist = computed(() => {
+  const album0 = albums.value[0];
+  const enriched = enrichedAlbumData.value.get(album0?.dirPath ?? "");
+  if (enriched?.artist) return enriched.artist;
+  const artist = extractTrackArtist(props.torrent?.name, album0?.dirPath ?? null, props.torrent?.artist ?? null, props.magnet);
+  return artist || "Неизвестный исполнитель";
 });
 
 async function prefetchAlbumCovers() {
@@ -248,10 +317,49 @@ async function prefetchAlbumCovers() {
   }
 }
 
+/** Enrich up to N albums with iTunes metadata (artist, album name, per-track titles). */
+async function enrichAlbums() {
+  if (props.loading || !props.files?.length) return;
+  const list = albums.value;
+  if (!list.length) return;
+
+  const MAX_ALBUMS = 6;
+  const toEnrich = list.slice(0, MAX_ALBUMS);
+
+  for (const album of toEnrich) {
+    const dirKey = album.dirPath ?? "";
+    if (enrichedAlbumData.value.has(dirKey)) continue;
+
+    const firstFile = album.audioFiles[0];
+    if (!firstFile) continue;
+
+    const artistRaw = extractTrackArtist(
+      props.torrent?.name,
+      album.dirPath ?? null,
+      props.torrent?.artist ?? null,
+      props.magnet
+    );
+    const albumIdx = list.indexOf(album);
+    const albumNameRaw = displayAlbums.value[albumIdx]?.displayName || stripMetaTags(album.name?.trim() || "");
+
+    if (!artistRaw || !albumNameRaw) continue;
+
+    // Fire in background — don't await sequentially
+    enrichAlbumTracklist(artistRaw, albumNameRaw).then((result) => {
+      if (!result) return;
+      const next = new Map(enrichedAlbumData.value);
+      next.set(dirKey, result);
+      enrichedAlbumData.value = next;
+    });
+  }
+}
+
 watch(
   () => [props.magnet, props.loading, props.files],
   () => {
+    enrichedAlbumData.value = new Map(); // reset on new torrent
     prefetchAlbumCovers();
+    void enrichAlbums();
   },
   { flush: "post" }
 );
@@ -260,7 +368,7 @@ watch(
 
 <template>
   <div
-    :class="['torrent-page', isSpotifyAlbumPage && 'torrent-page--spotify-album']"
+    :class="['torrent-page', isAlbumHeroPage && 'torrent-page--album-hero']"
   >
 
     <div v-if="loading" class="loading-tracks">
@@ -269,23 +377,23 @@ watch(
 
     <p v-else-if="albums.length === 0" class="empty-msg">Аудиофайлы не найдены.</p>
 
-    <!-- ── Spotify-style single album ───────────────────────────────────── -->
-    <template v-else-if="isSpotifyAlbumPage && singleAlbumWrap">
-      <div class="spotify-hero-bg" aria-hidden="true" />
-      <section class="spotify-hero" aria-label="Альбом">
-        <div class="spotify-hero-cover">
+    <!-- ── Один альбом: герой + треклист ───────────────────────────────── -->
+    <template v-else-if="isAlbumHeroPage && singleAlbumWrap">
+      <div class="album-hero-bg" aria-hidden="true" />
+      <section class="album-hero" aria-label="Альбом">
+        <div class="album-hero-cover">
           <AlbumFolderCover
             :magnet="magnet"
             :cover-file="singleAlbumWrap.raw.coverFile"
-            :label="spotifyAlbumTitle"
+            :label="albumHeroTitle"
             :cover="cover"
           />
         </div>
-        <div class="spotify-hero-text">
-          <span class="spotify-hero-kicker">Альбом</span>
-          <h1 class="spotify-hero-title">{{ spotifyAlbumTitle }}</h1>
-          <p class="spotify-hero-artist">{{ spotifyArtist }}</p>
-          <p class="spotify-hero-meta">
+        <div class="album-hero-text">
+          <span class="album-hero-kicker">Альбом</span>
+          <h1 class="album-hero-title">{{ albumHeroTitle }}</h1>
+          <p class="album-hero-artist">{{ albumHeroArtist }}</p>
+          <p class="album-hero-meta">
             {{ countLabel(singleAlbumWrap.raw.audioFiles.length) }}
             <span class="dot">·</span>
             {{ fmtSize(totalBytes) }}
@@ -301,18 +409,20 @@ watch(
         </div>
       </section>
 
-      <div class="spotify-toolbar">
+      <div class="album-hero-toolbar">
         <button
           type="button"
-          class="spotify-play-fab"
+          class="album-play-fab"
           title="Слушать"
           @click="emit('play-all')"
         >
-          ▶
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
         </button>
         <button
           type="button"
-          :class="['spotify-tool-btn', likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'liked' : '']"
+          :class="['album-tool-btn', likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'liked' : '']"
           :title="likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'Убрать из любимых' : 'В любимые'"
           @click="
             emit(
@@ -321,58 +431,91 @@ watch(
             )
           "
         >
-          {{ likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? "♥" : "♡" }}
+          <svg v-if="likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)]" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
         </button>
         <button
           type="button"
-          class="spotify-tool-btn"
+          class="album-tool-btn"
           title="Скачать альбом"
           @click="emit('download-album', singleAlbumWrap.raw.audioFiles, singleAlbumWrap.displayName)"
         >
           ↓
         </button>
+        <button
+          type="button"
+          :class="['album-tool-btn', shareCopied ? 'share-copied' : '']"
+          :title="shareCopied ? 'Ссылка скопирована' : 'Поделиться'"
+          @click="shareLink(torrent)"
+        >
+          <svg v-if="!shareCopied" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </button>
       </div>
 
-      <div class="spotify-tracklist">
-        <div class="spotify-tracklist-head">
-          <span class="spotify-col-n">#</span>
-          <span class="spotify-col-title">Название</span>
-          <span class="spotify-col-time" />
+      <div class="album-tracklist">
+        <div class="album-tracklist-head">
+          <span class="album-col-n">#</span>
+          <span class="album-col-title">Название</span>
+          <span class="album-col-time" />
         </div>
         <div
           v-for="(f, i) in singleAlbumWrap.raw.audioFiles"
           :key="f.origIdx"
-          :class="['spotify-track-row', ...playingRowClass(f.origIdx)]"
+          :class="['album-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
           @mouseenter="onTrackHover(f.origIdx)"
           @mouseleave="onTrackLeave"
         >
-          <div class="spotify-col-n">
+          <div class="album-col-n">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
-              <span class="spotify-num">{{ i + 1 }}</span>
-              <span class="spotify-play-hint">▶</span>
+              <span class="album-num">{{ i + 1 }}</span>
+              <span class="album-play-hint">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </span>
             </template>
           </div>
-          <div class="spotify-col-title">
+          <div class="album-col-title">
             <div class="track-name-wrap">
-              <span class="spotify-track-title" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</span>
+              <span class="album-track-title" :title="trackDisplayBasename(f.path)">{{
+                enrichedAlbumData.get(singleAlbumWrap.raw.dirPath ?? '')?.tracksByNumber?.get(parseAudioTrackPrefix(basename(f.path))?.order)
+                || trackDisplayBasename(f.path)
+              }}</span>
               <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
             </div>
           </div>
-          <div class="spotify-col-time">
-            <div v-if="f.size > 0" class="file-size-stack spotify-file-size-stack">
+          <div class="album-col-time">
+            <div v-if="f.size > 0" class="file-size-stack album-file-size-stack">
               <template v-for="p in [fmtSizeParts(f.size)]" :key="'sp-sz-' + f.origIdx">
                 <span class="file-size-stack__value">{{ p.value }}</span>
                 <span class="file-size-stack__unit">{{ p.unit }}</span>
               </template>
             </div>
-            <span v-else class="spotify-dur spotify-dur--empty">—</span>
-            <div class="spotify-track-actions">
+            <span v-else class="album-dur album-dur--empty">—</span>
+            <div class="album-track-actions">
               <button
                 :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
                 @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
-              >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
+              >
+                <svg v-if="likes?.[trackLikeId(torrent, f)]" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+              </button>
               <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
             </div>
           </div>
@@ -385,7 +528,11 @@ watch(
     <div class="album-header">
       <div class="album-cover">
         <img v-if="cover" :src="cover" alt="Обложка" class="cover-img" />
-        <span v-else>🎵</span>
+        <svg v-else width="64" height="64" viewBox="0 0 24 24" fill="currentColor" style="opacity:0.4" aria-hidden="true">
+          <path d="M9 18V5l12-2v13"/>
+          <circle cx="6" cy="18" r="3"/>
+          <circle cx="18" cy="16" r="3"/>
+        </svg>
       </div>
       <div class="album-info">
         <div class="album-type">
@@ -413,11 +560,34 @@ watch(
     </div>
 
     <div v-if="!loading && totalAudio > 0" class="album-actions">
-      <button class="btn-play-all" @click="emit('play-all')">
-        ▶&nbsp; Слушать всё
-      </button>
       <button class="btn-dl-all" @click="emit('download-all')">
         ↓&nbsp; Скачать всё ({{ totalAudio }})
+      </button>
+      <button
+        :class="['track-btn', 'like-btn', likes?.[torrentLikeId(torrent)] ? 'liked' : '']"
+        :title="likes?.[torrentLikeId(torrent)] ? 'Убрать раздачу из любимых' : 'Раздача в любимые'"
+        @click="emit('toggle-like', makeTorrentLike(torrent, magnet))"
+      >
+        <svg v-if="likes?.[torrentLikeId(torrent)]" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+        <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+      </button>
+
+      <button
+        :class="['track-btn', shareCopied ? 'share-copied' : '']"
+        :title="shareCopied ? 'Ссылка скопирована' : 'Поделиться'"
+        @click="shareLink(torrent)"
+      >
+        <svg v-if="!shareCopied" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+        </svg>
+        <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
       </button>
 
       <!-- View-mode toggle -->
@@ -474,8 +644,19 @@ watch(
             :class="['track-btn', 'like-btn', 'album-like-btn', likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? 'liked' : '']"
             :title="likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? 'Убрать лайк' : 'Нравится'"
             @click="emit('toggle-like', makeAlbumLike(torrent, magnet, wrap.raw, wrap.displayName))"
-          >{{ likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? "♥" : "♡" }}</button>
-          <button class="btn-play-album" title="Слушать альбом" @click="emit('play-album', wrap.raw.audioFiles)">▶</button>
+          >
+            <svg v-if="likes?.[albumLikeId(torrent, wrap.raw.dirPath)]" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+          </button>
+          <button class="btn-play-album" title="Слушать альбом" @click="emit('play-album', wrap.raw.audioFiles)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <polygon points="5,3 19,12 5,21"/>
+            </svg>
+          </button>
           <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles, wrap.displayName)">↓</button>
         </div>
 
@@ -497,12 +678,19 @@ watch(
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
             <template v-else>
               <span class="track-num-val">{{ trackOffset(albumIdx) + i + 1 }}</span>
-              <span class="track-num-icon">▶</span>
+              <span class="track-num-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </span>
             </template>
           </div>
           <div class="track-info">
             <div class="track-name-wrap">
-              <div class="track-name" :title="trackDisplayBasename(f.path)">{{ trackDisplayBasename(f.path) }}</div>
+              <div class="track-name" :title="trackDisplayBasename(f.path)">{{
+                enrichedAlbumData.get(wrap.raw.dirPath ?? '')?.tracksByNumber?.get(parseAudioTrackPrefix(basename(f.path))?.order)
+                || trackDisplayBasename(f.path)
+              }}</div>
               <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(f.path)}`">{{ audioFormatLabel(f.path) }}</span>
             </div>
           </div>
@@ -517,7 +705,14 @@ watch(
               :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
               :title="likes?.[trackLikeId(torrent, f)] ? 'Убрать лайк' : 'Нравится'"
               @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
-            >{{ likes?.[trackLikeId(torrent, f)] ? "♥" : "♡" }}</button>
+            >
+              <svg v-if="likes?.[trackLikeId(torrent, f)]" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+            </button>
             <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
           </div>
         </div>
@@ -546,7 +741,11 @@ watch(
                 class="gallery-play-btn"
                 title="Слушать альбом"
                 @click.stop="emit('play-album', wrap.raw.audioFiles)"
-              >▶</button>
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </button>
             </div>
           </div>
           <div class="gallery-card-name" :title="wrap.displayName">{{ wrap.displayName }}</div>
@@ -566,5 +765,9 @@ watch(
   object-fit: cover;
   border-radius: inherit;
   display: block;
+}
+
+.share-copied {
+  color: var(--accent);
 }
 </style>
