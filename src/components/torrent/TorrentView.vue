@@ -240,6 +240,23 @@ function trackOffset(idx) {
   return albums.value.slice(0, idx).reduce((s, a) => s + a.audioFiles.length, 0);
 }
 
+// ── Share ─────────────────────────────────────────────────────────────────────
+const shareCopied = ref(false);
+let _shareCopiedTimer = null;
+
+/**
+ * Builds a neegde:// deep link for the current torrent and copies it to clipboard.
+ * @param {object} torrent
+ */
+function shareLink(torrent) {
+  const url = `neegde://torrent/${torrent.source}/${torrent.id}`;
+  navigator.clipboard.writeText(url).then(() => {
+    shareCopied.value = true;
+    clearTimeout(_shareCopiedTimer);
+    _shareCopiedTimer = setTimeout(() => { shareCopied.value = false; }, 2000);
+  });
+}
+
 /** Один альбом в раздаче — полноэкранный герой с обложкой и треклистом. */
 const isAlbumHeroPage = computed(() => {
   if (props.loading) return false;
@@ -429,6 +446,20 @@ watch(
         >
           ↓
         </button>
+        <button
+          type="button"
+          :class="['album-tool-btn', shareCopied ? 'share-copied' : '']"
+          :title="shareCopied ? 'Ссылка скопирована' : 'Поделиться'"
+          @click="shareLink(torrent)"
+        >
+          <svg v-if="!shareCopied" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </button>
       </div>
 
       <div class="album-tracklist">
@@ -542,6 +573,20 @@ watch(
         </svg>
         <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+      </button>
+
+      <button
+        :class="['track-btn', shareCopied ? 'share-copied' : '']"
+        :title="shareCopied ? 'Ссылка скопирована' : 'Поделиться'"
+        @click="shareLink(torrent)"
+      >
+        <svg v-if="!shareCopied" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+        </svg>
+        <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="20 6 9 17 4 12"/>
         </svg>
       </button>
 
@@ -720,5 +765,9 @@ watch(
   object-fit: cover;
   border-radius: inherit;
   display: block;
+}
+
+.share-copied {
+  color: var(--accent);
 }
 </style>

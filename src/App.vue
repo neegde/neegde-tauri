@@ -26,6 +26,7 @@ import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
+import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -167,6 +168,11 @@ onMounted(async () => {
   setupAppDebugInstrumentation();
   window.clearTimeout(unblockTimer);
   restoringSession.value = false;
+
+  // Deep link: app already running (neegde://torrent/...)
+  onOpenUrl((urls) => { if (urls?.[0]) void handleDeepLink(urls[0]); });
+  // Deep link: cold start — URL passed at launch
+  getCurrent().then((urls) => { if (urls?.[0]) void handleDeepLink(urls[0]); }).catch(() => {});
 });
 
 onUnmounted(() => {
@@ -979,6 +985,53 @@ function handleOpenTorrentFromPlayer(track) {
     loadingFiles.value = false;
     if (mainRef.value) mainRef.value.scrollTo(0, 0);
   });
+}
+
+/**
+ * Open a torrent by source and ID from a neegde:// deep link.
+ * Navigates to search view, loads files from Rutracker.
+ * @param {string} source - e.g. "rutracker"
+ * @param {string} torrentId
+ */
+async function openTorrentByDeepLink(source, torrentId) {
+  forwardStack.value = [];
+  backStack.value = [];
+  torrentFilesBeforeAlbumPreview.value = null;
+  torrentSelectedBeforeAlbumPreview.value = null;
+  view.value = "search";
+  returnView.value = "search";
+  selected.value = { id: torrentId, name: "", source, seeders: "?", size: 0, category: "—", added: "—" };
+  files.value = [];
+  torrentCover.value = null;
+  torrentMagnet.value = "";
+  loadingFiles.value = true;
+  const details = await getTorrentDetails(torrentId);
+  torrentMagnet.value = details.magnet ?? "";
+  torrentCover.value = details.cover_data_url ?? null;
+  if (details.artist) selected.value = { ...selected.value, artist: details.artist };
+  files.value = details.files.map((f, i) => ({
+    name: f.path[f.path.length - 1] ?? "",
+    path: f.path.join("/"),
+    size: f.size,
+    idx: i,
+    origIdx: i,
+  }));
+  void torrentFileB64ForTrack({ source, torrentId });
+  loadingFiles.value = false;
+}
+
+/**
+ * Handle a neegde:// URL dispatched by the OS (deep link).
+ * Supports: neegde://torrent/{source}/{torrentId}
+ * @param {string} urlStr
+ */
+async function handleDeepLink(urlStr) {
+  const url = new URL(urlStr);
+  if (url.host === "torrent") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const [source, torrentId] = parts;
+    if (source && torrentId) void openTorrentByDeepLink(source, torrentId);
+  }
 }
 
 function handleNext() {
