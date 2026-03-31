@@ -1314,7 +1314,9 @@ function onMouseSideButtonUp(e) {
             v-if="!selected && results.length > 0"
             :results="results"
             :selected-id="null"
+            :likes="likes"
             @select="handleSelect"
+            @toggle-like="handleToggleLike"
           />
 
           <TorrentView

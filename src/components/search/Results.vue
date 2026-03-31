@@ -5,9 +5,31 @@ import AlbumCard from "./AlbumCard.vue";
 const props = defineProps({
   results: Array,
   selectedId: { default: null },
+  likes: { type: Object, default: () => ({}) },
 });
 
-const emit = defineEmits(["select"]);
+const emit = defineEmits(["select", "toggle-like"]);
+
+/**
+ * Builds a torrent-level like object from a search result torrent.
+ * @param {object} torrent
+ * @returns {object}
+ */
+function makeTorrentLike(torrent) {
+  return {
+    id: `torrent:${torrent.source}:${torrent.id}`,
+    type: "torrent",
+    torrentId: torrent.id,
+    torrentName: torrent.name,
+    source: torrent.source,
+    magnet: null,
+    seeders: torrent.seeders,
+  };
+}
+
+function isTorrentLiked(torrent) {
+  return !!props.likes[`torrent:${torrent.source}:${torrent.id}`];
+}
 
 const INITIAL_BATCH = 40;
 const BATCH_INCREMENT = 30;
@@ -52,7 +74,9 @@ onUnmounted(() => observer?.disconnect());
         :key="r.id ?? i"
         :torrent="r"
         :selected="selectedId === r.id"
+        :liked="isTorrentLiked(r)"
         @select="emit('select', $event)"
+        @toggle-like="emit('toggle-like', makeTorrentLike($event))"
       />
     </div>
     <div ref="sentinel" />

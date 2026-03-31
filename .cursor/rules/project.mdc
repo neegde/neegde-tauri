@@ -30,9 +30,9 @@ src/
     player/Player.vue       # <audio> + controls + EQ wiring + Discord presence
     settings/SettingsView.vue
     settings/EqualizerPanel.vue
-    torrent/TorrentView.vue # Список файлов раздачи, лайки треков/альбомов
+    torrent/TorrentView.vue # Список файлов раздачи, лайки треков/альбомов/раздач
     likes/LikesView.vue
-    search/Results.vue, SearchBar.vue, AlbumCard.vue
+    search/Results.vue, SearchBar.vue, AlbumCard.vue  # AlbumCard: liked prop + toggle-like
     shared/CoverThumb.vue, CoverLightbox.vue, PlayingIndicator.vue
     shell/NavArrows.vue, MagnetLinkDialog.vue, DownloadProgressOverlay.vue
     debug/AppDebugConsole.vue
@@ -72,14 +72,35 @@ src-tauri/src/
 // ID формат:
 `track:${source}:${torrentId}:${fileIdx}`   // трек
 `album:${source}:${torrentId}:${dirPath}`   // альбом
+`torrent:${source}:${torrentId}`            // раздача целиком
 
 // Объект лайка трека:
 { id, type: "track", torrentId, torrentName, source, magnet,
   fileIdx, fileName, coverFileIdx, coverFile }
 
+// Объект лайка альбома:
+{ id, type: "album", torrentId, torrentName, source, magnet,
+  albumName, dirPath, audioFiles, coverFile }
+
+// Объект лайка раздачи:
+{ id, type: "torrent", torrentId, torrentName, source, magnet, seeders }
+
 // Управление в App.vue:
 handleToggleLike(like) // toggle presence in likes dict
 ```
+
+### Где лайкают раздачу (type === "torrent")
+
+- **`AlbumCard.vue`** — кнопка ♥ на обложке (hover), `liked` prop + `toggle-like` emit; `Results.vue` строит объект лайка через `makeTorrentLike(torrent)` и проксирует событие в `App.vue`
+- **`TorrentView.vue`** — кнопка ♥ в `.album-actions` (многоальбомный вид); функции `torrentLikeId(torrent)` и `makeTorrentLike(torrent, magnet)`
+
+### LikesView — вкладки
+
+| Вкладка | Тип | Компонент |
+|---------|-----|-----------|
+| Треки | `type === "track"` | список строк с `CoverThumb` |
+| Альбомы | `type === "album"` | сетка карточек с `CoverThumb` |
+| Раздачи | `type === "torrent"` | сетка карточек с обложкой Rutracker (`getCoverReactive`) |
 
 ## Theme System
 

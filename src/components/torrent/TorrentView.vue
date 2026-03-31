@@ -166,6 +166,28 @@ function albumLikeId(torrent, dirPath) {
   return `album:${torrent.source}:${torrent.id}:${dirPath || "root"}`;
 }
 
+function torrentLikeId(torrent) {
+  return `torrent:${torrent.source}:${torrent.id}`;
+}
+
+/**
+ * Builds a torrent-level like payload.
+ * @param {object} torrent
+ * @param {string} magnet
+ * @returns {object}
+ */
+function makeTorrentLike(torrent, magnet) {
+  return {
+    id: torrentLikeId(torrent),
+    type: "torrent",
+    torrentId: torrent.id,
+    torrentName: torrent.name,
+    source: torrent.source,
+    magnet: magnet || null,
+    seeders: torrent.seeders,
+  };
+}
+
 function makeTrackLike(torrent, magnet, f) {
   let coverFileIdx = null;
   /** Как у лайка альбома — чтобы во вкладке «Треки» брать тот же origIdx, что и для coverFile в торренте. */
@@ -507,14 +529,20 @@ watch(
     </div>
 
     <div v-if="!loading && totalAudio > 0" class="album-actions">
-      <button class="btn-play-all" @click="emit('play-all')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <polygon points="5,3 19,12 5,21"/>
-        </svg>
-        Слушать всё
-      </button>
       <button class="btn-dl-all" @click="emit('download-all')">
         ↓&nbsp; Скачать всё ({{ totalAudio }})
+      </button>
+      <button
+        :class="['track-btn', 'like-btn', likes?.[torrentLikeId(torrent)] ? 'liked' : '']"
+        :title="likes?.[torrentLikeId(torrent)] ? 'Убрать раздачу из любимых' : 'Раздача в любимые'"
+        @click="emit('toggle-like', makeTorrentLike(torrent, magnet))"
+      >
+        <svg v-if="likes?.[torrentLikeId(torrent)]" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+        <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
       </button>
 
       <!-- View-mode toggle -->
