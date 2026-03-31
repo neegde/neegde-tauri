@@ -1032,6 +1032,7 @@ onUnmounted(() => {
             max="100"
             step="1"
             :value="Math.round(volume * 100)"
+            :style="{ '--vol': Math.round(volume * 100) + '%' }"
             @input="volume = Number($event.target.value) / 100"
           />
         </div>
