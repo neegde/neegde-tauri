@@ -149,16 +149,6 @@ function trackCoverFileIdx(like) {
           </div>
           <div class="track-actions">
             <button
-              class="track-btn"
-              title="Перейти к раздаче"
-              @click.stop="emit('open-torrent', like)"
-            >↗</button>
-            <button
-              class="track-btn dl"
-              title="Скачать"
-              @click.stop="emit('download', like)"
-            >↓</button>
-            <button
               class="track-btn like-btn liked"
               title="Убрать лайк"
               @click.stop="emit('toggle-like', like)"
@@ -167,6 +157,16 @@ function trackCoverFileIdx(like) {
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
             </button>
+            <button
+              class="track-btn dl"
+              title="Скачать"
+              @click.stop="emit('download', like)"
+            >↓</button>
+            <button
+              class="track-btn"
+              title="Перейти к раздаче"
+              @click.stop="emit('open-torrent', like)"
+            >↗</button>
           </div>
         </div>
       </template>
