@@ -18,6 +18,15 @@ import {
   setMirrorMode,
   probeMirrorsNow,
 } from "../../rutracker/config.js";
+import {
+  RT_HTTP_PROXY_PX1,
+  RT_HTTP_PROXY_PX2,
+  getHttpProxy,
+  setHttpProxy,
+  setRtHttpProxyCache,
+  hasHttpProxyConfigured,
+  probeHttpProxy,
+} from "../../rutracker/proxyConfig.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
@@ -217,6 +226,11 @@ onMounted(() => {
   persistedMirrorMode.value = getMirrorMode();
   syncMirrorSelectFromStorage();
   activeMirrorDisplay.value = getMirror();
+  getHttpProxy()
+    .then((url) => {
+      proxySelect.value = proxyUrlToSelect(url);
+    })
+    .catch(() => {});
   if (githubReleaseApiUrl) runReleaseCheck();
 });
 
@@ -284,6 +298,92 @@ function doResetMirror() {
   clearRutrackerCoverCache();
   mirrorSaved.value = true;
   setTimeout(() => { mirrorSaved.value = false; }, 2000);
+}
+
+const PROXY_SELECT_NONE = "none";
+const PROXY_SELECT_PX1 = "px1";
+const PROXY_SELECT_PX2 = "px2";
+
+/**
+ * Maps persisted proxy URL to the nerd select value.
+ *
+ * @param {string | null | undefined} url
+ * @returns {string}
+ */
+function proxyUrlToSelect(url) {
+  if (!url) return PROXY_SELECT_NONE;
+  if (url === RT_HTTP_PROXY_PX1) return PROXY_SELECT_PX1;
+  if (url === RT_HTTP_PROXY_PX2) return PROXY_SELECT_PX2;
+  return PROXY_SELECT_NONE;
+}
+
+/**
+ * @param {string} sel
+ * @returns {string | null}
+ */
+function proxySelectToUrl(sel) {
+  if (sel === PROXY_SELECT_PX1) return RT_HTTP_PROXY_PX1;
+  if (sel === PROXY_SELECT_PX2) return RT_HTTP_PROXY_PX2;
+  return null;
+}
+
+const proxySelect = ref(PROXY_SELECT_NONE);
+const proxySaved = ref(false);
+const proxySaveBusy = ref(false);
+const proxySaveError = ref(null);
+const proxyProbeBusy = ref(false);
+const proxyProbeOk = ref(false);
+const proxyProbeError = ref(null);
+
+/**
+ * @returns {string}
+ */
+function rutrackerProbeTargetUrl() {
+  const base = getMirror().replace(/\/$/, "");
+  return `${base}/forum/index.php`;
+}
+
+/**
+ * GETs the configured mirror's `forum/index.php` via the proxy preset currently selected in UI.
+ *
+ * @returns {Promise<void>}
+ */
+async function probeProxy() {
+  proxyProbeError.value = null;
+  proxyProbeOk.value = false;
+  proxyProbeBusy.value = true;
+  try {
+    const url = proxySelectToUrl(proxySelect.value);
+    await probeHttpProxy(url, rutrackerProbeTargetUrl());
+    proxyProbeOk.value = true;
+    window.setTimeout(() => {
+      proxyProbeOk.value = false;
+    }, 5000);
+  } catch (e) {
+    proxyProbeError.value = e?.toString?.() ?? String(e);
+  } finally {
+    proxyProbeBusy.value = false;
+  }
+}
+
+async function saveProxy() {
+  proxySaveError.value = null;
+  proxyProbeError.value = null;
+  proxyProbeOk.value = false;
+  proxySaveBusy.value = true;
+  try {
+    const url = proxySelectToUrl(proxySelect.value);
+    await setHttpProxy(url);
+    setRtHttpProxyCache(url || "");
+    proxySaved.value = true;
+    setTimeout(() => {
+      proxySaved.value = false;
+    }, 2000);
+  } catch (e) {
+    proxySaveError.value = e?.toString?.() ?? String(e);
+  } finally {
+    proxySaveBusy.value = false;
+  }
 }
 
 // ── Память и кэш (диагностика) ───────────────────────────────────────────────
@@ -591,7 +691,11 @@ watch(nerdOpen, (open) => {
       <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
         <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
         Параметры для задротов
-        <span v-if="hasCustomMirror()" class="nerd-custom-dot" title="Зеркало изменено" />
+        <span
+          v-if="hasCustomMirror() || hasHttpProxyConfigured()"
+          class="nerd-custom-dot"
+          title="Нестандартные зеркало или прокси"
+        />
       </button>
 
       <div v-if="nerdOpen" class="nerd-stack">
@@ -699,6 +803,59 @@ watch(nerdOpen, (open) => {
             >
               Сбросить к rutracker.net (ручной режим)
             </button>
+          </div>
+        </div>
+
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">🌐</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">HTTP-прокси</div>
+              <div class="settings-card-status">Тип HTTP · пресеты blockme</div>
+            </div>
+          </div>
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Исходящие запросы бэкенда (Rutracker, обложки iTunes) пойдут через выбранный
+              прокси. Торренты и стриминг к ним не относятся.
+            </p>
+            <div class="nerd-mirror-row nerd-mirror-row--stack">
+              <select v-model="proxySelect" class="login-input nerd-mirror-select">
+                <option :value="PROXY_SELECT_NONE">Нет</option>
+                <option :value="PROXY_SELECT_PX1">px1.blockme.site · порт 23128</option>
+                <option :value="PROXY_SELECT_PX2">px2.blockme.site · порт 3128</option>
+              </select>
+            </div>
+            <div class="nerd-mirror-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="proxySaveBusy || proxyProbeBusy"
+                @click="saveProxy"
+              >
+                <span v-if="proxySaveBusy" class="spinner" />
+                <template v-else>{{ proxySaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+              </button>
+              <button
+                type="button"
+                class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                :disabled="proxyProbeBusy || proxySaveBusy"
+                @click="probeProxy"
+              >
+                <span v-if="proxyProbeBusy" class="spinner" />
+                <template v-else>Проверить</template>
+              </button>
+            </div>
+            <p v-if="proxyProbeOk" class="settings-card-desc nerd-desc nerd-proxy-probe-ok">
+              Запрос к текущему зеркалу (forum/index.php) прошёл — для выбранного варианта прокси
+              соединение работает.
+            </p>
+            <p v-if="proxyProbeError" class="login-error nerd-probe-error">{{ proxyProbeError }}</p>
+            <p v-if="proxySaveError" class="login-error nerd-probe-error">{{ proxySaveError }}</p>
+            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
+              Проверка использует выбранный выше вариант (можно до «Сохранить») и адрес зеркала из
+              блока выше. По умолчанию без прокси. Порты: 23128 — для px1; 3128 — для px2.
+            </p>
           </div>
         </div>
 
@@ -1164,6 +1321,12 @@ watch(nerdOpen, (open) => {
   gap: 8px;
   margin-top: 10px;
   align-items: center;
+}
+
+.nerd-proxy-probe-ok {
+  margin-top: 10px;
+  margin-bottom: 0;
+  color: var(--success);
 }
 
 .nerd-mirror-row {

@@ -21,6 +21,7 @@ import {
 import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
+import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
@@ -162,6 +163,9 @@ onMounted(async () => {
     const s = normalizeLoginStatus(raw);
     if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
   } catch (_) { /* offline or no saved session — stay logged out */ }
+  try {
+    await syncRtHttpProxyCacheFromBackend();
+  } catch (_) { /* нет Tauri API (превью в браузере) */ }
   try {
     appDebugEnabled.value = await invoke("get_app_debug_enabled");
   } catch (_) { /* нет Tauri API (превью в браузере) */ }

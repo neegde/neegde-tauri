@@ -83,7 +83,7 @@ async fn fetch_album_cover(
         }
     }
 
-    let client = state.client.clone();
+    let client = state.http_client()?;
     let result = cover_art::fetch_album_cover(&client, &artist, &album).await;
 
     cache.lock().unwrap().put(key, result.clone());
@@ -175,6 +175,9 @@ pub fn run() {
             rutracker::rutracker_get_torrent_details,
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
+            rutracker::rutracker_get_http_proxy,
+            rutracker::rutracker_set_http_proxy,
+            rutracker::rutracker_probe_http_proxy,
             torrent_stream::torrent_prepare_stream,
             torrent_stream::torrent_magnet_list_files,
             torrent_stream::torrent_prefetch_next_track,

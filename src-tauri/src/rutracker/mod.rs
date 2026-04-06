@@ -4,7 +4,7 @@ pub mod topic;
 use base64::Engine as _;
 use encoding_rs::WINDOWS_1251;
 use lru::LruCache;
-use reqwest::{header, Client, ClientBuilder};
+use reqwest::{header, Client, ClientBuilder, Proxy};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter};
@@ -95,6 +95,82 @@ fn save_cookie_store(path: &Option<PathBuf>, store: &Arc<CookieStoreMutex>) {
     }
 }
 
+fn load_http_proxy_url(path: &Option<PathBuf>) -> Option<String> {
+    let p = path.as_ref()?;
+    let s = std::fs::read_to_string(p).ok()?;
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+fn save_http_proxy_url(path: &Option<PathBuf>, url: Option<&str>) -> Result<(), String> {
+    let Some(p) = path else {
+        return Ok(());
+    };
+    match url {
+        None | Some("") => {
+            let _ = std::fs::remove_file(p);
+        }
+        Some(u) => {
+            std::fs::write(p, u).map_err(|e| format!("Не удалось сохранить прокси: {}", e))?;
+        }
+    }
+    Ok(())
+}
+
+fn build_reqwest_client(
+    cookie_store: Arc<CookieStoreMutex>,
+    proxy_url: Option<&str>,
+) -> Result<Client, String> {
+    let mut builder = ClientBuilder::new()
+        .cookie_provider(cookie_store)
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+             AppleWebKit/537.36 (KHTML, like Gecko) \
+             Chrome/124.0.0.0 Safari/537.36",
+        );
+
+    if let Some(raw) = proxy_url {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let proxy = Proxy::all(trimmed)
+                .map_err(|e| format!("Некорректный прокси: {}", e))?;
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    builder
+        .build()
+        .map_err(|e| format!("Не удалось инициализировать HTTP-клиент: {}", e))
+}
+
+/// Ephemeral client for proxy checks (no session cookies).
+fn build_probe_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    let mut builder = ClientBuilder::new()
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+             AppleWebKit/537.36 (KHTML, like Gecko) \
+             Chrome/124.0.0.0 Safari/537.36",
+        )
+        .timeout(Duration::from_secs(15));
+
+    if let Some(raw) = proxy_url {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let proxy = Proxy::all(trimmed)
+                .map_err(|e| format!("Некорректный прокси: {}", e))?;
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    builder
+        .build()
+        .map_err(|e| format!("Не удалось собрать клиент проверки: {}", e))
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 /// Max concurrent cover HTTP fetches (viewtopic.php + image).
@@ -103,11 +179,12 @@ const COVER_CONCURRENCY: usize = 4;
 const COVER_MEM_CACHE_CAP: usize = 100;
 
 pub struct RutrackerState {
-    pub client: Client,
+    client: Mutex<Client>,
     cookie_store: Arc<CookieStoreMutex>,
     inner: Mutex<RutrackerInner>,
     session_path: Option<PathBuf>,
     meta_path: Option<PathBuf>,
+    proxy_path: Option<PathBuf>,
     cover_cache_dir: Option<PathBuf>,
     cover_semaphore: Semaphore,
     cover_mem_cache: Mutex<LruCache<String, String>>,
@@ -132,22 +209,23 @@ impl RutrackerState {
             let _ = std::fs::create_dir_all(&p);
             p
         });
+        let proxy_path: Option<PathBuf> = base_dir.as_ref().map(|d| d.join("rt_http_proxy.txt"));
 
         let saved = load_cookie_store(&session_path);
         let cookie_store = Arc::new(CookieStoreMutex::new(saved));
 
-        let client = ClientBuilder::new()
-            .cookie_provider(Arc::clone(&cookie_store))
-            .user_agent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-                 AppleWebKit/537.36 (KHTML, like Gecko) \
-                 Chrome/124.0.0.0 Safari/537.36",
-            )
-            .build()
-            .expect("reqwest client init failed");
+        let loaded_proxy = load_http_proxy_url(&proxy_path);
+        let client = match build_reqwest_client(Arc::clone(&cookie_store), loaded_proxy.as_deref()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[neegde] invalid saved HTTP proxy, using direct connection: {}", e);
+                build_reqwest_client(Arc::clone(&cookie_store), None)
+                    .expect("reqwest client init failed")
+            }
+        };
 
         Self {
-            client,
+            client: Mutex::new(client),
             cookie_store,
             inner: Mutex::new(RutrackerInner {
                 logged_in: false,
@@ -156,12 +234,20 @@ impl RutrackerState {
             }),
             session_path,
             meta_path,
+            proxy_path,
             cover_cache_dir,
             cover_semaphore: Semaphore::new(COVER_CONCURRENCY),
             cover_mem_cache: Mutex::new(LruCache::new(
                 NonZeroUsize::new(COVER_MEM_CACHE_CAP).unwrap(),
             )),
         }
+    }
+
+    pub fn http_client(&self) -> Result<Client, String> {
+        self.client
+            .lock()
+            .map_err(|_| "lock error".to_string())
+            .map(|c| c.clone())
     }
 
     /// Check memory cache first, fall back to disk, populate memory on disk hit.
@@ -341,7 +427,7 @@ pub async fn rutracker_login(
     username: String,
     password: String,
 ) -> Result<LoginResult, String> {
-    let client = state.client.clone();
+    let client = state.http_client()?;
     let base = mirror.trim_end_matches('/').to_string();
     let login_url = format!("{}/forum/login.php", base);
 
@@ -460,7 +546,7 @@ pub async fn rutracker_restore_session(
         }
     }
 
-    let client = state.client.clone();
+    let client = state.http_client()?;
     let base = mirror.trim_end_matches('/').to_string();
 
     // Light healthcheck: try loading the forum index
@@ -505,6 +591,63 @@ pub fn rutracker_status(state: tauri::State<'_, RutrackerState>) -> Result<Login
     })
 }
 
+/// Persisted HTTP proxy for Rutracker and related backend HTTP (same `reqwest` client as cookies).
+#[tauri::command]
+pub fn rutracker_get_http_proxy(state: tauri::State<'_, RutrackerState>) -> Result<Option<String>, String> {
+    Ok(load_http_proxy_url(&state.proxy_path))
+}
+
+#[tauri::command]
+pub async fn rutracker_set_http_proxy(
+    state: tauri::State<'_, RutrackerState>,
+    proxy_url: Option<String>,
+) -> Result<(), String> {
+    let normalized = proxy_url
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    save_http_proxy_url(&state.proxy_path, normalized.as_deref())?;
+
+    let new_client = build_reqwest_client(
+        Arc::clone(&state.cookie_store),
+        normalized.as_deref(),
+    )?;
+
+    let mut guard = state
+        .client
+        .lock()
+        .map_err(|_| "lock error".to_string())?;
+    *guard = new_client;
+    Ok(())
+}
+
+/// GET `target_url` with an optional HTTP proxy (same preset as in settings). Does not use Rutracker cookies.
+#[tauri::command]
+pub async fn rutracker_probe_http_proxy(
+    proxy_url: Option<String>,
+    target_url: String,
+) -> Result<(), String> {
+    let normalized = proxy_url
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let client = build_probe_client(normalized.as_deref())?;
+    let url = target_url.trim();
+    if url.is_empty() {
+        return Err("Пустой URL проверки".into());
+    }
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Нет соединения: {}", e))?;
+    let status = resp.status();
+    if status.is_success() || status.is_redirection() {
+        Ok(())
+    } else {
+        Err(format!("Сервер вернул HTTP {}", status.as_u16()))
+    }
+}
+
 /// Try each candidate URL in order; return the first mirror whose `/forum/index.php` responds
 /// with a successful or redirect status (site reachable).
 #[tauri::command]
@@ -516,7 +659,7 @@ pub async fn rutracker_pick_mirror(
         return Err("Список зеркал пуст".into());
     }
 
-    let client = state.client.clone();
+    let client = state.http_client()?;
     let mut last_err = String::new();
 
     for raw in candidates {
@@ -566,7 +709,8 @@ pub async fn rutracker_search(
         }
     }
     let base = mirror.trim_end_matches('/').to_string();
-    search::search_music(&state.client, &base, &query).await
+    let client = state.http_client()?;
+    search::search_music(&client, &base, &query).await
 }
 
 /// First-post cover as a base64 data URL (lightweight — no .torrent download).
@@ -601,7 +745,8 @@ pub async fn rutracker_get_cover(
     }
 
     let base = mirror.trim_end_matches('/').to_string();
-    let result = topic::get_cover_data_url(&state.client, &base, &topic_id).await?;
+    let client = state.http_client()?;
+    let result = topic::get_cover_data_url(&client, &base, &topic_id).await?;
 
     if let Some(ref data_url) = result {
         state.write_cover(&topic_id, data_url);
@@ -625,7 +770,8 @@ pub async fn rutracker_get_torrent_details(
         }
     }
     let base = mirror.trim_end_matches('/').to_string();
-    let details = topic::get_torrent_details(&state.client, &base, &topic_id).await?;
+    let client = state.http_client()?;
+    let details = topic::get_torrent_details(&client, &base, &topic_id).await?;
     // Persist cover to disk so grid loads are instant on next visit.
     if let Some(ref data_url) = details.cover_data_url {
         state.write_cover(&details.id, data_url);
@@ -647,7 +793,8 @@ pub async fn rutracker_download_torrent_file_b64(
         }
     }
     let base = mirror.trim_end_matches('/').to_string();
-    let raw = topic::download_torrent_file_bytes(&state.client, &base, &topic_id).await?;
+    let client = state.http_client()?;
+    let raw = topic::download_torrent_file_bytes(&client, &base, &topic_id).await?;
     Ok(base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         &raw,
