@@ -1,7 +1,7 @@
 //! Streaming state — uses blizorukost (libtorrent) for streaming,
 //! keeps librqbit only for the `torrent_export_files` command.
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -251,7 +251,12 @@ impl TorrentStreamState {
             Some(json!({ "fileIdx": file_idx, "magnetLen": magnet.len() })),
         );
 
+        // Cast to usize so the closure is Send (*mut T is !Send by auto-trait,
+        // even though BlizSessionHandle impls Send; usize is always Send).
+        let session_raw = session.0 as usize;
+
         let result = tokio::task::spawn_blocking(move || -> Result<BlizPrepareResult, String> {
+            let session_ptr = session_raw as *mut bliz_ffi::BlizSession;
             let magnet_cstr = CString::new(magnet.as_str())
                 .map_err(|e| format!("magnet CString: {e}"))?;
 
@@ -268,7 +273,7 @@ impl TorrentStreamState {
 
             let info = unsafe {
                 bliz_ffi::bliz_stream_prepare(
-                    session.0,
+                    session_ptr,
                     magnet_cstr.as_ptr(),
                     data_ptr,
                     data_len,
@@ -389,13 +394,16 @@ impl TorrentStreamState {
     ) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
         let session = self.ensure_bliz_session().await?;
 
+        let session_raw = session.0 as usize;
+
         tokio::task::spawn_blocking(move || -> Result<Vec<crate::rutracker::TorrentFile>, String> {
+            let session_ptr = session_raw as *mut bliz_ffi::BlizSession;
             let magnet_cstr =
                 CString::new(magnet.as_str()).map_err(|e| format!("magnet CString: {e}"))?;
 
             let mut list = unsafe {
                 bliz_ffi::bliz_list_files(
-                    session.0,
+                    session_ptr,
                     magnet_cstr.as_ptr(),
                     std::ptr::null(),
                     0,
@@ -482,9 +490,9 @@ impl TorrentStreamState {
         .await
         .map_err(|e| format!("librqbit export session: {e}"))?;
 
-        let arc = Arc::new(session);
-        *guard = Some(arc.clone());
-        Ok(arc)
+        // Session::new_with_opts already returns Arc<Session>
+        *guard = Some(session.clone());
+        Ok(session)
     }
 }
 
