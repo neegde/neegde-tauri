@@ -1,30 +1,41 @@
 pub mod debug_api;
 mod debug_log;
 pub mod export;
+mod http;
 mod state;
 mod stream_cache;
 mod types;
 
 pub use debug_api::apply_app_debug_from_disk;
-pub use stream_cache::{directory_size_bytes, purge_session_torrents};
-pub use state::TorrentStreamState;
 
-/// Subfolder name for the blizorukost streaming cache (used by nerd_stats).
+pub use stream_cache::{directory_size_bytes, purge_session_torrents};
+
+/// Subfolder under app data for the streaming librqbit session (debug vs release).
 pub fn torrent_streams_dir_label() -> &'static str {
     if cfg!(debug_assertions) {
-        "bliz_streams_dev"
+        "torrent_streams_dev"
     } else {
-        "bliz_streams"
+        "torrent_streams"
     }
 }
 
+/// Minimum (initial) prebuffer target — fast start at any connection speed.
+/// 32 KB is enough to unblock Web Audio on most connections; speed is sampled
+/// at 25% (8 KB) so adaptive upsizing happens early on fast links.
+pub(super) const PREBUFFER_BYTES: usize = 32 * 1024;
+/// Maximum prebuffer when connection is fast (>2 MB/s measured during the first read).
+pub(super) const PREBUFFER_ADAPTIVE_MAX: usize = 512 * 1024;
+/// One `read` on the file stream — if the swarm sends nothing, bail out of this wait quickly.
+pub(super) const PREBUFFER_READ_TIMEOUT_SECS: u64 = 8;
+/// Hard cap for the whole prebuffer loop (many small reads).
+pub(super) const PREBUFFER_MAX_WALL_SECS: u64 = 20;
+pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
+pub(super) const COPY_CHUNK_BYTES: usize = 256 * 1024;
+
 use base64::Engine;
 use serde_json::json;
+pub use state::TorrentStreamState;
 use types::{PrefetchNextResponse, StreamReady};
-
-// ─────────────────────────────────────────────────────────────────────────
-//  Tauri commands
-// ─────────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn torrent_prepare_stream(
@@ -97,7 +108,8 @@ pub async fn torrent_prepare_cancel(
     Ok(())
 }
 
-/// Warms the next track while the current one plays.
+/// Warms the next track while the current one plays: merges `only_files` for the same torrent,
+/// or runs a silent `prepare` (no UI progress events) for another magnet.
 #[tauri::command]
 pub async fn torrent_prefetch_next_track(
     state: tauri::State<'_, TorrentStreamState>,
@@ -126,23 +138,11 @@ pub async fn torrent_prefetch_next_track(
         .await
 }
 
-/// Returns the list of files inside a torrent (metadata resolved via DHT/trackers).
+/// Returns the list of files inside a torrent described by a magnet link (metadata via DHT/trackers).
 #[tauri::command]
 pub async fn torrent_magnet_list_files(
     state: tauri::State<'_, TorrentStreamState>,
     magnet: String,
 ) -> Result<Vec<crate::rutracker::TorrentFile>, String> {
     state.magnet_resolve_files(magnet).await
-}
-
-/// Update playback position so blizorukost can slide the priority window.
-/// Call from frontend `<audio> timeupdate` handler.
-#[tauri::command]
-pub async fn torrent_notify_position(
-    state: tauri::State<'_, TorrentStreamState>,
-    token: String,
-    byte_offset: i64,
-) -> Result<(), String> {
-    state.notify_position(&token, byte_offset).await;
-    Ok(())
 }

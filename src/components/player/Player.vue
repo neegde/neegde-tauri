@@ -2,7 +2,7 @@
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
-import { prefetchNextInQueue, streamUrl, notifyPlaybackPosition } from "../../torrent/api.js";
+import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
 import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
@@ -154,8 +154,6 @@ const playing = ref(false);
 const current = ref(0);
 const duration = ref(0);
 const src = ref("");
-/** Throttle timer for blizorukost position notifications (fires max once per second). */
-let _notifyPositionTimer = null;
 const streamPhase = ref("idle"); // idle | preparing | buffering | ready | error
 const streamError = ref("");
 const bufferedPercent = ref(0);
@@ -386,34 +384,6 @@ function onKey(e) {
   }
   if (e.code === "ArrowRight" && props.hasNext) { e.preventDefault(); emit("next"); }
   if (e.code === "ArrowLeft" && props.hasPrev) { e.preventDefault(); emit("prev"); }
-}
-
-/**
- * Throttled handler for <audio> timeupdate events.
- * blizorukost's HTTP server already updates playback_byte on each Range request,
- * so position tracking is automatic during linear playback.
- * This function notifies blizorukost after a seek so the priority window
- * repositions immediately without waiting for the next HTTP request.
- */
-function onTimeUpdate() {
-  if (_notifyPositionTimer) return;
-  _notifyPositionTimer = setTimeout(() => {
-    _notifyPositionTimer = null;
-    const a = audioRef.value;
-    const url = src.value;
-    if (!a || !url || !url.includes("/stream/")) return;
-    // Estimate byte offset: currentTime / duration × typical average bitrate.
-    // We use the buffered.end(0) byte anchor when available (set by last Range request).
-    // Without exact bitrate info, we pass currentTime as a rough second-based offset;
-    // blizorukost clamps to valid piece range.
-    const dur = a.duration;
-    if (!Number.isFinite(dur) || dur <= 0) return;
-    // Approximate: assume 1 MB/s average (640 kbps FLAC) — good enough for
-    // the priority worker to know we're in the right region.
-    const approxBytesPerSec = 128_000;
-    const byteOffset = Math.floor(a.currentTime * approxBytesPerSec);
-    notifyPlaybackPosition(url, byteOffset);
-  }, 1000);
 }
 
 function updateBufferStats() {
@@ -1124,7 +1094,7 @@ onUnmounted(() => {
         @waiting="streamPhase = 'buffering'"
         @stalled="streamPhase = 'buffering'"
         @error="onAudioError"
-        @timeupdate="current = audioRef?.currentTime ?? 0; onTimeUpdate()"
+        @timeupdate="current = audioRef?.currentTime ?? 0"
         @ended="emit('ended')"
       />
     </template>

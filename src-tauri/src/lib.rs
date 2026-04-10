@@ -1,4 +1,3 @@
-mod bliz_ffi;
 mod cache_commands;
 mod cache_settings;
 mod cover_art;
@@ -185,7 +184,6 @@ pub fn run() {
             torrent_stream::torrent_prepare_cancel,
             torrent_stream::torrent_dispose_preview,
             torrent_stream::torrent_release_stream,
-            torrent_stream::torrent_notify_position,
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,

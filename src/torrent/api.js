@@ -131,27 +131,6 @@ export async function torrentFileB64ForTrack(track) {
  * Returns:
  *     `{ kind: 'sameTorrentMerged' }` or `{ kind: 'streamReady', url }`, or null on invalid input.
  */
-/**
- * Notify blizorukost of the current playback byte offset so the three-tier
- * priority window slides with the player position.
- *
- * The token is embedded in the stream URL as the last path segment
- * (http://127.0.0.1:PORT/stream/TOKEN), so we extract it here.
- * Call this from the `<audio> timeupdate` handler, throttled to ~1 s.
- *
- * @param {string} streamUrl  URL previously returned by streamUrl()
- * @param {number} byteOffset  Current playback byte offset
- */
-export async function notifyPlaybackPosition(streamUrl, byteOffset) {
-  if (!streamUrl || byteOffset == null) return;
-  const token = streamUrl.split("/stream/").at(-1) ?? "";
-  if (!token) return;
-  return invoke("torrent_notify_position", {
-    token,
-    byteOffset: Math.floor(byteOffset),
-  }).catch(() => {});
-}
-
 export async function prefetchNextInQueue(current, next) {
   if (!current?.magnet || next?.magnet == null || next.fileIdx == null || next.fileIdx < 0) {
     return null;
