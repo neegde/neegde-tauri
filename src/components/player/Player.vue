@@ -164,7 +164,12 @@ const prepareAttempt = ref(0);
 
 /** Последняя статистика BitTorrent из Tauri (событие torrent-prepare-progress). */
 const prepareProgress = ref(null);
+/** Сохраняем последнее значение, чтобы статус-меню показывало данные и в состоянии ready. */
+const lastPrepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
+
+/** Открыто ли pop-up меню статуса стрима. */
+const statusMenuOpen = ref(false);
 
 /** URL из `torrent_prefetch_next_track` (другой торрент), пока не переключились на этот трек. */
 const prefetchedStream = ref({ url: "", forKey: "" });
@@ -268,12 +273,67 @@ const prepareHintDetail = computed(() => {
   return `${etaLine}\n${second}`;
 });
 
+/* ── Status menu computeds ─────────────────────────────────────────── */
+
+/** Цвет точки для всех активных фаз, включая ready. */
+const streamDotClass = computed(() => {
+  if (streamPhase.value === "ready") return "prepare-dot--ok";
+  return prepareDotClass.value;
+});
+
+/** Одна фраза-заголовок для pop-up. */
+const streamStatusHeadline = computed(() => {
+  switch (streamPhase.value) {
+    case "preparing": return "Подготовка потока";
+    case "buffering":  return "Буферизация";
+    case "ready":      return "Стрим активен";
+    default:           return "";
+  }
+});
+
+/** Человекочитаемое предложение о том, что сейчас происходит. */
+const streamStatusBody = computed(() => {
+  const p = lastPrepareProgress.value;
+  const msg = (p?.message ?? "").toLowerCase();
+
+  if (streamPhase.value === "ready") {
+    const live = p?.peersLive ?? 0;
+    return live > 0
+      ? `Трек воспроизводится через торрент-сеть · ${live} источн.`
+      : "Трек воспроизводится через торрент-сеть";
+  }
+  if (msg.includes("metadata") || msg.includes("resolv")) return "Получение информации о файле…";
+  if (msg.includes("buffer"))                              return "Загрузка начала трека…";
+  if (msg.includes("ready"))                               return "Трек готов к воспроизведению";
+  return "Поиск источников в сети…";
+});
+
+/** Строки с данными в таблице pop-up. */
+const streamStatusRows = computed(() => {
+  const p = lastPrepareProgress.value;
+  if (!p) return [];
+  const rows = [];
+  if ((p.peersLive ?? 0) > 0)
+    rows.push({ label: "Подключено источников", value: String(p.peersLive) });
+  const pending = (p.peersConnecting ?? 0) + (p.peersQueued ?? 0);
+  if (pending > 0)
+    rows.push({ label: "Подключается", value: String(pending) });
+  if ((p.downloadMbps ?? 0) > 0.001)
+    rows.push({ label: "Скорость загрузки", value: `${p.downloadMbps.toFixed(2)} МБ/с` });
+  const seeds = props.track?.seeders;
+  if (seeds != null && Number.isFinite(Number(seeds)))
+    rows.push({ label: "Раздающих", value: String(Number(seeds)) });
+  return rows;
+});
+
 watch(
   () => [props.track?.magnet, props.track?.fileIdx],
   () => {
     prepareAttempt.value = 0;
     prefetchOkFingerprint.value = "";
     secondPrefetchDoneFingerprint = "";
+    lastPrepareProgress.value = null;
+    statusMenuOpen.value = false;
     const nk = props.track ? queueTrackKey(props.track) : "";
     if (prefetchedStream.value.url && prefetchedStream.value.forKey !== nk) {
       void releaseTorrentStreamUrl(prefetchedStream.value.url);
@@ -887,12 +947,16 @@ watch(
   { immediate: true }
 );
 
+function onDocClick() { statusMenuOpen.value = false; }
+
 onMounted(async () => {
   installMediaSessionHandlers();
   window.addEventListener("keydown", onKey);
+  document.addEventListener("click", onDocClick);
   try {
     unlistenPrepareProgress = await listen("torrent-prepare-progress", (e) => {
       prepareProgress.value = e.payload;
+      if (e.payload) lastPrepareProgress.value = e.payload;
     });
   } catch {
     unlistenPrepareProgress = () => {};
@@ -910,6 +974,7 @@ onUnmounted(() => {
   void clearDiscordPresence();
   destroyEqualizer();
   window.removeEventListener("keydown", onKey);
+  document.removeEventListener("click", onDocClick);
 });
 </script>
 
@@ -962,19 +1027,35 @@ onUnmounted(() => {
       <!-- Center: controls + progress -->
       <div class="player-center">
         <div class="player-controls">
-          <div v-if="isLoading" class="prepare-hint">
+          <div
+            v-if="streamPhase !== 'idle' && streamPhase !== 'error'"
+            class="stream-status"
+            @click.stop
+          >
             <button
               type="button"
-              class="prepare-hint-trigger"
-              aria-label="Статус загрузки BitTorrent"
+              class="stream-status-btn"
+              :aria-expanded="statusMenuOpen"
+              aria-label="Статус потока"
+              @click="statusMenuOpen = !statusMenuOpen"
             >
-              <span class="prepare-hint-dot-wrap" aria-hidden="true">
-                <span :class="['prepare-dot', prepareDotClass]" />
+              <span class="stream-status-dot-wrap" aria-hidden="true">
+                <span :class="['prepare-dot', streamDotClass, isLoading ? 'prepare-dot--pulse' : '']" />
               </span>
             </button>
-            <div class="prepare-hint-panel" role="tooltip">
-              <pre class="prepare-hint-pre">{{ prepareHintDetail }}</pre>
-            </div>
+
+            <Transition name="status-menu">
+              <div v-if="statusMenuOpen" class="stream-status-panel" role="dialog" aria-label="Статус стрима">
+                <div class="status-headline">{{ streamStatusHeadline }}</div>
+                <div class="status-body">{{ streamStatusBody }}</div>
+                <div v-if="streamStatusRows.length" class="status-rows">
+                  <div v-for="row in streamStatusRows" :key="row.label" class="status-row">
+                    <span class="status-label">{{ row.label }}</span>
+                    <span class="status-val">{{ row.value }}</span>
+                  </div>
+                </div>
+              </div>
+            </Transition>
           </div>
 
           <button
@@ -1257,13 +1338,14 @@ onUnmounted(() => {
   height: 4px;
 }
 
-/* Индикатор загрузки торрента (цвет + подсказка с пирами и скоростью) */
+/* ── Индикатор + pop-up статуса стрима ─────────────────────────────── */
 .player-controls {
   flex-wrap: wrap;
   justify-content: center;
   position: relative;
 }
-.prepare-hint {
+
+.stream-status {
   position: absolute;
   left: -36px;
   top: 50%;
@@ -1271,7 +1353,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
 }
-.prepare-hint-trigger {
+
+.stream-status-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1280,68 +1363,108 @@ onUnmounted(() => {
   border-radius: 50%;
   background: transparent;
   color: inherit;
-  cursor: help;
+  cursor: pointer;
   line-height: 0;
+  transition: background 0.15s;
 }
-.prepare-hint-trigger:hover {
+.stream-status-btn:hover {
   background: rgba(255, 255, 255, 0.08);
 }
-.prepare-hint-dot-wrap {
+
+.stream-status-dot-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
 }
+
+/* ── Точка состояния ─────────────────── */
 .prepare-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  transition: background 0.3s;
 }
-.prepare-dot--info {
-  background: linear-gradient(145deg, #6ab0ff, #3d7ccc);
+.prepare-dot--info { background: linear-gradient(145deg, #6ab0ff, #3d7ccc); }
+.prepare-dot--ok   { background: linear-gradient(145deg, #5fd68a, #2fa85c); }
+.prepare-dot--warn { background: linear-gradient(145deg, #f0c860, #d4a017); }
+.prepare-dot--bad  { background: linear-gradient(145deg, #ff7d7d, #c42e2e); }
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.55; transform: scale(0.78); }
 }
-.prepare-dot--ok {
-  background: linear-gradient(145deg, #5fd68a, #2fa85c);
+.prepare-dot--pulse {
+  animation: dot-pulse 1.4s ease-in-out infinite;
 }
-.prepare-dot--warn {
-  background: linear-gradient(145deg, #f0c860, #d4a017);
-}
-.prepare-dot--bad {
-  background: linear-gradient(145deg, #ff7d7d, #c42e2e);
-}
-.prepare-hint-panel {
-  display: none;
+
+/* ── Pop-up панель ───────────────────── */
+.stream-status-panel {
   position: absolute;
   left: 50%;
   bottom: calc(100% + 10px);
   transform: translateX(-50%);
   z-index: 80;
-  min-width: 240px;
-  max-width: min(92vw, 400px);
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: #f0ece8;
+  min-width: 220px;
+  max-width: min(90vw, 320px);
+  padding: 12px 14px;
+  border-radius: 10px;
   background: rgba(22, 20, 18, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   text-align: left;
+  pointer-events: auto;
 }
-.prepare-hint:hover .prepare-hint-panel {
-  display: block;
+
+.status-headline {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(240, 236, 232, 0.5);
+  margin-bottom: 4px;
 }
-.prepare-hint-pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+.status-body {
+  font-size: 13px;
+  font-weight: 500;
+  color: #f0ece8;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+.status-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
   font-size: 11.5px;
+  line-height: 1.4;
 }
+.status-label {
+  color: rgba(240, 236, 232, 0.5);
+  white-space: nowrap;
+}
+.status-val {
+  color: #f0ece8;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Анимация появления pop-up ─────────── */
+.status-menu-enter-active { transition: opacity 0.14s ease, transform 0.14s ease; }
+.status-menu-leave-active { transition: opacity 0.1s ease, transform 0.1s ease; }
+.status-menu-enter-from  { opacity: 0; transform: translateX(-50%) translateY(4px); }
+.status-menu-leave-to    { opacity: 0; transform: translateX(-50%) translateY(4px); }
 
 .player-like-btn {
   flex-shrink: 0;
