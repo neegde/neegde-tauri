@@ -39,6 +39,11 @@ fn build_blizorukost() {
     println!("cargo:rerun-if-changed={}", bliz_dir.join("include").display());
     println!("cargo:rerun-if-changed={}", bliz_dir.join("CMakeLists.txt").display());
 
+    // ── C++ standard library ──────────────────────────────────────────────
+    // Must come before libtorrent so the linker sees it while resolving
+    // unresolved symbols from libblizorukost.a.
+    link_cxx_stdlib();
+
     // ── Link against libtorrent-rasterbar ─────────────────────────────────
     // Try pkg-config first (works on most Linux and Homebrew macOS setups).
     let found_via_pkg_config = pkg_config::Config::new()
@@ -87,4 +92,16 @@ fn link_libtorrent_fallback() {
         println!("cargo:rustc-link-lib=dylib=ws2_32");
         println!("cargo:rustc-link-lib=dylib=iphlpapi");
     }
+}
+
+fn link_cxx_stdlib() {
+    // A static C++ library (blizorukost) pulls in C++ runtime symbols that Rust's
+    // linker won't resolve automatically.  We must explicitly link the C++ stdlib.
+    #[cfg(target_os = "macos")]
+    println!("cargo:rustc-link-lib=c++");         // libc++ (Clang/macOS)
+
+    #[cfg(target_os = "linux")]
+    println!("cargo:rustc-link-lib=stdc++");      // libstdc++ (GCC/Linux)
+
+    // Windows: the MSVC runtime is linked automatically by the compiler.
 }
