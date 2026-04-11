@@ -35,8 +35,23 @@ fn build_blizorukost() {
     println!("cargo:rustc-link-lib=static=blizorukost");
 
     // Re-run if any C++ source changes.
-    println!("cargo:rerun-if-changed={}", bliz_dir.join("src").display());
-    println!("cargo:rerun-if-changed={}", bliz_dir.join("include").display());
+    // NOTE: Cargo's rerun-if-changed on a directory only tracks the directory
+    // mtime, which macOS does NOT update when a file inside is modified.
+    // We enumerate the individual source files so Cargo detects changes correctly.
+    for entry in std::fs::read_dir(bliz_dir.join("src"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        println!("cargo:rerun-if-changed={}", entry.path().display());
+    }
+    for entry in std::fs::read_dir(bliz_dir.join("include"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        println!("cargo:rerun-if-changed={}", entry.path().display());
+    }
     println!("cargo:rerun-if-changed={}", bliz_dir.join("CMakeLists.txt").display());
 
     // ── C++ standard library ──────────────────────────────────────────────
