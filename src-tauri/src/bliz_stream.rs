@@ -178,6 +178,9 @@ impl BlizStreamState {
         let url = tokio::task::spawn_blocking(move || -> Result<String, String> {
             let magnet_c = CString::new(magnet.as_str()).unwrap();
 
+            eprintln!("[bliz-rs] prepare spawn_blocking start — file_idx={file_idx} has_torrent_data={}",
+                      torrent_bytes.is_some());
+
             let ctx = Box::new(ProgressCtx { app: app_clone });
             let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
 
@@ -201,6 +204,7 @@ impl BlizStreamState {
 
             // Handle cancel (prepare finished but caller gave up).
             if inner.prepare_cancelled.load(Ordering::Relaxed) {
+                eprintln!("[bliz-rs] prepare was cancelled after C++ returned");
                 if info.error == ffi::BlizError::Ok {
                     let token_c =
                         CString::new(ffi::c_bytes_to_string(&info.token)).unwrap();
@@ -210,15 +214,19 @@ impl BlizStreamState {
             }
 
             if info.error != ffi::BlizError::Ok {
-                return Err(ffi::c_bytes_to_string(&info.error_msg));
+                let msg = ffi::c_bytes_to_string(&info.error_msg);
+                eprintln!("[bliz-rs] prepare ERROR: {:?} — {msg}", info.error);
+                return Err(msg);
             }
 
             let url   = ffi::c_bytes_to_string(&info.url);
             let token = ffi::c_bytes_to_string(&info.token);
+            eprintln!("[bliz-rs] prepare OK — token={token} url={url}");
 
             // Release old current stream.
             let mut current = inner.current_token.lock().unwrap();
             if let Some(old) = current.take() {
+                eprintln!("[bliz-rs] releasing old stream token={old}");
                 let old_c = CString::new(old).unwrap();
                 unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
             }
@@ -239,8 +247,11 @@ impl BlizStreamState {
 
     /* ── release_token ─────────────────────────────────────────────────── */
     pub fn release_token(&self, token: &str) {
+        eprintln!("[bliz-rs] release_token({token}) — called from async context (will block until join)");
         let token_c = CString::new(token).unwrap();
+        let t0 = std::time::Instant::now();
         unsafe { ffi::bliz_stream_release(self.inner.ptr, token_c.as_ptr()) };
+        eprintln!("[bliz-rs] release_token({token}) done in {:?}", t0.elapsed());
         // Also clear from current_token if it matches.
         let mut current = self.inner.current_token.lock().unwrap();
         if current.as_deref() == Some(token) {
