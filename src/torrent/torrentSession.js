@@ -26,3 +26,24 @@ export function releaseTorrentStreamUrl(url) {
 export function torrentPrepareCancel() {
   return invoke("torrent_prepare_cancel").catch(() => {});
 }
+
+/**
+ * Уведомляет движок о текущей позиции воспроизведения в байтах.
+ * Вызывай при seek-е; движок сдвинет окно приоритета пьес.
+ *
+ * @param {string} url  URL потока вида http://127.0.0.1:PORT/stream/TOKEN
+ * @param {number} byteOffset  Текущая позиция в байтах
+ */
+export function blizNotifyPosition(url, byteOffset) {
+  if (!url || typeof url !== "string") return Promise.resolve();
+  const marker = "/stream/";
+  const i = url.indexOf(marker);
+  if (i < 0) return Promise.resolve();
+  const rest = url.slice(i + marker.length);
+  const token = rest.split(/[/?#]/)[0];
+  if (!token) return Promise.resolve();
+  return invoke("bliz_notify_position", {
+    token,
+    byteOffset: Math.floor(byteOffset),
+  }).catch(() => {});
+}

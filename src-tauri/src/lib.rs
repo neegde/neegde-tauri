@@ -1,3 +1,5 @@
+mod bliz_ffi;
+mod bliz_stream;
 mod cache_commands;
 mod cache_settings;
 mod cover_art;
@@ -20,6 +22,7 @@ use tauri::{
 /// Avoids repeat HTTP round-trips for the same artist/album.
 type CoverArtCache = Mutex<LruCache<String, Option<String>>>;
 
+use bliz_stream::BlizStreamState;
 use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
 
 use discord_presence::DiscordPresenceState;
@@ -109,6 +112,7 @@ pub fn run() {
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
                 NonZeroUsize::new(200).unwrap(),
             )));
+            app.manage(BlizStreamState::new(app.handle()));
             app.manage(torrent_stream::TorrentStreamState::new(
                 app.handle().clone(),
             ));
@@ -178,12 +182,15 @@ pub fn run() {
             rutracker::rutracker_get_http_proxy,
             rutracker::rutracker_set_http_proxy,
             rutracker::rutracker_probe_http_proxy,
-            torrent_stream::torrent_prepare_stream,
-            torrent_stream::torrent_magnet_list_files,
-            torrent_stream::torrent_prefetch_next_track,
-            torrent_stream::torrent_prepare_cancel,
-            torrent_stream::torrent_dispose_preview,
-            torrent_stream::torrent_release_stream,
+            // ── Streaming: now backed by blizorukost (C++ + libtorrent) ──
+            bliz_stream::torrent_prepare_stream,
+            bliz_stream::torrent_magnet_list_files,
+            bliz_stream::torrent_prefetch_next_track,
+            bliz_stream::torrent_prepare_cancel,
+            bliz_stream::torrent_dispose_preview,
+            bliz_stream::torrent_release_stream,
+            bliz_stream::bliz_notify_position,
+            // ── Export: full-download to user library (librqbit) ─────────
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,
