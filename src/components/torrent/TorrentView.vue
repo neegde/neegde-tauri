@@ -82,8 +82,12 @@ function setViewMode(mode) {
   localStorage.setItem("albumViewMode", mode);
 }
 
-/** Gallery → тот же предпросмотр, что при открытии лайкнутого альбома (только файлы альбома). */
+/**
+ * Gallery card: start album playback (full file list for detectAlbums) then narrow to album preview.
+ * Order matters — handlePlayAlbum must run before handleOpenAlbumPreview.
+ */
 function openAlbumFromGallery(wrap) {
+  emit("play-album", wrap.raw.audioFiles);
   emit("open-album-preview", {
     album: wrap.raw,
     displayName: wrap.displayName,

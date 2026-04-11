@@ -1,5 +1,5 @@
 pub mod debug_api;
-mod debug_log;
+pub mod debug_log;
 pub mod export;
 mod http;
 mod state;

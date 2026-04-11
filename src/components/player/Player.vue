@@ -7,6 +7,7 @@ import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
+  hoverActivateTorrentStreamUrl,
 } from "../../torrent/torrentSession.js";
 import {
   ensureEqualizer,
@@ -368,11 +369,11 @@ function logPlayRejected(context, err) {
   });
 }
 
-function cancelLoad() {
+async function cancelLoad() {
   void appDebugLog("player", "cancelLoad", { source: "user" });
   loadCancelledByUser.value = true;
   void torrentPrepareCancel();
-  void releaseTorrentStreamUrl(src.value);
+  const prevUrl = src.value;
   stopBufferPoll();
   src.value = "";
   current.value = 0;
@@ -381,11 +382,12 @@ function cancelLoad() {
   streamError.value = "";
   streamPhase.value = "idle";
   playing.value = false;
+  await releaseTorrentStreamUrl(prevUrl);
 }
 
 function onPlayButtonClick() {
-  if (isLoading.value) {
-    cancelLoad();
+  if (streamPhase.value === "preparing") {
+    void cancelLoad();
     return;
   }
   togglePlay();
@@ -439,7 +441,7 @@ function onKey(e) {
   }
   if (e.code === "Space" && hasTrack.value) {
     e.preventDefault();
-    if (isLoading.value) cancelLoad();
+    if (streamPhase.value === "preparing") void cancelLoad();
     else togglePlay();
   }
   if (e.code === "ArrowRight" && props.hasNext) { e.preventDefault(); emit("next"); }
@@ -691,9 +693,43 @@ function onAudioPlay() {
   void resumeEqualizerContext();
 }
 
-function onAudioPlaying() {
-  streamPhase.value = "ready";
+/**
+ * Marks the stream as ready for UI (spinner off). Uses `canplay`, not only `playing`,
+ * because autoplay may be blocked (mobile / WebView) or `playing` may be delayed
+ * while the element already reached HAVE_FUTURE_DATA.
+ */
+function bumpStreamPhaseReady() {
+  if (streamPhase.value !== "error" && streamPhase.value !== "idle") {
+    streamPhase.value = "ready";
+  }
   void resumeEqualizerContext();
+}
+
+function onAudioCanPlay() {
+  updateBufferStats();
+  bumpStreamPhaseReady();
+}
+
+function onAudioPlaying() {
+  bumpStreamPhaseReady();
+}
+
+/**
+ * Browsers often fire `waiting` / `stalled` while paused; do not show buffering or
+ * the play button will call cancelLoad instead of resume.
+ */
+function onAudioWaiting() {
+  const a = audioRef.value;
+  if (a && !a.paused) {
+    streamPhase.value = "buffering";
+  }
+}
+
+function onAudioStalled() {
+  const a = audioRef.value;
+  if (a && !a.paused) {
+    streamPhase.value = "buffering";
+  }
 }
 
 let bufferPollRaf = 0;
@@ -773,7 +809,9 @@ async function maybeTriggerSecondPrefetch() {
 
   secondPrefetchInFlight = true;
   try {
-    const result = await prefetchNextInQueue(props.nextTrack, props.secondNextTrack);
+    const result = await prefetchNextInQueue(props.nextTrack, props.secondNextTrack, {
+      warmOnly: true,
+    });
     // Release the URL immediately — we just want the torrent warmed in session
     if (result?.kind === "streamReady" && result.url) {
       void releaseTorrentStreamUrl(result.url);
@@ -822,8 +860,9 @@ watch(
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
-      void releaseTorrentStreamUrl(src.value);
+      const prevUrl = src.value;
       src.value = "";
+      await releaseTorrentStreamUrl(prevUrl);
       current.value = 0;
       duration.value = 0;
       bufferedPercent.value = 0;
@@ -837,8 +876,9 @@ watch(
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
-      void releaseTorrentStreamUrl(src.value);
+      const prevUrl = src.value;
       src.value = "";
+      await releaseTorrentStreamUrl(prevUrl);
       current.value = 0;
       duration.value = 0;
       bufferedPercent.value = 0;
@@ -851,13 +891,14 @@ watch(
     loadCancelledByUser.value = false;
     prepareProgress.value = null;
     playing.value = false;
-    void releaseTorrentStreamUrl(src.value);
+    const prevUrl = src.value;
     src.value = "";
     current.value = 0;
     duration.value = 0;
     bufferedPercent.value = 0;
     streamError.value = "";
     streamPhase.value = "preparing";
+    await releaseTorrentStreamUrl(prevUrl);
 
     let cancelled = false;
     onCleanup(() => { cancelled = true; });
@@ -875,7 +916,9 @@ watch(
         prefetchedStream.value = { url: "", forKey: "" };
         void appDebugLog("player", "stream prepare used prefetched URL", { fileIdx });
       } else if (props.hoverPrefetchUrl && props.hoverPrefetchKey === preparedKey) {
-        // Hover-prefetch hit (user hovered this track before clicking)
+        // Hover-prefetch hit (user hovered this track before clicking).
+        // Promote hover_token → current_token BEFORE assigning src to the audio element.
+        await hoverActivateTorrentStreamUrl(props.hoverPrefetchUrl);
         nextSrc = props.hoverPrefetchUrl;
         emit("hover-prefetch-consumed");
         void appDebugLog("player", "stream prepare used hover-prefetch URL", { fileIdx });
@@ -1169,11 +1212,11 @@ onUnmounted(() => {
         @playing="onAudioPlaying"
         @pause="playing = false"
         @progress="updateBufferStats"
-        @canplay="updateBufferStats"
+        @canplay="onAudioCanPlay"
         @loadedmetadata="duration = audioRef?.duration ?? 0; updateBufferStats()"
         @durationchange="duration = audioRef?.duration ?? 0; updateBufferStats()"
-        @waiting="streamPhase = 'buffering'"
-        @stalled="streamPhase = 'buffering'"
+        @waiting="onAudioWaiting"
+        @stalled="onAudioStalled"
         @error="onAudioError"
         @timeupdate="current = audioRef?.currentTime ?? 0"
         @ended="emit('ended')"

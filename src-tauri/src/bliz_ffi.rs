@@ -22,6 +22,10 @@ pub struct BlizConfig {
     pub cache_ttl_secs: u32,
     /// BT listen port; 0 = random.
     pub listen_port: c_int,
+    /// Optional log callback; NULL = stderr only.
+    pub log_fn: BlizLogFn,
+    /// Passed verbatim to log_fn.
+    pub log_userdata: *mut c_void,
 }
 
 /// Error codes returned by blizorukost.
@@ -66,6 +70,9 @@ pub struct BlizFileList {
     pub error: BlizError,
     pub error_msg: [u8; 256],
 }
+
+/// Log callback: called for every BLIZ_LOG line (stderr is always written too).
+pub type BlizLogFn = Option<unsafe extern "C" fn(message: *const c_char, userdata: *mut c_void)>;
 
 /// Progress callback: called periodically during bliz_stream_prepare.
 pub type BlizProgressFn = Option<

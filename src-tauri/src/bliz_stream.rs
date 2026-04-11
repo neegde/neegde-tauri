@@ -6,13 +6,15 @@
 //! Key design points:
 //! - BlizSessionInner owns the *mut BlizSession raw pointer; dropped via bliz_session_destroy.
 //! - All blocking C calls run in spawn_blocking to avoid blocking the async executor.
-//! - seek_gen (seek_generation) is bumped on every Range request by the C++ HTTP server,
-//!   so stale serve_range loops abort within 100 ms.
-//! - bliz_notify_position is a new command the frontend should call on seek events.
+//! - seek_generation is bumped only when a stream is released; parallel Range
+//!   requests must not cancel each other (browser often fetches start + end).
+//! - Each `prepare()` bumps `prepare_version`; stale blocking results are dropped
+//!   so a slow prepare cannot overwrite state after the user switched tracks.
+//! - bliz_notify_position updates piece-priority window from the UI seek position.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 
@@ -22,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use base64::Engine as _;
 use crate::bliz_ffi as ffi;
 use crate::rutracker::TorrentFile;
+use crate::torrent_stream::debug_log::AppDebugLog;
 
 /* ── Progress event payload ─────────────────────────────────────────────
    Same shape as TorrentPrepareProgressPayload so the Vue component works
@@ -88,15 +91,36 @@ unsafe extern "C" fn on_progress(progress: f32, status: *const c_char, userdata:
     );
 }
 
+/* ── C log callback — forwards blizorukost C++ log lines to AppDebugLog ── */
+unsafe extern "C" fn on_bliz_log(message: *const c_char, userdata: *mut c_void) {
+    if message.is_null() || userdata.is_null() {
+        return;
+    }
+    // SAFETY: userdata is an Arc<AppDebugLog> raw pointer kept alive by BlizSessionInner.
+    let debug_log = unsafe { &*(userdata as *const AppDebugLog) };
+    let msg = unsafe { CStr::from_ptr(message) }
+        .to_string_lossy()
+        .into_owned();
+    debug_log.push("bliz", msg, None);
+}
+
 /* ── Inner session (owns the C++ object) ───────────────────────────────── */
 struct BlizSessionInner {
     ptr: *mut ffi::BlizSession,
     /// Token of the currently active stream.
     current_token: Mutex<Option<String>>,
-    /// Token of the prefetched (background) stream.
+    /// Token of the prefetched (background) stream (queue look-ahead).
     prefetch_token: Mutex<Option<String>>,
+    /// Second-ahead warm-up only — must not evict `prefetch_token` (next track).
+    warm_prefetch_token: Mutex<Option<String>>,
+    /// Token prepared by hover-prefetch. NEVER releases current_token.
+    hover_token: Mutex<Option<String>>,
     /// Set to true to cancel the next prepare result after it arrives.
     prepare_cancelled: AtomicBool,
+    /// Incremented at the start of every `prepare()`; stale completions compare against this.
+    prepare_version: AtomicU64,
+    /// Keeps the Arc alive so the raw pointer in BlizConfig stays valid.
+    _debug_log_arc: Arc<AppDebugLog>,
 }
 
 // SAFETY: BlizSessionImpl is fully thread-safe internally (mutexes + atomics).
@@ -112,10 +136,17 @@ impl Drop for BlizSessionInner {
 /* ── Public state handle ───────────────────────────────────────────────── */
 pub struct BlizStreamState {
     inner: Arc<BlizSessionInner>,
+    pub debug_log: Arc<AppDebugLog>,
 }
 
 impl BlizStreamState {
-    pub fn new(app: &AppHandle) -> Self {
+    fn dlog(&self, msg: impl Into<String>) {
+        self.debug_log.push("bliz", msg.into(), None);
+    }
+}
+
+impl BlizStreamState {
+    pub fn new(app: &AppHandle, debug_log: Arc<AppDebugLog>) -> Self {
         let storage_path = {
             let dir_label = if cfg!(debug_assertions) {
                 "bliz_streams_dev"
@@ -133,11 +164,17 @@ impl BlizStreamState {
 
         let storage_c = CString::new(storage_path.to_string_lossy().as_ref()).unwrap();
 
+        // Pass a raw pointer to the AppDebugLog into the C++ log callback.
+        // BlizSessionInner keeps _debug_log_arc alive so the pointer is valid.
+        let log_userdata = Arc::as_ptr(&debug_log) as *mut c_void;
+
         let cfg = ffi::BlizConfig {
             storage_path: storage_c.as_ptr(),
             cache_max_bytes: 0, // 50 GB default
             cache_ttl_secs: 0,  // 3600 s default
             listen_port: 0,     // random
+            log_fn: Some(on_bliz_log),
+            log_userdata,
         };
 
         let ptr = unsafe { ffi::bliz_session_create(&cfg) };
@@ -148,8 +185,13 @@ impl BlizStreamState {
                 ptr,
                 current_token: Mutex::new(None),
                 prefetch_token: Mutex::new(None),
+                warm_prefetch_token: Mutex::new(None),
+                hover_token: Mutex::new(None),
                 prepare_cancelled: AtomicBool::new(false),
+                prepare_version: AtomicU64::new(0),
+                _debug_log_arc: debug_log.clone(),
             }),
+            debug_log,
         }
     }
 
@@ -162,6 +204,8 @@ impl BlizStreamState {
         torrent_bytes: Option<Vec<u8>>,
     ) -> Result<String, String> {
         self.inner.prepare_cancelled.store(false, Ordering::Relaxed);
+        self.inner.prepare_version.fetch_add(1, Ordering::AcqRel);
+        let my_version = self.inner.prepare_version.load(Ordering::Acquire);
 
         // Emit "connecting" immediately so the UI shows a spinner.
         let _ = app.emit(
@@ -171,15 +215,16 @@ impl BlizStreamState {
 
         let inner = self.inner.clone();
         let app_clone = app.clone();
+        let dlog = self.debug_log.clone();
 
         // All blizorukost calls happen inside spawn_blocking.
         // We do cancel-check and token management inside the closure
         // so that `inner` doesn't need to be used both inside and outside.
         let url = tokio::task::spawn_blocking(move || -> Result<String, String> {
+            let dlog = |msg: String| { dlog.push("bliz", msg, None); };
             let magnet_c = CString::new(magnet.as_str()).unwrap();
 
-            eprintln!("[bliz-rs] prepare spawn_blocking start — file_idx={file_idx} has_torrent_data={}",
-                      torrent_bytes.is_some());
+            dlog(format!("prepare start — file_idx={file_idx} has_torrent_data={}", torrent_bytes.is_some()));
 
             let ctx = Box::new(ProgressCtx { app: app_clone });
             let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
@@ -202,9 +247,19 @@ impl BlizStreamState {
             // Free the ProgressCtx (callback will not be called after this).
             let _ = unsafe { Box::from_raw(ctx_ptr as *mut ProgressCtx) };
 
+            if inner.prepare_version.load(Ordering::Acquire) != my_version {
+                dlog("prepare superseded — discarding result (track changed)".into());
+                if info.error == ffi::BlizError::Ok {
+                    let token = ffi::c_bytes_to_string(&info.token);
+                    let token_c = CString::new(token).unwrap();
+                    unsafe { ffi::bliz_stream_release(inner.ptr, token_c.as_ptr()) };
+                }
+                return Err("Отменено".into());
+            }
+
             // Handle cancel (prepare finished but caller gave up).
             if inner.prepare_cancelled.load(Ordering::Relaxed) {
-                eprintln!("[bliz-rs] prepare was cancelled after C++ returned");
+                dlog("prepare cancelled after C++ returned".into());
                 if info.error == ffi::BlizError::Ok {
                     let token_c =
                         CString::new(ffi::c_bytes_to_string(&info.token)).unwrap();
@@ -215,18 +270,18 @@ impl BlizStreamState {
 
             if info.error != ffi::BlizError::Ok {
                 let msg = ffi::c_bytes_to_string(&info.error_msg);
-                eprintln!("[bliz-rs] prepare ERROR: {:?} — {msg}", info.error);
+                dlog(format!("prepare ERROR: {:?} — {msg}", info.error));
                 return Err(msg);
             }
 
             let url   = ffi::c_bytes_to_string(&info.url);
             let token = ffi::c_bytes_to_string(&info.token);
-            eprintln!("[bliz-rs] prepare OK — token={token} url={url}");
+            dlog(format!("prepare OK — token={token}"));
 
             // Release old current stream.
             let mut current = inner.current_token.lock().unwrap();
             if let Some(old) = current.take() {
-                eprintln!("[bliz-rs] releasing old stream token={old}");
+                dlog(format!("prepare: releasing old current token={old}"));
                 let old_c = CString::new(old).unwrap();
                 unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
             }
@@ -247,15 +302,22 @@ impl BlizStreamState {
 
     /* ── release_token ─────────────────────────────────────────────────── */
     pub fn release_token(&self, token: &str) {
-        eprintln!("[bliz-rs] release_token({token}) — called from async context (will block until join)");
+        self.dlog(format!("release_token({token})"));
         let token_c = CString::new(token).unwrap();
         let t0 = std::time::Instant::now();
         unsafe { ffi::bliz_stream_release(self.inner.ptr, token_c.as_ptr()) };
-        eprintln!("[bliz-rs] release_token({token}) done in {:?}", t0.elapsed());
-        // Also clear from current_token if it matches.
+        self.dlog(format!("release_token({token}) done in {:?}", t0.elapsed()));
         let mut current = self.inner.current_token.lock().unwrap();
         if current.as_deref() == Some(token) {
             *current = None;
+        }
+        let mut prefetch = self.inner.prefetch_token.lock().unwrap();
+        if prefetch.as_deref() == Some(token) {
+            *prefetch = None;
+        }
+        let mut warm = self.inner.warm_prefetch_token.lock().unwrap();
+        if warm.as_deref() == Some(token) {
+            *warm = None;
         }
     }
 
@@ -270,6 +332,116 @@ impl BlizStreamState {
         if let Some(token) = prefetch.take() {
             let c = CString::new(token).unwrap();
             unsafe { ffi::bliz_stream_release(self.inner.ptr, c.as_ptr()) };
+        }
+        let mut warm = self.inner.warm_prefetch_token.lock().unwrap();
+        if let Some(token) = warm.take() {
+            let c = CString::new(token).unwrap();
+            unsafe { ffi::bliz_stream_release(self.inner.ptr, c.as_ptr()) };
+        }
+        let mut hover = self.inner.hover_token.lock().unwrap();
+        if let Some(token) = hover.take() {
+            let c = CString::new(token).unwrap();
+            unsafe { ffi::bliz_stream_release(self.inner.ptr, c.as_ptr()) };
+        }
+    }
+
+    /* ── hover_prepare ─────────────────────────────────────────────────── */
+    /// Prepare a stream speculatively on hover. Never releases current_token —
+    /// stores result in hover_token instead. Safe to call concurrently with
+    /// an active stream.
+    pub async fn hover_prepare(
+        &self,
+        app: AppHandle,
+        magnet: String,
+        file_idx: usize,
+        torrent_bytes: Option<Vec<u8>>,
+    ) -> Result<String, String> {
+        let inner = self.inner.clone();
+        let app_clone = app.clone();
+        let dlog_arc = self.debug_log.clone();
+
+        let url = tokio::task::spawn_blocking(move || -> Result<String, String> {
+            let dlog = |msg: String| { dlog_arc.push("bliz", msg, None); };
+            let magnet_c = CString::new(magnet.as_str()).unwrap();
+            dlog(format!("hover_prepare start — file_idx={file_idx}"));
+
+            let ctx = Box::new(ProgressCtx { app: app_clone });
+            let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
+
+            let info = unsafe {
+                ffi::bliz_stream_prepare(
+                    inner.ptr,
+                    magnet_c.as_ptr(),
+                    torrent_bytes
+                        .as_deref()
+                        .map(|b| b.as_ptr())
+                        .unwrap_or(std::ptr::null()),
+                    torrent_bytes.as_deref().map(|b| b.len()).unwrap_or(0),
+                    file_idx as c_int,
+                    Some(on_progress),
+                    ctx_ptr,
+                )
+            };
+            let _ = unsafe { Box::from_raw(ctx_ptr as *mut ProgressCtx) };
+
+            if info.error != ffi::BlizError::Ok {
+                let msg = ffi::c_bytes_to_string(&info.error_msg);
+                dlog(format!("hover_prepare ERROR: {msg}"));
+                return Err(msg);
+            }
+
+            let url   = ffi::c_bytes_to_string(&info.url);
+            let token = ffi::c_bytes_to_string(&info.token);
+            dlog(format!("hover_prepare OK — token={token}"));
+
+            // Release old hover token (if any) and park the new one.
+            // NEVER touch current_token.
+            let mut hover = inner.hover_token.lock().unwrap();
+            if let Some(old) = hover.take() {
+                dlog(format!("hover_prepare releasing old hover token={old}"));
+                let old_c = CString::new(old).unwrap();
+                unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+            }
+            *hover = Some(token);
+            Ok(url)
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))??;
+
+        Ok(url)
+    }
+
+    /* ── hover_release ─────────────────────────────────────────────────── */
+    /// Release the hover-prefetch token explicitly (user navigated away without clicking).
+    pub fn hover_release(&self, token: &str) {
+        self.dlog(format!("hover_release({token})"));
+        let token_c = CString::new(token).unwrap();
+        unsafe { ffi::bliz_stream_release(self.inner.ptr, token_c.as_ptr()) };
+        let mut hover = self.inner.hover_token.lock().unwrap();
+        if hover.as_deref() == Some(token) {
+            *hover = None;
+        }
+    }
+
+    /* ── hover_activate ────────────────────────────────────────────────── */
+    /// Called when the player actually starts using the hover-prefetch URL.
+    /// Moves the token from hover_token → current_token, releasing old current.
+    pub fn hover_activate(&self, token: &str) {
+        self.dlog(format!("hover_activate({token}) — promoting hover→current"));
+        // Release old current.
+        let mut current = self.inner.current_token.lock().unwrap();
+        if let Some(old) = current.take() {
+            if old != token {
+                self.dlog(format!("hover_activate releasing old current={old}"));
+                let old_c = CString::new(old).unwrap();
+                unsafe { ffi::bliz_stream_release(self.inner.ptr, old_c.as_ptr()) };
+            }
+        }
+        *current = Some(token.to_owned());
+        // Remove from hover_token.
+        let mut hover = self.inner.hover_token.lock().unwrap();
+        if hover.as_deref() == Some(token) {
+            *hover = None;
         }
     }
 
@@ -334,11 +506,15 @@ impl BlizStreamState {
 
     /* ── prefetch_next_track ────────────────────────────────────────────── */
     /// Warm the next track in the background. Returns its URL or empty string.
+    ///
+    /// `warm_only`: second-ahead cache warm-up — parks in `warm_prefetch_token` only so the
+    /// real next-track prefetch in `prefetch_token` is never released.
     pub async fn prefetch_next(
         &self,
         magnet: String,
         file_idx: usize,
         torrent_bytes: Option<Vec<u8>>,
+        warm_only: bool,
     ) -> Result<String, String> {
         let inner = self.inner.clone();
 
@@ -367,13 +543,21 @@ impl BlizStreamState {
             let url = ffi::c_bytes_to_string(&info.url);
             let token = ffi::c_bytes_to_string(&info.token);
 
-            // Park the prefetch token.
-            let mut prefetch = inner.prefetch_token.lock().unwrap();
-            if let Some(old) = prefetch.take() {
-                let old_c = CString::new(old).unwrap();
-                unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+            if warm_only {
+                let mut warm = inner.warm_prefetch_token.lock().unwrap();
+                if let Some(old) = warm.take() {
+                    let old_c = CString::new(old).unwrap();
+                    unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+                }
+                *warm = Some(token);
+            } else {
+                let mut prefetch = inner.prefetch_token.lock().unwrap();
+                if let Some(old) = prefetch.take() {
+                    let old_c = CString::new(old).unwrap();
+                    unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+                }
+                *prefetch = Some(token);
             }
-            *prefetch = Some(token);
             Ok(url)
         })
         .await
@@ -463,6 +647,49 @@ pub async fn bliz_notify_position(
     Ok(())
 }
 
+/// Prepare a stream speculatively on hover. Stores in hover_token, NEVER releases
+/// the current stream. Replace the old `streamUrl` call in hover-prefetch code.
+#[tauri::command]
+pub async fn torrent_hover_prepare_stream(
+    app: AppHandle,
+    state: tauri::State<'_, BlizStreamState>,
+    magnet: String,
+    file_idx: usize,
+    torrent_file_b64: Option<String>,
+) -> Result<StreamReady, String> {
+    let torrent_bytes: Option<Vec<u8>> = match torrent_file_b64.as_deref() {
+        None | Some("") => None,
+        Some(s) => Some(
+            base64::engine::general_purpose::STANDARD
+                .decode(s.trim())
+                .map_err(|e| format!("base64: {e}"))?,
+        ),
+    };
+    let url = state.hover_prepare(app, magnet, file_idx, torrent_bytes).await?;
+    Ok(StreamReady { url })
+}
+
+/// Release a hover-prefetch stream without activating it (user navigated away).
+#[tauri::command]
+pub async fn torrent_hover_release_stream(
+    state: tauri::State<'_, BlizStreamState>,
+    token: String,
+) -> Result<(), String> {
+    state.hover_release(&token);
+    Ok(())
+}
+
+/// Activate the hover-prefetch: promotes token from hover→current and releases old current.
+/// Must be called before assigning the hover URL to the audio element.
+#[tauri::command]
+pub async fn torrent_hover_activate(
+    state: tauri::State<'_, BlizStreamState>,
+    token: String,
+) -> Result<(), String> {
+    state.hover_activate(&token);
+    Ok(())
+}
+
 /// List files inside a magnet/torrent.
 #[tauri::command]
 pub async fn torrent_magnet_list_files(
@@ -481,8 +708,10 @@ pub async fn torrent_prefetch_next_track(
     next_magnet: String,
     next_file_idx: usize,
     next_torrent_file_b64: Option<String>,
+    warm_only: Option<bool>,
 ) -> Result<PrefetchNextResponse, String> {
     let _ = (current_magnet, current_file_idx); // unused in bliz path
+    let warm_only = warm_only.unwrap_or(false);
 
     let torrent_bytes: Option<Vec<u8>> = match next_torrent_file_b64.as_deref() {
         None | Some("") => None,
@@ -494,7 +723,7 @@ pub async fn torrent_prefetch_next_track(
     };
 
     let url = state
-        .prefetch_next(next_magnet, next_file_idx, torrent_bytes)
+        .prefetch_next(next_magnet, next_file_idx, torrent_bytes, warm_only)
         .await?;
 
     Ok(PrefetchNextResponse::StreamReady { url })

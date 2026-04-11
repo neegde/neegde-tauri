@@ -143,6 +143,8 @@ fn build_reqwest_client(
     }
 
     builder
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(90))
         .build()
         .map_err(|e| format!("Не удалось инициализировать HTTP-клиент: {}", e))
 }

@@ -112,10 +112,11 @@ pub fn run() {
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
                 NonZeroUsize::new(200).unwrap(),
             )));
-            app.manage(BlizStreamState::new(app.handle()));
-            app.manage(torrent_stream::TorrentStreamState::new(
-                app.handle().clone(),
-            ));
+            // TorrentStreamState owns the shared debug log; BlizStreamState borrows it.
+            let ts = torrent_stream::TorrentStreamState::new(app.handle().clone());
+            let bliz_debug = ts.debug_log();
+            app.manage(BlizStreamState::new(app.handle(), bliz_debug));
+            app.manage(ts);
             app.manage(torrent_image::TorrentImageState::new(app.handle()));
             app.manage(DiscordPresenceState::new());
 
@@ -190,6 +191,9 @@ pub fn run() {
             bliz_stream::torrent_dispose_preview,
             bliz_stream::torrent_release_stream,
             bliz_stream::bliz_notify_position,
+            bliz_stream::torrent_hover_prepare_stream,
+            bliz_stream::torrent_hover_release_stream,
+            bliz_stream::torrent_hover_activate,
             // ── Export: full-download to user library (librqbit) ─────────
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,

@@ -252,6 +252,11 @@ pub(super) struct TorrentStreamInner {
 }
 
 impl TorrentStreamState {
+    /// Expose the shared debug log so other subsystems (e.g. bliz_stream) can write to it.
+    pub fn debug_log(&self) -> Arc<AppDebugLog> {
+        self.inner.debug_log.clone()
+    }
+
     pub fn new(app: tauri::AppHandle) -> Self {
         let cache_settings = Arc::new(RwLock::new(UserCacheSettings::default()));
         let debug_log = AppDebugLog::new(app.clone());
