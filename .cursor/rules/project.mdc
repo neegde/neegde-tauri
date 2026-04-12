@@ -16,6 +16,7 @@ alwaysApply: true
 ## Directory Structure
 
 ```
+blizorukost/              # Git submodule — C++ libtorrent streaming engine (cmake из build.rs)
 src/
   App.vue                   # Root: весь глобальный state, все обработчики
   main.js                   # createApp, монтирует App или AppDebugWindow

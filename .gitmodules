@@ -1,0 +1,3 @@
+[submodule "blizorukost"]
+	path = blizorukost
+	url = https://github.com/neegde/blizorukost.git

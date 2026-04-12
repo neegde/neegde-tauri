@@ -5,13 +5,8 @@ fn main() {
 
 fn build_blizorukost() {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // src-tauri/ → neegde-tauri/ → neegde/ → blizorukost/
-    let bliz_dir = manifest_dir
-        .parent() // neegde-tauri/
-        .unwrap()
-        .parent() // neegde/
-        .unwrap()
-        .join("blizorukost");
+    // src-tauri/ → repo root / blizorukost/ (git submodule)
+    let bliz_dir = manifest_dir.parent().unwrap().join("blizorukost");
 
     if !bliz_dir.exists() {
         panic!(
