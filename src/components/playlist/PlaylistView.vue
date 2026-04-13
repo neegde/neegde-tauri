@@ -200,6 +200,7 @@ const trackCount = computed(() => props.playlist.tracks.length);
   margin-bottom: 36px;
 }
 .pl-cover {
+  position: relative;
   width: 140px;
   height: 140px;
   flex-shrink: 0;
