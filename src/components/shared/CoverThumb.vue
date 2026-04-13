@@ -24,6 +24,7 @@ let observer = null;
 /**
  * Reactive computed — auto-updates whenever either cover cache is populated,
  * regardless of which code path stored the cover (own fetch, hover-prefetch, torrent details, etc.).
+ * Prefers in-torrent image when coverFileIdx is set; falls back to RuTracker topic cover (same as AlbumFolderCover).
  */
 const coverUrl = computed(() => {
   const magnet = (props.magnet && props.magnet.trim()) || "";
@@ -33,7 +34,8 @@ const coverUrl = computed(() => {
       : null;
 
   if (magnet && idx != null) {
-    return peekTorrentImage(magnet, idx) || null;
+    const fromTorrent = peekTorrentImage(magnet, idx);
+    if (fromTorrent) return fromTorrent;
   }
 
   if (props.source !== "rutracker" || props.torrentId == null || props.torrentId === "") return null;
@@ -67,38 +69,31 @@ function setupCover() {
       ? String(props.torrentId)
       : null;
 
-  if (magnet && idx != null) {
-    // Already cached → computed shows it immediately, no fetch needed
-    if (peekTorrentImage(magnet, idx)) return;
+  const torrentReady = Boolean(magnet && idx != null && peekTorrentImage(magnet, idx));
+  const needTorrentFetch = Boolean(magnet && idx != null && !torrentReady);
 
-    observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry?.isIntersecting) return;
-        disconnectObserver();
-        // Fire-and-forget: result stored in reactive torrentImageCache → computed auto-updates
-        torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
-          .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
-          .catch(() => {});
-      },
-      { rootMargin: "400px" }
-    );
-    const el = rootRef.value;
-    if (el) observer.observe(el);
-    return;
-  }
+  const rutrackerPeek =
+    props.source === "rutracker" && topicId ? peekRutrackerCover(topicId) : undefined;
+  const needRutrackerFetch =
+    props.source === "rutracker" &&
+    topicId &&
+    rutrackerPeek === undefined &&
+    !torrentReady;
 
-  if (props.source !== "rutracker" || !topicId) return;
-
-  // Skip observer if cover already fetched (hit) or confirmed absent (null in LRU)
-  const cached = peekRutrackerCover(topicId);
-  if (cached !== undefined) return;
+  if (!needTorrentFetch && !needRutrackerFetch) return;
 
   observer = new IntersectionObserver(
     ([entry]) => {
       if (!entry?.isIntersecting) return;
       disconnectObserver();
-      // Fire-and-forget: result stored in reactive coverCache → computed auto-updates
-      getRutrackerCoverDataUrl(topicId).catch(() => {});
+      if (needTorrentFetch && magnet && idx != null) {
+        torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
+          .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
+          .catch(() => {});
+      }
+      if (needRutrackerFetch && topicId) {
+        getRutrackerCoverDataUrl(topicId).catch(() => {});
+      }
     },
     { rootMargin: "400px" }
   );

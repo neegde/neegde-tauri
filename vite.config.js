@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
@@ -36,9 +36,22 @@ function githubRepoWebUrl(packageJson) {
   return `https://github.com/${m[1]}/${m[2]}`;
 }
 
+/**
+ * Reads vozduxan version from the submodule's CMakeLists.txt.
+ * Returns empty string if the submodule is not initialized.
+ */
+function vozduxanVersion() {
+  const cmakePath = new URL("./vozduxan/CMakeLists.txt", import.meta.url);
+  if (!existsSync(cmakePath)) return "";
+  const content = readFileSync(cmakePath, "utf-8");
+  const m = content.match(/project\s*\(\s*vozduxan\s+VERSION\s+([\d.]+)/);
+  return m ? m[1] : "";
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __VOZDUXAN_VERSION__: JSON.stringify(vozduxanVersion()),
     __GITHUB_RELEASES_LATEST_API__: JSON.stringify(
       githubLatestReleaseApiUrl(pkg)
     ),

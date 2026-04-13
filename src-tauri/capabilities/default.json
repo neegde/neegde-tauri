@@ -4,11 +4,12 @@
   "description": "Capability for the main window",
   "windows": [
     "main",
-    "app-debug"
+    "app-debug*"
   ],
   "permissions": [
     "core:default",
     "core:event:allow-listen",
+    "core:event:allow-emit",
     "core:webview:allow-create-webview-window",
     "dialog:default",
     "opener:default",

@@ -102,6 +102,26 @@ fn unique_dest_path(dest_dir: &Path, base_name: &str) -> PathBuf {
     ))
 }
 
+/// Polls export-cancel; completes when the user requested stop (for `select!` with init wait).
+async fn export_cancel_detected(state: &TorrentStreamState) {
+    while !state.export_cancel_triggered() {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Waits for librqbit metadata init or honors user cancel (otherwise stop would queue until init finished).
+async fn wait_until_initialized_or_export_cancel(
+    handle: &Arc<ManagedTorrent>,
+    state: &TorrentStreamState,
+) -> Result<(), String> {
+    tokio::select! {
+        r = handle.wait_until_initialized() => {
+            r.map_err(|e| format!("Инициализация торрента: {e}"))
+        }
+        _ = export_cancel_detected(state) => Err("Скачивание остановлено".into()),
+    }
+}
+
 fn sanitize_folder_name(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for ch in raw.trim().chars() {
@@ -125,17 +145,34 @@ async fn ensure_torrent_with_single_file(
     session: &Arc<Session>,
     magnet: &str,
     file_idx: usize,
+    state: &TorrentStreamState,
 ) -> Result<Arc<ManagedTorrent>, String> {
+    if state.export_cancel_triggered() {
+        return Err("Скачивание остановлено".into());
+    }
+
     let m = Magnet::parse(magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
     let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
     let id = TorrentIdOrHash::Hash(info_hash);
 
     if let Some(handle) = session.get(id) {
-        session
-            .update_only_files(&handle, &HashSet::from([file_idx]))
-            .await
-            .map_err(|e| format!("Не удалось обновить список файлов: {e}"))?;
+        if state.export_cancel_triggered() {
+            return Err("Скачивание остановлено".into());
+        }
+        let only = HashSet::from([file_idx]);
+        tokio::select! {
+            r = session.update_only_files(&handle, &only) => {
+                r.map_err(|e| format!("Не удалось обновить список файлов: {e}"))?;
+            }
+            _ = export_cancel_detected(state) => {
+                return Err("Скачивание остановлено".into());
+            }
+        }
         return Ok(handle);
+    }
+
+    if state.export_cancel_triggered() {
+        return Err("Скачивание остановлено".into());
     }
 
     let opts = AddTorrentOptions {
@@ -143,18 +180,30 @@ async fn ensure_torrent_with_single_file(
         overwrite: true,
         ..Default::default()
     };
-    let added = session
-        .add_torrent(AddTorrent::from_url(magnet), Some(opts))
-        .await
-        .map_err(|e| format!("Не удалось добавить торрент: {e}"))?;
+    let added = tokio::select! {
+        r = session.add_torrent(AddTorrent::from_url(magnet), Some(opts)) => {
+            r.map_err(|e| format!("Не удалось добавить торрент: {e}"))?
+        }
+        _ = export_cancel_detected(state) => {
+            return Err("Скачивание остановлено".into());
+        }
+    };
 
     let handle = match added {
         AddTorrentResponse::Added(_, h) => h,
         AddTorrentResponse::AlreadyManaged(_, h) => {
-            session
-                .update_only_files(&h, &HashSet::from([file_idx]))
-                .await
-                .map_err(|e| format!("Не удалось обновить список файлов: {e}"))?;
+            if state.export_cancel_triggered() {
+                return Err("Скачивание остановлено".into());
+            }
+            let only = HashSet::from([file_idx]);
+            tokio::select! {
+                r = session.update_only_files(&h, &only) => {
+                    r.map_err(|e| format!("Не удалось обновить список файлов: {e}"))?;
+                }
+                _ = export_cancel_detected(state) => {
+                    return Err("Скачивание остановлено".into());
+                }
+            }
             h
         }
         AddTorrentResponse::ListOnly(_) => {
@@ -162,11 +211,20 @@ async fn ensure_torrent_with_single_file(
         }
     };
 
-    handle
-        .wait_until_initialized()
-        .await
-        .map_err(|e| format!("Инициализация торрента: {e}"))?;
-    Ok(handle)
+    if state.export_cancel_triggered() {
+        let _ = session.pause(&handle).await;
+        return Err("Скачивание остановлено".into());
+    }
+
+    match wait_until_initialized_or_export_cancel(&handle, state).await {
+        Ok(()) => Ok(handle),
+        Err(e) => {
+            if e == "Скачивание остановлено" {
+                let _ = session.pause(&handle).await;
+            }
+            Err(e)
+        }
+    }
 }
 
 async fn wait_until_selected_finished(
@@ -339,7 +397,16 @@ pub async fn torrent_export_files(
         }
 
         let first_idx = file_indices[0];
-        let handle = ensure_torrent_with_single_file(&session, &magnet, first_idx).await?;
+        let handle = match ensure_torrent_with_single_file(&session, &magnet, first_idx, &state).await
+        {
+            Ok(h) => h,
+            Err(e) => {
+                if e == "Скачивание остановлено" {
+                    emit_cancelled(&app, &queue_labels);
+                }
+                return Err(e);
+            }
+        };
 
         let api = Api::new(session.clone(), None);
         let details = api
@@ -366,10 +433,17 @@ pub async fn torrent_export_files(
                 .unwrap_or_else(|| format!("Файл {}", idx + 1));
 
             if ci > 0 {
-                session
-                    .update_only_files(&handle, &HashSet::from([idx]))
-                    .await
-                    .map_err(|e| format!("Не удалось переключить файл: {e}"))?;
+                let only = HashSet::from([idx]);
+                tokio::select! {
+                    r = session.update_only_files(&handle, &only) => {
+                        r.map_err(|e| format!("Не удалось переключить файл: {e}"))?;
+                    }
+                    _ = export_cancel_detected(&*state) => {
+                        pause_torrent(&session, &handle).await;
+                        emit_cancelled(&app, &queue_labels);
+                        return Err("Скачивание остановлено".into());
+                    }
+                }
             }
 
             wait_until_selected_finished(
@@ -440,6 +514,12 @@ pub async fn torrent_export_files(
                     .map_err(|e| format!("Не удалось создать каталог: {e}"))?;
             }
 
+            if state.export_cancel_triggered() {
+                pause_torrent(&session, &handle).await;
+                emit_cancelled(&app, &queue_labels);
+                return Err("Скачивание остановлено".into());
+            }
+
             tokio::fs::copy(&src, &dest)
                 .await
                 .map_err(|e| format!("Копирование {} → {}: {e}", src.display(), dest.display()))?;
@@ -476,7 +556,7 @@ pub async fn torrent_export_files(
 }
 
 #[tauri::command]
-pub fn torrent_export_cancel(state: State<'_, TorrentStreamState>) -> Result<(), String> {
+pub async fn torrent_export_cancel(state: State<'_, TorrentStreamState>) -> Result<(), String> {
     state.export_cancel_trigger();
     Ok(())
 }

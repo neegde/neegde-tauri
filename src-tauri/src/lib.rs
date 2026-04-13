@@ -1,3 +1,5 @@
+mod vozduxan_ffi;
+mod vozduxan_stream;
 mod cache_commands;
 mod cache_settings;
 mod cover_art;
@@ -13,13 +15,14 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, RunEvent,
+    Listener, Manager, RunEvent,
 };
 
 /// In-process LRU cache for MusicBrainz + Cover Art Archive results.
 /// Avoids repeat HTTP round-trips for the same artist/album.
 type CoverArtCache = Mutex<LruCache<String, Option<String>>>;
 
+use vozduxan_stream::VozduxanStreamState;
 use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
 
 use discord_presence::DiscordPresenceState;
@@ -83,7 +86,7 @@ async fn fetch_album_cover(
         }
     }
 
-    let client = state.client.clone();
+    let client = state.http_client()?;
     let result = cover_art::fetch_album_cover(&client, &artist, &album).await;
 
     cache.lock().unwrap().put(key, result.clone());
@@ -109,9 +112,24 @@ pub fn run() {
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
                 NonZeroUsize::new(200).unwrap(),
             )));
-            app.manage(torrent_stream::TorrentStreamState::new(
-                app.handle().clone(),
-            ));
+            // TorrentStreamState owns the shared debug log; VozduxanStreamState borrows it.
+            let ts = torrent_stream::TorrentStreamState::new(app.handle().clone());
+            // Sync: frontend must see correct `get_app_debug_enabled` on first invoke (spawn was too late).
+            apply_app_debug_from_disk(app.handle(), &ts);
+            let vozduxan_debug = ts.debug_log();
+            app.manage(VozduxanStreamState::new(app.handle(), vozduxan_debug));
+            app.manage(ts);
+
+            // Cancel export while `torrent_export_files` is awaiting — a second `invoke` can be
+            // queued behind the long command; `emit` + this listener sets the flag immediately.
+            let export_cancel_app = app.handle().clone();
+            let export_cancel_for_listener = export_cancel_app.clone();
+            export_cancel_app.listen_any("torrent-export-cancel-request", move |_event| {
+                if let Some(ts) = export_cancel_for_listener.try_state::<TorrentStreamState>() {
+                    ts.export_cancel_trigger();
+                }
+            });
+
             app.manage(torrent_image::TorrentImageState::new(app.handle()));
             app.manage(DiscordPresenceState::new());
 
@@ -158,7 +176,6 @@ pub fn run() {
             let startup = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(ts) = startup.try_state::<TorrentStreamState>() {
-                    apply_app_debug_from_disk(&startup, &ts);
                     let _ = ts.load_cache_settings_from_disk().await;
                     ts.reclaim_stream_cache_best_effort().await;
                 }
@@ -175,12 +192,21 @@ pub fn run() {
             rutracker::rutracker_get_torrent_details,
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
-            torrent_stream::torrent_prepare_stream,
-            torrent_stream::torrent_magnet_list_files,
-            torrent_stream::torrent_prefetch_next_track,
-            torrent_stream::torrent_prepare_cancel,
-            torrent_stream::torrent_dispose_preview,
-            torrent_stream::torrent_release_stream,
+            rutracker::rutracker_get_http_proxy,
+            rutracker::rutracker_set_http_proxy,
+            rutracker::rutracker_probe_http_proxy,
+            // ── Streaming: now backed by vozduxan (C++ + libtorrent) ──
+            vozduxan_stream::torrent_prepare_stream,
+            vozduxan_stream::torrent_magnet_list_files,
+            vozduxan_stream::torrent_prefetch_next_track,
+            vozduxan_stream::torrent_prepare_cancel,
+            vozduxan_stream::torrent_dispose_preview,
+            vozduxan_stream::torrent_release_stream,
+            vozduxan_stream::vozduxan_notify_position,
+            vozduxan_stream::torrent_hover_prepare_stream,
+            vozduxan_stream::torrent_hover_release_stream,
+            vozduxan_stream::torrent_hover_activate,
+            // ── Export: full-download to user library (librqbit) ─────────
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,

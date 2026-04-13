@@ -23,6 +23,7 @@ import {
 import { enrichAlbumTracklist } from "../../audio/metadataEnrich.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
+import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
@@ -54,7 +55,34 @@ const emit = defineEmits([
   "toggle-like",
   "open-album-preview",
   "hover-track",
+  "add-to-playlist",
+  "add-to-queue",
 ]);
+
+const ctxOpen = ref(false);
+const ctxX = ref(0);
+const ctxY = ref(0);
+const ctxOrigIdx = ref(null);
+
+/**
+ * @param {MouseEvent} e
+ * @param {number} origIdx
+ * @returns {void}
+ */
+function openTrackCtx(e, origIdx) {
+  e.preventDefault();
+  ctxX.value = e.clientX;
+  ctxY.value = e.clientY;
+  ctxOrigIdx.value = origIdx;
+  ctxOpen.value = true;
+}
+
+/**
+ * @returns {void}
+ */
+function onCtxAddToQueue() {
+  if (ctxOrigIdx.value != null) emit("add-to-queue", ctxOrigIdx.value);
+}
 
 // ── Hover prefetch ────────────────────────────────────────────────────────────
 let _hoverTimer = null;
@@ -82,7 +110,7 @@ function setViewMode(mode) {
   localStorage.setItem("albumViewMode", mode);
 }
 
-/** Gallery → тот же предпросмотр, что при открытии лайкнутого альбома (только файлы альбома). */
+/** Gallery card: open album preview. Play starts only on explicit ▶ button press. */
 function openAlbumFromGallery(wrap) {
   emit("open-album-preview", {
     album: wrap.raw,
@@ -217,6 +245,26 @@ function makeTrackLike(torrent, magnet, f) {
     fileName: f.path,
     coverFileIdx,
     coverFile,
+  };
+}
+
+function makePlaylistTrack(torrent, magnet, f) {
+  let coverFileIdx = null;
+  for (const a of albums.value) {
+    if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
+      coverFileIdx = a.coverFile?.origIdx ?? null;
+      break;
+    }
+  }
+  return {
+    magnet,
+    fileIdx: f.origIdx,
+    fileName: f.path,
+    torrentName: torrent?.name ?? "",
+    torrentId: torrent?.id ?? "",
+    source: torrent?.source ?? "rutracker",
+    artist: torrent?.artist ?? null,
+    coverFileIdx,
   };
 }
 
@@ -473,6 +521,7 @@ watch(
           :key="f.origIdx"
           :class="['album-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @contextmenu.prevent="openTrackCtx($event, f.origIdx)"
           @mouseenter="onTrackHover(f.origIdx)"
           @mouseleave="onTrackLeave"
         >
@@ -517,6 +566,11 @@ watch(
                 </svg>
               </button>
               <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
+              <button class="track-btn add-to-pl" title="В плейлист" @click.stop="emit('add-to-playlist', makePlaylistTrack(torrent, magnet, f))">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              </button>
             </div>
           </div>
         </div>
@@ -671,6 +725,7 @@ watch(
           :key="f.origIdx"
           :class="['track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @contextmenu.prevent="openTrackCtx($event, f.origIdx)"
           @mouseenter="onTrackHover(f.origIdx)"
           @mouseleave="onTrackLeave"
         >
@@ -714,6 +769,11 @@ watch(
               </svg>
             </button>
             <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
+            <button class="track-btn add-to-pl" title="В плейлист" @click.stop="emit('add-to-playlist', makePlaylistTrack(torrent, magnet, f))">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
           </div>
         </div>
       </div>
@@ -755,6 +815,12 @@ watch(
     </template>
     </template>
 
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      @action="onCtxAddToQueue"
+    />
   </div>
 </template>
 

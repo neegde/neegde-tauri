@@ -1,9 +1,7 @@
 <script setup>
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { appDebugLog, appDebugClickDetail } from "./appDebugLog.js";
-import { APP_DEBUG_WINDOW_LABEL } from "./appDebugWindow.js";
 import {
   isAudio,
   detectAlbums,
@@ -21,11 +19,12 @@ import {
 import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
+import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
-import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
-import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
+import { torrentFileB64ForTrack, streamUrl, hoverStreamUrl, magnetListFiles } from "./torrent/api.js";
+import { releaseTorrentStreamUrl, torrentPrepareCancel, hoverReleaseTorrentStreamUrl } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 
 import SearchBar    from "./components/search/SearchBar.vue";
@@ -37,7 +36,15 @@ import Player       from "./components/player/Player.vue";
 import NavArrows       from "./components/shell/NavArrows.vue";
 import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
-import { openAppDebugWindow } from "./appDebugWindow.js";
+import HomeView from "./components/home/HomeView.vue";
+import { openAppDebugWindow, closeAppDebugWindow } from "./appDebugWindow.js";
+import { loadRecentHistory, addToRecentHistory } from "./lib/recentHistory.js";
+import { loadSearchHistory, addToSearchHistory } from "./lib/searchHistory.js";
+import {
+  loadPlaylists, createPlaylist, deletePlaylist, renamePlaylist,
+  addTrackToPlaylist, removeTrackFromPlaylist,
+} from "./lib/playlistStorage.js";
+import PlaylistView from "./components/playlist/PlaylistView.vue";
 
 // ── Search result LRU cache ───────────────────────────────────────────────────
 const _searchCache = new Map(); // normalized query → results[]
@@ -65,14 +72,60 @@ const queuePos = ref(
     ? _savedPlayer.queuePos
     : 0
 );
+
+function loadRepeatMode() {
+  const v = localStorage.getItem("neegde.player.repeatMode");
+  if (v === "all" || v === "one" || v === "off") return v;
+  return "off";
+}
+
+function loadShuffleOn() {
+  return localStorage.getItem("neegde.player.shuffle") === "1";
+}
+
+/** `off` → no wrap; `all` → loop queue; `one` → current track restarts (handled in Player). */
+const repeatMode = ref(loadRepeatMode());
+const shuffleOn = ref(loadShuffleOn());
+
+watch(repeatMode, (v) => {
+  localStorage.setItem("neegde.player.repeatMode", v);
+});
+
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
 const nextInQueue = computed(() => {
-  if (queuePos.value >= queue.value.length - 1) return null;
-  return queue.value[queuePos.value + 1];
+  const q = queue.value;
+  const len = q.length;
+  if (len === 0) return null;
+  const pos = queuePos.value;
+  if (pos < len - 1) return q[pos + 1];
+  if (repeatMode.value === "all") return q[0];
+  return null;
 });
 const secondNextInQueue = computed(() => {
-  if (queuePos.value >= queue.value.length - 2) return null;
-  return queue.value[queuePos.value + 2];
+  const q = queue.value;
+  const len = q.length;
+  if (len < 2) return null;
+  const pos = queuePos.value;
+  if (pos < len - 2) return q[pos + 2];
+  if (pos === len - 2) {
+    return repeatMode.value === "all" ? q[0] : null;
+  }
+  if (repeatMode.value !== "all") return null;
+  return len > 2 ? q[1] : q[0];
+});
+
+const playerHasNext = computed(() => {
+  const len = queue.value.length;
+  if (len === 0) return false;
+  if (queuePos.value < len - 1) return true;
+  return repeatMode.value === "all";
+});
+
+const playerHasPrev = computed(() => {
+  const len = queue.value.length;
+  if (len === 0) return false;
+  if (queuePos.value > 0) return true;
+  return repeatMode.value === "all" && len > 1;
 });
 
 // ── Hover-prefetch state ──────────────────────────────────────────────────────
@@ -89,18 +142,26 @@ async function handleHoverTrack(fileIdx) {
   if (nowPlaying.value && `${nowPlaying.value.magnet}\0${nowPlaying.value.fileIdx}` === key) return;
   // Release previous hover prefetch if not used
   if (hoverPrefetchUrl.value) {
-    void releaseTorrentStreamUrl(hoverPrefetchUrl.value);
+    void hoverReleaseTorrentStreamUrl(hoverPrefetchUrl.value);
     hoverPrefetchUrl.value = "";
     hoverPrefetchKey.value = "";
   }
   try {
-    const url = await streamUrl(magnet, fileIdx, {
+    const url = await hoverStreamUrl(magnet, fileIdx, {
       source: selected.value?.source,
       torrentId: selected.value?.id,
     });
     if (url) {
-      hoverPrefetchUrl.value = url;
-      hoverPrefetchKey.value = key;
+      // By the time hover-prepare completes (can take several seconds), nowPlaying may have
+      // changed to a different track from the same torrent. Storing a hover_token for the
+      // same torrent as the active stream can cause vozduxan to disrupt the current stream.
+      const np = nowPlaying.value;
+      if (np && np.magnet === magnet && `${np.magnet}\0${np.fileIdx}` !== key) {
+        void hoverReleaseTorrentStreamUrl(url);
+      } else {
+        hoverPrefetchUrl.value = url;
+        hoverPrefetchKey.value = key;
+      }
     }
   } catch {
     // Silently ignore hover-prefetch errors
@@ -163,6 +224,9 @@ onMounted(async () => {
     if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
   } catch (_) { /* offline or no saved session — stay logged out */ }
   try {
+    await syncRtHttpProxyCacheFromBackend();
+  } catch (_) { /* нет Tauri API (превью в браузере) */ }
+  try {
     appDebugEnabled.value = await invoke("get_app_debug_enabled");
   } catch (_) { /* нет Tauri API (превью в браузере) */ }
   setupAppDebugInstrumentation();
@@ -197,8 +261,89 @@ const rtLoggedIn  = ref(false);
 const rtUsername  = ref(null);
 const rtAvatarUrl = ref(null);
 // ── View ──────────────────────────────────────────────────────────────────────
-const view       = ref("search");  // "search" | "likes" | "settings"
+const view       = ref("home");  // "home" | "search" | "likes" | "settings" | "playlist"
 const returnView = ref("search");
+
+// ── Recent History ────────────────────────────────────────────────────────────
+const recentHistory = ref(loadRecentHistory());
+
+// ── Search History ────────────────────────────────────────────────────────────
+const searchHistory = ref(loadSearchHistory());
+
+// ── Playlists ─────────────────────────────────────────────────────────────────
+const playlists = ref(loadPlaylists());
+const currentPlaylistId = ref(null);
+const currentPlaylist = computed(() => playlists.value.find((p) => p.id === currentPlaylistId.value) ?? null);
+
+const addToPlaylistModal = ref(false);
+const addToPlaylistTrack = ref(null);
+
+function openPlaylist(id) {
+  currentPlaylistId.value = id;
+  view.value = "playlist";
+}
+
+function handleCreatePlaylist() {
+  playlists.value = createPlaylist(`Плейлист ${playlists.value.length + 1}`);
+  const newPl = playlists.value[playlists.value.length - 1];
+  openPlaylist(newPl.id);
+}
+
+function handleDeletePlaylist(id) {
+  playlists.value = deletePlaylist(id);
+  if (currentPlaylistId.value === id) {
+    currentPlaylistId.value = null;
+    view.value = "home";
+  }
+}
+
+function handleRenamePlaylist(id, name) {
+  playlists.value = renamePlaylist(id, name);
+}
+
+function handleRemoveTrackFromPlaylist(id, { magnet, fileIdx }) {
+  playlists.value = removeTrackFromPlaylist(id, magnet, fileIdx);
+}
+
+function handleShowAddToPlaylist(track) {
+  addToPlaylistTrack.value = track;
+  addToPlaylistModal.value = true;
+}
+
+function handleAddToPlaylist(playlistId) {
+  if (!addToPlaylistTrack.value) return;
+  playlists.value = addTrackToPlaylist(playlistId, addToPlaylistTrack.value);
+  addToPlaylistModal.value = false;
+  addToPlaylistTrack.value = null;
+}
+
+function handleAddToPlaylistNew() {
+  playlists.value = createPlaylist(`Плейлист ${playlists.value.length + 1}`);
+  const newPl = playlists.value[playlists.value.length - 1];
+  if (addToPlaylistTrack.value) {
+    playlists.value = addTrackToPlaylist(newPl.id, addToPlaylistTrack.value);
+  }
+  addToPlaylistModal.value = false;
+  addToPlaylistTrack.value = null;
+  openPlaylist(newPl.id);
+}
+
+function handlePlayPlaylist(startIdx) {
+  const pl = currentPlaylist.value;
+  if (!pl?.tracks?.length) return;
+  allowPlayerAutoplay();
+  queue.value = pl.tracks.map((t) => ({
+    magnet: t.magnet,
+    fileIdx: t.fileIdx,
+    fileName: t.fileName,
+    torrentName: t.torrentName,
+    torrentId: t.torrentId,
+    source: t.source,
+    artist: t.artist ?? null,
+    coverFileIdx: t.coverFileIdx ?? null,
+  }));
+  queuePos.value = startIdx ?? 0;
+}
 
 /** Журнал отладки: UI, плеер, торренты — только в отдельном окне (настройки → чекбокс). */
 const appDebugEnabled = ref(false);
@@ -221,8 +366,7 @@ function setupAppDebugInstrumentation() {
           document.removeEventListener("click", onClick, true);
         void openAppDebugWindow().catch(() => {});
       } else {
-        const w = await WebviewWindow.getByLabel(APP_DEBUG_WINDOW_LABEL);
-        if (w) await w.close().catch(() => {});
+        await closeAppDebugWindow();
       }
     },
     { immediate: true },
@@ -264,6 +408,8 @@ const searchQuery = ref("");
 const results = shallowRef([]);
 const loading = ref(false);
 const error   = ref(null);
+/** Счётчик запросов: старый поиск не сбрасывает спиннер, если уже запущен новый. */
+let searchRequestSeq = 0;
 
 // ── Torrent ───────────────────────────────────────────────────────────────────
 const selected      = ref(null);
@@ -328,8 +474,50 @@ const downloadProgress = ref(null);
 /** false — компактная кнопка «Скачивание» в углу. */
 const downloadOverlayExpanded = ref(true);
 
+let exportDbgLastAt = 0;
+let exportDbgLastPhase = "";
+let exportDbgLastBatch = null;
+
 watch(downloadProgress, (v) => {
-  if (v == null) downloadOverlayExpanded.value = true;
+  if (v == null) {
+    downloadOverlayExpanded.value = true;
+    exportDbgLastPhase = "";
+    exportDbgLastBatch = null;
+    return;
+  }
+  if (appDebugEnabled.value) {
+    const phase = v.phase ?? "";
+    const now = Date.now();
+    const batch = v.batchIndex ?? null;
+    let skip = false;
+    if (phase === "downloading") {
+      const sameSlice =
+        phase === exportDbgLastPhase &&
+        batch === exportDbgLastBatch &&
+        now - exportDbgLastAt < 2000;
+      skip = sameSlice;
+    }
+    exportDbgLastPhase = phase;
+    exportDbgLastBatch = batch;
+    if (!skip) {
+      exportDbgLastAt = now;
+      void appDebugLog(
+        "export",
+        `${phase}: ${String(v.message ?? "").slice(0, 220)}`,
+        {
+          pct: v.pct,
+          progressBytes: v.progressBytes,
+          totalBytes: v.totalBytes,
+          torrentState: v.torrentState,
+          batchIndex: v.batchIndex,
+          batchTotal: v.batchTotal,
+          copyIndex: v.copyIndex,
+          copyTotal: v.copyTotal,
+          queueLen: v.queueLabels?.length,
+        }
+      );
+    }
+  }
 });
 
 // ── Likes (persisted locally) ────────────────────────────────────────────────
@@ -402,7 +590,13 @@ function handleLogout(evt) {
 }
 
 async function handleSearch(query) {
-  if (!query?.trim()) return;
+  if (!query?.trim()) {
+    results.value = [];
+    error.value = null;
+    selected.value = null;
+    files.value = [];
+    return;
+  }
   const q = query.trim();
   forwardStack.value = [];
   backStack.value    = [];
@@ -411,6 +605,8 @@ async function handleSearch(query) {
   files.value        = [];
   torrentCover.value = null;
   view.value         = "search";
+
+  searchHistory.value = addToSearchHistory(q);
 
   const cached = _searchCacheGet(q.toLowerCase());
   if (cached) {
@@ -421,6 +617,7 @@ async function handleSearch(query) {
   }
 
   if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: false });
+  const seq = ++searchRequestSeq;
   loading.value = true;
   results.value = [];
   try {
@@ -432,7 +629,9 @@ async function handleSearch(query) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
     if (appDebugEnabled.value) appDebugLog("search", "error", { q, err: String(e) });
   } finally {
-    loading.value = false;
+    if (seq === searchRequestSeq) {
+      loading.value = false;
+    }
   }
 }
 
@@ -634,6 +833,14 @@ async function handleSelect(torrent) {
     // Warm .torrent file cache while user browses the track list.
     // By the time they click play it'll already be resolved → streamUrl skips the fetch.
     void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
+    // Record to recent history after a successful open.
+    recentHistory.value = addToRecentHistory({
+      id: String(torrent.id),
+      name: torrent.name ?? "",
+      source: torrent.source ?? "rutracker",
+      artist: details.artist ?? torrent.artist ?? "",
+      magnet: details.magnet ?? "",
+    });
   } catch (e) {
     console.error("handleSelect:", e);
     if (appDebugEnabled.value) appDebugLog("search", "openError", { id: torrent.id, err: String(e) });
@@ -719,6 +926,104 @@ function handlePlayAlbum(albumFiles) {
   queuePos.value = 0;
 }
 
+/**
+ * @param {object} a
+ * @param {object} b
+ * @returns {boolean}
+ */
+function sameQueueItem(a, b) {
+  return String(a.magnet) === String(b.magnet) && Number(a.fileIdx) === Number(b.fileIdx);
+}
+
+/**
+ * Appends a track to the end of the playback queue. Ignores duplicates.
+ *
+ * @param {object} item - Same shape as `makeQueueItem` output.
+ * @returns {void}
+ */
+function appendToQueue(item) {
+  if (queue.value.some((q) => sameQueueItem(q, item))) return;
+  const wasEmpty = queue.value.length === 0;
+  queue.value = [...queue.value, item];
+  if (wasEmpty) queuePos.value = 0;
+}
+
+/**
+ * @param {number} fileIdx - `origIdx` of an audio file in the open torrent.
+ * @returns {void}
+ */
+function handleAddToQueueFromTorrent(fileIdx) {
+  const audioFiles = orderedAudioFiles(files.value);
+  const f = audioFiles.find((x) => x.origIdx === fileIdx);
+  if (!f || !selected.value || !torrentMagnet.value) return;
+  appendToQueue(makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
+}
+
+/**
+ * @param {object} like - Track like from `likes`.
+ * @returns {void}
+ */
+function handleAddToQueueFromLike(like) {
+  appendToQueue({
+    magnet: like.magnet,
+    fileIdx: like.fileIdx,
+    fileName: trackDisplayBasename(like.fileName),
+    torrentName: like.torrentName,
+    torrentId: like.torrentId,
+    source: like.source,
+    artist: like.artist ?? null,
+    coverFileIdx: trackCoverFileIdxForLike(like, likes.value),
+    albumDirPath: like.albumDirPath ?? null,
+    seeders: null,
+  });
+}
+
+/**
+ * @param {object} track - Saved playlist track row.
+ * @returns {void}
+ */
+function handleAddToQueueFromPlaylistTrack(track) {
+  appendToQueue({
+    magnet: track.magnet,
+    fileIdx: track.fileIdx,
+    fileName: trackDisplayBasename(track.fileName),
+    torrentName: track.torrentName,
+    torrentId: track.torrentId,
+    source: track.source,
+    artist: track.artist ?? null,
+    coverFileIdx: track.coverFileIdx ?? null,
+    albumDirPath: track.albumDirPath ?? null,
+    seeders: track.seeders ?? null,
+  });
+}
+
+/**
+ * @param {number} i - Target index in the queue.
+ * @returns {void}
+ */
+function handleQueueJump(i) {
+  if (i < 0 || i >= queue.value.length) return;
+  allowPlayerAutoplay();
+  queuePos.value = i;
+}
+
+/**
+ * @param {number} i - Index to remove.
+ * @returns {void}
+ */
+function handleQueueRemove(i) {
+  const cur = queuePos.value;
+  const next = queue.value.filter((_, j) => j !== i);
+  let pos = cur;
+  if (i < cur) pos--;
+  else if (i === cur) {
+    if (next.length === 0) pos = 0;
+    else if (cur >= next.length) pos = next.length - 1;
+  }
+  queue.value = next;
+  queuePos.value = pos;
+}
+
 function handleToggleLike(like) {
   const next = { ...likes.value };
   if (next[like.id]) delete next[like.id];
@@ -729,10 +1034,11 @@ function handleToggleLike(like) {
 /** Предпросмотр одного альбома из галереи — как handleOpenTorrentFromLike для type === "album". */
 function handleOpenAlbumPreview({ album, displayName }) {
   if (!selected.value || !album?.audioFiles?.length) return;
-  if (torrentFilesBeforeAlbumPreview.value) return;
 
-  torrentFilesBeforeAlbumPreview.value = files.value;
-  torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
+  if (!torrentFilesBeforeAlbumPreview.value) {
+    torrentFilesBeforeAlbumPreview.value = files.value;
+    torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
+  }
 
   const list = album.coverFile
     ? [...album.audioFiles, album.coverFile]
@@ -1034,14 +1340,96 @@ async function handleDeepLink(urlStr) {
   }
 }
 
-function handleNext() {
-  allowPlayerAutoplay();
-  if (queuePos.value < queue.value.length - 1) queuePos.value++;
-  else { queue.value = []; queuePos.value = 0; }
+/**
+ * Randomizes order of all tracks except the current one; current becomes first.
+ */
+function shuffleQueueInPlaceKeepingCurrent() {
+  const q = queue.value;
+  const len = q.length;
+  if (len < 2) return;
+  const pos = queuePos.value;
+  if (pos < 0 || pos >= len) return;
+  const cur = q[pos];
+  const rest = q.filter((_, i) => i !== pos);
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = rest[i];
+    rest[i] = rest[j];
+    rest[j] = t;
+  }
+  queue.value = [cur, ...rest];
+  queuePos.value = 0;
 }
+
+function toggleShuffle() {
+  if (queue.value.length < 2) return;
+  if (shuffleOn.value) {
+    shuffleOn.value = false;
+    localStorage.setItem("neegde.player.shuffle", "0");
+    return;
+  }
+  shuffleOn.value = true;
+  localStorage.setItem("neegde.player.shuffle", "1");
+  shuffleQueueInPlaceKeepingCurrent();
+}
+
+function cycleRepeatMode() {
+  const order = ["off", "all", "one"];
+  const i = order.indexOf(repeatMode.value);
+  repeatMode.value = order[(i + 1) % order.length];
+}
+
+/** Next track: UI, media keys, and explicit skip — supports repeat-all wrap. */
+function handlePlayerNext() {
+  allowPlayerAutoplay();
+  const len = queue.value.length;
+  if (len === 0) return;
+  if (queuePos.value < len - 1) queuePos.value++;
+  else if (repeatMode.value === "all") queuePos.value = 0;
+  else {
+    queue.value = [];
+    queuePos.value = 0;
+  }
+}
+
+/** Natural track end (`repeat-one` is handled in Player — `ended` is not emitted). */
+function handleTrackEnded() {
+  allowPlayerAutoplay();
+  const len = queue.value.length;
+  if (len === 0) return;
+  if (queuePos.value < len - 1) queuePos.value++;
+  else if (repeatMode.value === "all") queuePos.value = 0;
+  else {
+    queue.value = [];
+    queuePos.value = 0;
+  }
+}
+
 function handlePrev() {
   allowPlayerAutoplay();
-  queuePos.value = Math.max(0, queuePos.value - 1);
+  const len = queue.value.length;
+  if (len === 0) return;
+  if (queuePos.value > 0) queuePos.value--;
+  else if (repeatMode.value === "all" && len > 1) queuePos.value = len - 1;
+}
+
+function handleOpenRecent(item) {
+  // Reset selected before calling handleSelect to avoid the deselect branch
+  // (if this torrent was already open, handleSelect would deselect it instead).
+  selected.value = null;
+  files.value = [];
+  searchQuery.value = "";
+  results.value = [];
+  view.value = "search";
+  void handleSelect({
+    id: item.id,
+    name: item.name,
+    source: item.source ?? "rutracker",
+    seeders: "?",
+    size: 0,
+    category: "—",
+    added: "—",
+  });
 }
 
 function navToSearch() {
@@ -1227,6 +1615,22 @@ function onMouseSideButtonUp(e) {
       </header>
 
       <nav class="sidebar-nav">
+        <!-- Home -->
+        <button
+          :class="['source-btn', view === 'home' ? 'active' : '']"
+          @click="view = 'home'"
+        >
+          <span class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5z"/>
+              <polyline points="9,21 9,12 15,12 15,21"/>
+            </svg>
+          </span>
+          Главная
+        </button>
+
         <!-- Search -->
         <button
           :class="['source-btn search-nav-btn', view === 'search' ? 'active' : '']"
@@ -1256,6 +1660,32 @@ function onMouseSideButtonUp(e) {
           </span>
           Мне нравится
         </button>
+
+        <!-- Playlists -->
+        <div class="nav-label nav-label--pl">
+          Плейлисты
+          <button class="sidebar-pl-create-btn" title="Новый плейлист" @click="handleCreatePlaylist">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sidebar-playlists">
+          <button
+            v-for="pl in playlists"
+            :key="pl.id"
+            :class="['source-btn sidebar-pl-item', currentPlaylistId === pl.id && view === 'playlist' ? 'active' : '']"
+            @click="openPlaylist(pl.id)"
+          >
+            <span class="source-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+            </span>
+            {{ pl.name }}
+          </button>
+        </div>
 
         <!-- Settings (bottom of nav) -->
         <div style="flex: 1" />
@@ -1323,6 +1753,16 @@ function onMouseSideButtonUp(e) {
           @close="closeMagnetPanel"
         />
 
+        <!-- Home view -->
+        <HomeView
+          v-if="view === 'home'"
+          :recent-history="recentHistory"
+          :logged-in="rtLoggedIn"
+          @open-recent="handleOpenRecent"
+          @go-to-search="navToSearch"
+          @search-query="(q) => { searchQuery = q; view = 'search'; void handleSearch(q); }"
+        />
+
         <!-- Likes view -->
         <KeepAlive>
           <LikesView
@@ -1335,6 +1775,7 @@ function onMouseSideButtonUp(e) {
             @play-album="handlePlayAlbumFromLike"
             @open-torrent="handleOpenTorrentFromLike"
             @download="handleDownloadTrackFromLike"
+            @add-to-queue="handleAddToQueueFromLike"
           />
         </KeepAlive>
 
@@ -1355,8 +1796,21 @@ function onMouseSideButtonUp(e) {
           />
         </KeepAlive>
 
+        <!-- Playlist view -->
+        <PlaylistView
+          v-if="view === 'playlist' && currentPlaylist"
+          :playlist="currentPlaylist"
+          :now-playing="nowPlayingMatchForLikes"
+          :player-playing="playerPlaying"
+          @play="handlePlayPlaylist"
+          @remove-track="handleRemoveTrackFromPlaylist(currentPlaylistId, $event)"
+          @delete="handleDeletePlaylist(currentPlaylistId)"
+          @rename="handleRenamePlaylist(currentPlaylistId, $event)"
+          @add-to-queue="handleAddToQueueFromPlaylistTrack"
+        />
+
         <!-- Search view -->
-        <template v-if="view !== 'likes' && view !== 'settings'">
+        <template v-if="view !== 'likes' && view !== 'settings' && view !== 'home' && view !== 'playlist'">
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->
@@ -1369,6 +1823,32 @@ function onMouseSideButtonUp(e) {
                   Зайдите в <strong style="color:var(--text)">Настройки</strong> и введите логин — поиск заработает сразу.
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- Recent search queries -->
+          <div
+            v-if="!selected && !results.length && !loading && searchHistory.length"
+            class="search-history-wrap"
+          >
+            <div class="search-history-label">Недавние запросы</div>
+            <div class="search-history-pills">
+              <button
+                v-for="q in searchHistory"
+                :key="q"
+                class="search-history-pill"
+                @click="searchQuery = q; void handleSearch(q)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"
+                  style="opacity:0.5; flex-shrink:0">
+                  <polyline points="12 8 12 12 14 14"/>
+                  <path d="M3.05 11A9 9 0 1 0 4 6.1"/>
+                  <polyline points="3 3 3 7 7 7"/>
+                </svg>
+                {{ q }}
+              </button>
             </div>
           </div>
 
@@ -1398,6 +1878,8 @@ function onMouseSideButtonUp(e) {
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
             @hover-track="handleHoverTrack"
+            @add-to-playlist="handleShowAddToPlaylist"
+            @add-to-queue="handleAddToQueueFromTorrent"
           />
         </template>
 
@@ -1410,26 +1892,63 @@ function onMouseSideButtonUp(e) {
       :next-track="nextInQueue"
       :second-next-track="secondNextInQueue"
       :suppress-autoplay="suppressAutoplayAfterSessionRestore"
-      :has-prev="queuePos > 0"
-      :has-next="queuePos < queue.length - 1"
+      :has-prev="playerHasPrev"
+      :has-next="playerHasNext"
+      :repeat-mode="repeatMode"
+      :shuffle-on="shuffleOn"
       :hover-prefetch-url="hoverPrefetchUrl"
       :hover-prefetch-key="hoverPrefetchKey"
       :likes="likes"
+      :playback-queue="queue"
+      :queue-index="queuePos"
       @prev="handlePrev"
-      @next="handleNext"
-      @ended="handleNext"
+      @next="handlePlayerNext"
+      @ended="handleTrackEnded"
+      @cycle-repeat="cycleRepeatMode"
+      @toggle-shuffle="toggleShuffle"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
       @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
       @toggle-like="handleToggleLike"
       @search-artist="handleSearchArtist"
       @open-torrent="handleOpenTorrentFromPlayer"
+      @queue-jump="handleQueueJump"
+      @queue-remove="handleQueueRemove"
     />
 
     <DownloadProgressOverlay
       v-model:expanded="downloadOverlayExpanded"
       :progress="downloadProgress"
     />
+
+    <!-- Add-to-playlist modal -->
+    <Teleport to="body">
+      <div v-if="addToPlaylistModal" class="pl-modal-overlay" @click.self="addToPlaylistModal = false">
+        <div class="pl-modal">
+          <div class="pl-modal-title">Добавить в плейлист</div>
+          <div class="pl-modal-list">
+            <button
+              v-for="pl in playlists"
+              :key="pl.id"
+              class="pl-modal-item"
+              @click="handleAddToPlaylist(pl.id)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+              {{ pl.name }}
+            </button>
+            <button class="pl-modal-new" @click="handleAddToPlaylistNew">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Новый плейлист
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
   </div>
 </template>

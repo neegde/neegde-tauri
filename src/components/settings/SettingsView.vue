@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -18,6 +18,15 @@ import {
   setMirrorMode,
   probeMirrorsNow,
 } from "../../rutracker/config.js";
+import {
+  RT_HTTP_PROXY_PX1,
+  RT_HTTP_PROXY_PX2,
+  getHttpProxy,
+  setHttpProxy,
+  setRtHttpProxyCache,
+  hasHttpProxyConfigured,
+  probeHttpProxy,
+} from "../../rutracker/proxyConfig.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
@@ -27,6 +36,7 @@ import {
   normalizeVersionTag,
 } from "../../githubReleaseCheck.js";
 import appIconSrc from "../../assets/neegde-logo.png";
+import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -50,6 +60,8 @@ const emit = defineEmits([
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
 const appVersion = __APP_VERSION__;
+/** Версия vozduxan из `vozduxan/CMakeLists.txt`, инжектится в `vite.config.js`. */
+const vozduxanVersion = __VOZDUXAN_VERSION__;
 
 /** URL GitHub API «последний релиз»; пусто, если в `package.json` нет `repository` с GitHub. */
 const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
@@ -59,6 +71,40 @@ const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
 const releaseCheckState = ref(githubReleaseApiUrl ? "loading" : "idle");
 const releaseRemoteTag = ref(null);
 const releasePageUrl = ref(null);
+
+const aboutStackEl = ref(null);
+const aboutAppCardEl = ref(null);
+const aboutVozCardEl = ref(null);
+let aboutPairResizeObserver = null;
+
+/**
+ * Sets both «About» cards to the same height (the taller natural height).
+ *
+ * @returns {void}
+ */
+function syncAboutPairHeights() {
+  const a = aboutAppCardEl.value;
+  const b = aboutVozCardEl.value;
+  const stack = aboutStackEl.value;
+  if (!a || !b) return;
+  if (aboutPairResizeObserver) {
+    aboutPairResizeObserver.disconnect();
+  }
+  a.style.minHeight = "";
+  b.style.minHeight = "";
+  const ha = a.getBoundingClientRect().height;
+  const hb = b.getBoundingClientRect().height;
+  const h = Math.max(ha, hb);
+  if (h > 0) {
+    a.style.minHeight = `${h}px`;
+    b.style.minHeight = `${h}px`;
+  }
+  requestAnimationFrame(() => {
+    if (aboutPairResizeObserver && stack) {
+      aboutPairResizeObserver.observe(stack);
+    }
+  });
+}
 
 /**
  * Fetches the latest GitHub release and compares it to `appVersion`.
@@ -175,7 +221,7 @@ async function handleRtReconnect() {
   }
 }
 
-// ── Параметры для задротов ────────────────────────────────────────────────────
+// ── Параметры для задротов ─────────────────────────────────────────────────────────────
 const nerdOpen   = ref(false);
 const mirrorMode = ref(MIRROR_MODE_MANUAL);
 const mirrorSelect = ref(KNOWN_MIRRORS[0]);
@@ -217,7 +263,35 @@ onMounted(() => {
   persistedMirrorMode.value = getMirrorMode();
   syncMirrorSelectFromStorage();
   activeMirrorDisplay.value = getMirror();
+  getHttpProxy()
+    .then((url) => {
+      proxySelect.value = proxyUrlToSelect(url);
+    })
+    .catch(() => {});
   if (githubReleaseApiUrl) runReleaseCheck();
+  nextTick(() => {
+    aboutPairResizeObserver = new ResizeObserver(() => {
+      syncAboutPairHeights();
+    });
+    syncAboutPairHeights();
+  });
+  window.addEventListener("resize", syncAboutPairHeights);
+});
+
+onActivated(() => {
+  loadNerdDiagnostics();
+});
+
+onUnmounted(() => {
+  window.removeEventListener("resize", syncAboutPairHeights);
+  if (aboutPairResizeObserver) {
+    aboutPairResizeObserver.disconnect();
+    aboutPairResizeObserver = null;
+  }
+});
+
+watch(releaseCheckState, () => {
+  nextTick(() => syncAboutPairHeights());
 });
 
 watch(mirrorMode, (v) => {
@@ -286,6 +360,92 @@ function doResetMirror() {
   setTimeout(() => { mirrorSaved.value = false; }, 2000);
 }
 
+const PROXY_SELECT_NONE = "none";
+const PROXY_SELECT_PX1 = "px1";
+const PROXY_SELECT_PX2 = "px2";
+
+/**
+ * Maps persisted proxy URL to the nerd select value.
+ *
+ * @param {string | null | undefined} url
+ * @returns {string}
+ */
+function proxyUrlToSelect(url) {
+  if (!url) return PROXY_SELECT_NONE;
+  if (url === RT_HTTP_PROXY_PX1) return PROXY_SELECT_PX1;
+  if (url === RT_HTTP_PROXY_PX2) return PROXY_SELECT_PX2;
+  return PROXY_SELECT_NONE;
+}
+
+/**
+ * @param {string} sel
+ * @returns {string | null}
+ */
+function proxySelectToUrl(sel) {
+  if (sel === PROXY_SELECT_PX1) return RT_HTTP_PROXY_PX1;
+  if (sel === PROXY_SELECT_PX2) return RT_HTTP_PROXY_PX2;
+  return null;
+}
+
+const proxySelect = ref(PROXY_SELECT_NONE);
+const proxySaved = ref(false);
+const proxySaveBusy = ref(false);
+const proxySaveError = ref(null);
+const proxyProbeBusy = ref(false);
+const proxyProbeOk = ref(false);
+const proxyProbeError = ref(null);
+
+/**
+ * @returns {string}
+ */
+function rutrackerProbeTargetUrl() {
+  const base = getMirror().replace(/\/$/, "");
+  return `${base}/forum/index.php`;
+}
+
+/**
+ * GETs the configured mirror's `forum/index.php` via the proxy preset currently selected in UI.
+ *
+ * @returns {Promise<void>}
+ */
+async function probeProxy() {
+  proxyProbeError.value = null;
+  proxyProbeOk.value = false;
+  proxyProbeBusy.value = true;
+  try {
+    const url = proxySelectToUrl(proxySelect.value);
+    await probeHttpProxy(url, rutrackerProbeTargetUrl());
+    proxyProbeOk.value = true;
+    window.setTimeout(() => {
+      proxyProbeOk.value = false;
+    }, 5000);
+  } catch (e) {
+    proxyProbeError.value = e?.toString?.() ?? String(e);
+  } finally {
+    proxyProbeBusy.value = false;
+  }
+}
+
+async function saveProxy() {
+  proxySaveError.value = null;
+  proxyProbeError.value = null;
+  proxyProbeOk.value = false;
+  proxySaveBusy.value = true;
+  try {
+    const url = proxySelectToUrl(proxySelect.value);
+    await setHttpProxy(url);
+    setRtHttpProxyCache(url || "");
+    proxySaved.value = true;
+    setTimeout(() => {
+      proxySaved.value = false;
+    }, 2000);
+  } catch (e) {
+    proxySaveError.value = e?.toString?.() ?? String(e);
+  } finally {
+    proxySaveBusy.value = false;
+  }
+}
+
 // ── Память и кэш (диагностика) ───────────────────────────────────────────────
 const nerdDiagLoading = ref(false);
 const nerdDiagError = ref(null);
@@ -303,6 +463,21 @@ const nerdDiagError = ref(null);
  *   coverCacheDirLabel: string,
  * }>} */
 const nerdDiag = ref(null);
+
+/**
+ * Bytes under app data dir not covered by stream + cover subfolders (DB, session state, etc.).
+ *
+ * @returns {number}
+ */
+const nerdDiagOtherBytes = computed(() => {
+  const d = nerdDiag.value;
+  if (!d) return 0;
+  const t = Number(d.totalAppDataBytes) || 0;
+  const s = Number(d.streamCacheBytes) || 0;
+  const c = Number(d.coverTorrentCacheBytes) || 0;
+  const o = t - s - c;
+  return o > 0 ? o : 0;
+});
 
 const cacheFormMaxMib = ref(500);
 const cacheFormTtlMinutes = ref(60);
@@ -429,9 +604,6 @@ async function confirmClearCoverTorrents() {
   }
 }
 
-watch(nerdOpen, (open) => {
-  if (open) loadNerdDiagnostics();
-});
 </script>
 
 <template>
@@ -586,15 +758,265 @@ watch(nerdOpen, (open) => {
       </div>
     </div>
 
+    <!-- ── Звук ─────────────────────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Звук</div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">🎚</div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Эквалайзер</div>
+            <div class="settings-card-status">10 полос · Web Audio · локально</div>
+          </div>
+        </div>
+        <div class="settings-card-body settings-card-body--eq">
+          <EqualizerPanel />
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Кэш: быстрая очистка (вне «задротов») ─────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Кэш</div>
+      <div class="settings-card settings-card--cache-quick">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">🗑</div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Очистка на диске</div>
+            <div class="settings-card-status">Удалить данные кэша без смены лимитов</div>
+          </div>
+        </div>
+        <div class="settings-card-body">
+          <p class="settings-card-desc cache-quick-desc">
+            Остановится воспроизведение при очистке стриминга. Обложки из торрентов хранятся отдельно.
+          </p>
+          <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
+          <div class="cache-quick-actions">
+            <button
+              type="button"
+              class="nerd-btn-danger cache-quick-btn"
+              :disabled="cacheClearBusy || cacheSaveBusy"
+              @click="confirmClearStreaming"
+            >
+              <span v-if="cacheClearBusy" class="spinner" />
+              <template v-else>Очистить кэш стриминга</template>
+            </button>
+            <button
+              type="button"
+              class="nerd-btn-danger nerd-btn-danger--ghost cache-quick-btn"
+              :disabled="cacheClearBusy || cacheSaveBusy"
+              @click="confirmClearCoverTorrents"
+            >
+              Очистить кэш обложек (торренты)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Параметры для задротов ─────────────────────────────── -->
     <div class="settings-section">
       <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
         <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
         Параметры для задротов
-        <span v-if="hasCustomMirror()" class="nerd-custom-dot" title="Зеркало изменено" />
+        <span
+          v-if="hasCustomMirror() || hasHttpProxyConfigured()"
+          class="nerd-custom-dot"
+          title="Нестандартные зеркало или прокси"
+        />
       </button>
 
       <div v-if="nerdOpen" class="nerd-stack">
+        <div class="settings-card nerd-card nerd-card--cache-stats">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">⏱</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Кэш на диске и статистика</div>
+              <div class="settings-card-status">Лимиты TTL, объёмы и папка данных</div>
+            </div>
+            <button
+              type="button"
+              class="nerd-refresh-stats"
+              :disabled="nerdDiagLoading"
+              title="Обновить статистику"
+              @click="loadNerdDiagnostics"
+            >
+              <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
+              <template v-else>↻</template>
+            </button>
+          </div>
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Лимиты задают размер папки стриминга и время жизни неактивных торрентов. Ниже — фактические
+              объёмы RAM и диска (↻ обновляет цифры и подтягивает сохранённые лимиты).
+            </p>
+
+            <div class="nerd-merge-label">Лимиты</div>
+            <div class="nerd-cache-fields">
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
+                <input
+                  v-model.number="cacheFormMaxMib"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="50"
+                  max="8192"
+                  step="10"
+                />
+                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
+              </label>
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
+                <input
+                  v-model.number="cacheFormTtlMinutes"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="5"
+                  max="20160"
+                  step="5"
+                />
+                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
+              </label>
+            </div>
+
+            <div class="nerd-cache-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="cacheSaveBusy || cacheClearBusy"
+                @click="saveCacheSettings"
+              >
+                <span v-if="cacheSaveBusy" class="spinner" />
+                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
+              </button>
+            </div>
+
+            <div class="nerd-cache-stats-divider" />
+
+            <p class="settings-card-desc nerd-desc nerd-stats-lead nerd-stats-lead--merge">
+              Оценка RAM и размера каталога данных. «Всего по папке» — полный рекурсивный размер каталога;
+              ниже — два кэша и строка «Прочее» (всё, что не в этих подпапках). Лимит стриминга задаётся
+              выше; при выходе из приложения данные для воспроизведения обычно сбрасываются.
+            </p>
+
+            <p v-if="nerdDiagError" class="login-error nerd-probe-error">{{ nerdDiagError }}</p>
+
+            <div v-else-if="nerdDiagLoading && !nerdDiag" class="nerd-stats-loading">
+              <span class="spinner" />
+              <span>Считаем размеры…</span>
+            </div>
+
+            <div v-else-if="nerdDiag" class="nerd-stats-body">
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Память процесса (RSS)</span>
+                  <span class="nerd-stat-value">
+                    {{
+                      nerdDiag.residentMemoryBytes != null
+                        ? formatBytes(nerdDiag.residentMemoryBytes)
+                        : "—"
+                    }}
+                  </span>
+                </div>
+                <p class="nerd-stat-hint">Оценка «сколько оперативной памяти» занимает приложение сейчас.</p>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Папка данных (всего)</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.totalAppDataBytes) }}</span>
+                </div>
+                <p class="nerd-stat-path">{{ nerdDiag.appDataPath }}</p>
+                <p class="nerd-stat-hint">
+                  Включает все файлы в этом пути, не только папки кэша ниже.
+                </p>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Кэш стриминга</span>
+                  <span class="nerd-stat-value">
+                    {{ formatBytes(nerdDiag.streamCacheBytes) }}
+                    <span class="nerd-stat-of">
+                      / {{ formatBytes(nerdDiag.streamCacheLimitBytes) }}
+                    </span>
+                  </span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Папка «{{ nerdDiag.streamCacheDirLabel }}»: фрагменты треков для воспроизведения.
+                  Старые раздачи могут удаляться, если кэш переполняется или давно не использовались.
+                </p>
+                <div
+                  v-if="nerdDiag.streamCacheLimitBytes > 0"
+                  class="nerd-cache-bar"
+                  :title="`${Math.min(100, Math.round((nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100))}%`"
+                >
+                  <div
+                    class="nerd-cache-bar-fill"
+                    :style="{
+                      width: `${Math.min(
+                        100,
+                        (nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100
+                      )}%`,
+                    }"
+                  />
+                </div>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Кэш обложек (торренты)</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.coverTorrentCacheBytes) }}</span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Отдельная папка «{{ nerdDiag.coverCacheDirLabel }}» для обложек из раздач.
+                </p>
+              </div>
+
+              <div v-if="nerdDiagOtherBytes > 0" class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Прочее в каталоге данных</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiagOtherBytes) }}</span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Разница между «всего по папке» и суммой двух кэшей выше: базы SQLite, состояние
+                  libtorrent / сессии стриминга, fastresume, журналы и другие файлы вне этих подпапок.
+                </p>
+              </div>
+
+              <div class="nerd-stat-block nerd-stat-block--inline">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Торрентов в сессии стриминга</span>
+                  <span class="nerd-stat-value">{{ nerdDiag.streamingTorrentCount }}</span>
+                </div>
+              </div>
+
+              <div class="nerd-policy-box">
+                <div class="nerd-policy-title">Как настроен кэш</div>
+                <ul class="nerd-policy-list">
+                  <li>
+                    Текущий лимит папки стриминга:
+                    <strong>{{ formatBytes(nerdDiag.streamCacheLimitBytes) }}</strong>
+                    — при превышении вытесняются старые неактивные раздачи (лимиты задаются в блоке выше).
+                  </li>
+                  <li>
+                    Неиспользуемые торренты старше
+                    <strong>{{ formatTtlHuman(nerdDiag.streamCacheTtlSecs) }}</strong>
+                    могут быть удалены (пока приложение запущено или при следующем старте).
+                  </li>
+                  <li>
+                    Запись на диск буферизуется примерно
+                    <strong>{{ nerdDiag.deferWritesMb }} МиБ</strong>
+                    — меньше мелких обращений к диску во время прослушивания.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <p v-else class="nerd-stat-hint">Нажми ↻ чтобы обновить.</p>
+          </div>
+        </div>
+
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
             <div class="settings-card-icon settings-card-icon--app">🪞</div>
@@ -702,248 +1124,85 @@ watch(nerdOpen, (open) => {
           </div>
         </div>
 
-        <div class="settings-card nerd-card nerd-card--cache">
+        <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">⏱</div>
+            <div class="settings-card-icon settings-card-icon--app">🌐</div>
             <div class="settings-card-info">
-              <div class="settings-card-name">Кэш на диске</div>
-              <div class="settings-card-status">Лимиты и ручная очистка</div>
+              <div class="settings-card-name">HTTP-прокси</div>
+              <div class="settings-card-status">Тип HTTP · пресеты blockme</div>
             </div>
           </div>
           <div class="settings-card-body">
             <p class="settings-card-desc nerd-desc">
-              Стриминг хранит фрагменты треков в папке данных; обложки из торрентов — отдельно.
-              Можно задать максимальный размер и «возраст» неиспользуемых данных, а также
-              освободить место вручную.
+              Исходящие запросы бэкенда (Rutracker, обложки iTunes) пойдут через выбранный
+              прокси. Торренты и стриминг к ним не относятся.
             </p>
-
-            <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
-
-            <div class="nerd-cache-fields">
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
-                <input
-                  v-model.number="cacheFormMaxMib"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="50"
-                  max="8192"
-                  step="10"
-                />
-                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
-              </label>
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
-                <input
-                  v-model.number="cacheFormTtlMinutes"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="5"
-                  max="20160"
-                  step="5"
-                />
-                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
-              </label>
+            <div class="nerd-mirror-row nerd-mirror-row--stack">
+              <select v-model="proxySelect" class="login-input nerd-mirror-select">
+                <option :value="PROXY_SELECT_NONE">Нет</option>
+                <option :value="PROXY_SELECT_PX1">px1.blockme.site · порт 23128</option>
+                <option :value="PROXY_SELECT_PX2">px2.blockme.site · порт 3128</option>
+              </select>
             </div>
-
-            <div class="nerd-cache-actions">
+            <div class="nerd-mirror-actions">
               <button
                 type="button"
                 class="login-btn nerd-save-btn"
-                :disabled="cacheSaveBusy || cacheClearBusy"
-                @click="saveCacheSettings"
+                :disabled="proxySaveBusy || proxyProbeBusy"
+                @click="saveProxy"
               >
-                <span v-if="cacheSaveBusy" class="spinner" />
-                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
-              </button>
-            </div>
-
-            <div class="nerd-app-debug">
-              <label class="nerd-app-debug-row">
-                <input
-                  type="checkbox"
-                  :checked="appDebugEnabled"
-                  @change="onAppDebugChange"
-                />
-                <span>Журнал отладки: клики, экраны, плеер, торренты — только в отдельном окне</span>
-              </label>
-              <button
-                v-if="appDebugEnabled"
-                type="button"
-                class="login-btn nerd-save-btn nerd-app-debug-open-btn"
-                @click="openAppDebugLogWindow"
-              >
-                Открыть журнал отладки
-              </button>
-            </div>
-
-            <div class="nerd-cache-divider" />
-
-            <p class="nerd-cache-clear-intro">Очистка сразу удаляет файлы с диска.</p>
-            <div class="nerd-cache-clear-row">
-              <button
-                type="button"
-                class="nerd-btn-danger"
-                :disabled="cacheClearBusy || cacheSaveBusy"
-                @click="confirmClearStreaming"
-              >
-                <span v-if="cacheClearBusy" class="spinner" />
-                <template v-else>Очистить кэш стриминга</template>
+                <span v-if="proxySaveBusy" class="spinner" />
+                <template v-else>{{ proxySaved ? '✓ Сохранено' : 'Сохранить' }}</template>
               </button>
               <button
                 type="button"
-                class="nerd-btn-danger nerd-btn-danger--ghost"
-                :disabled="cacheClearBusy || cacheSaveBusy"
-                @click="confirmClearCoverTorrents"
+                class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                :disabled="proxyProbeBusy || proxySaveBusy"
+                @click="probeProxy"
               >
-                Очистить кэш обложек (торренты)
+                <span v-if="proxyProbeBusy" class="spinner" />
+                <template v-else>Проверить</template>
               </button>
             </div>
-          </div>
-        </div>
-
-        <div class="settings-card nerd-card nerd-card--stats">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">◉</div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Память и данные</div>
-              <div class="settings-card-status">Сколько занимает процесс и кэш на диске</div>
-            </div>
-            <button
-              type="button"
-              class="nerd-refresh-stats"
-              :disabled="nerdDiagLoading"
-              title="Обновить"
-              @click="loadNerdDiagnostics"
-            >
-              <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
-              <template v-else>↻</template>
-            </button>
-          </div>
-
-          <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc nerd-stats-lead">
-              Ниже — фактическое использование RAM и папки данных приложения. Кэш стриминга
-              ограничен сверху; при выходе из приложения загруженные для прослушивания данные
-              обычно удаляются.
+            <p v-if="proxyProbeOk" class="settings-card-desc nerd-desc nerd-proxy-probe-ok">
+              Запрос к текущему зеркалу (forum/index.php) прошёл — для выбранного варианта прокси
+              соединение работает.
             </p>
-
-            <p v-if="nerdDiagError" class="login-error nerd-probe-error">{{ nerdDiagError }}</p>
-
-            <div v-else-if="nerdDiagLoading && !nerdDiag" class="nerd-stats-loading">
-              <span class="spinner" />
-              <span>Считаем размеры…</span>
-            </div>
-
-            <div v-else-if="nerdDiag" class="nerd-stats-body">
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Память процесса (RSS)</span>
-                  <span class="nerd-stat-value">
-                    {{
-                      nerdDiag.residentMemoryBytes != null
-                        ? formatBytes(nerdDiag.residentMemoryBytes)
-                        : "—"
-                    }}
-                  </span>
-                </div>
-                <p class="nerd-stat-hint">Оценка «сколько оперативной памяти» занимает приложение сейчас.</p>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Папка данных (всего)</span>
-                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.totalAppDataBytes) }}</span>
-                </div>
-                <p class="nerd-stat-path">{{ nerdDiag.appDataPath }}</p>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Кэш стриминга</span>
-                  <span class="nerd-stat-value">
-                    {{ formatBytes(nerdDiag.streamCacheBytes) }}
-                    <span class="nerd-stat-of">
-                      / {{ formatBytes(nerdDiag.streamCacheLimitBytes) }}
-                    </span>
-                  </span>
-                </div>
-                <p class="nerd-stat-hint">
-                  Папка «{{ nerdDiag.streamCacheDirLabel }}»: фрагменты треков для воспроизведения.
-                  Старые раздачи могут удаляться, если кэш переполняется или давно не использовались.
-                </p>
-                <div
-                  v-if="nerdDiag.streamCacheLimitBytes > 0"
-                  class="nerd-cache-bar"
-                  :title="`${Math.min(100, Math.round((nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100))}%`"
-                >
-                  <div
-                    class="nerd-cache-bar-fill"
-                    :style="{
-                      width: `${Math.min(
-                        100,
-                        (nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100
-                      )}%`,
-                    }"
-                  />
-                </div>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Кэш обложек (торренты)</span>
-                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.coverTorrentCacheBytes) }}</span>
-                </div>
-                <p class="nerd-stat-hint">
-                  Отдельная папка «{{ nerdDiag.coverCacheDirLabel }}» для обложек из раздач.
-                </p>
-              </div>
-
-              <div class="nerd-stat-block nerd-stat-block--inline">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Торрентов в сессии стриминга</span>
-                  <span class="nerd-stat-value">{{ nerdDiag.streamingTorrentCount }}</span>
-                </div>
-              </div>
-
-              <div class="nerd-policy-box">
-                <div class="nerd-policy-title">Как настроен кэш</div>
-                <ul class="nerd-policy-list">
-                  <li>
-                    Текущий лимит папки стриминга:
-                    <strong>{{ formatBytes(nerdDiag.streamCacheLimitBytes) }}</strong>
-                    — при превышении вытесняются старые неактивные раздачи (настраивается в блоке выше).
-                  </li>
-                  <li>
-                    Неиспользуемые торренты старше
-                    <strong>{{ formatTtlHuman(nerdDiag.streamCacheTtlSecs) }}</strong>
-                    могут быть удалены (пока приложение запущено или при следующем старте).
-                  </li>
-                  <li>
-                    Запись на диск буферизуется примерно
-                    <strong>{{ nerdDiag.deferWritesMb }} МиБ</strong>
-                    — меньше мелких обращений к диску во время прослушивания.
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <p v-else class="nerd-stat-hint">Нажми ↻ чтобы обновить.</p>
+            <p v-if="proxyProbeError" class="login-error nerd-probe-error">{{ proxyProbeError }}</p>
+            <p v-if="proxySaveError" class="login-error nerd-probe-error">{{ proxySaveError }}</p>
+            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
+              Проверка использует выбранный выше вариант (можно до «Сохранить») и адрес зеркала из
+              блока выше. По умолчанию без прокси. Порты: 23128 — для px1; 3128 — для px2.
+            </p>
           </div>
         </div>
 
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🎚</div>
+            <div class="settings-card-icon settings-card-icon--app">🪲</div>
             <div class="settings-card-info">
-              <div class="settings-card-name">Эквалайзер</div>
-              <div class="settings-card-status">10 полос · Web Audio · локально</div>
+              <div class="settings-card-name">Журнал отладки</div>
+              <div class="settings-card-status">Клики, экраны, плеер, торренты</div>
             </div>
+            <label class="nerd-toggle-inline">
+              <input
+                type="checkbox"
+                :checked="appDebugEnabled"
+                @change="onAppDebugChange"
+              />
+            </label>
           </div>
-          <div class="settings-card-body settings-card-body--eq">
-            <EqualizerPanel />
+          <div v-if="appDebugEnabled" class="settings-card-body">
+            <button
+              type="button"
+              class="login-btn nerd-save-btn"
+              @click="openAppDebugLogWindow"
+            >
+              Открыть журнал
+            </button>
           </div>
         </div>
+
       </div>
     </div>
 
@@ -951,19 +1210,20 @@ watch(nerdOpen, (open) => {
     <div class="settings-section">
       <div class="settings-section-label">О приложении</div>
 
-      <div class="settings-card">
-        <div class="settings-card-header settings-card-header--about">
-          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
-            <img
-              class="settings-about-logo-img"
-              :src="appIconSrc"
-              alt="Нигде"
-              width="42"
-              height="42"
-            />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Нигде</div>
+      <div ref="aboutStackEl" class="settings-about-stack">
+        <div ref="aboutAppCardEl" class="settings-card settings-about-stack__app">
+          <div class="settings-card-header settings-card-header--about">
+            <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
+              <img
+                class="settings-about-logo-img"
+                :src="appIconSrc"
+                alt="Нигде"
+                width="72"
+                height="72"
+              />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Нигде</div>
             <div class="settings-card-status">Версия {{ appVersion }} · Tauri + Vue 3</div>
             <div
               v-if="githubProjectUrl || telegramChannelUrl"
@@ -1032,6 +1292,45 @@ watch(nerdOpen, (open) => {
             </div>
           </div>
         </div>
+        </div>
+
+        <div class="settings-about-connector" aria-hidden="true">
+          <span class="settings-about-connector__rail" />
+          <span class="settings-about-connector__pulse" />
+          <span class="settings-about-connector__pulse settings-about-connector__pulse--echo" />
+        </div>
+
+        <!-- vozduxan -->
+        <div ref="aboutVozCardEl" class="settings-card settings-card--vozduxan">
+        <div class="settings-card-header settings-card-header--about">
+          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo settings-card-icon--vozduxan-logo">
+            <img
+              class="settings-about-logo-img settings-about-vozduxan-img"
+              :src="vozduxanLogoSrc"
+              alt=""
+              width="72"
+              height="72"
+            />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name settings-card-name--with-dep">
+              <span>vozduxan</span>
+              <template v-if="vozduxanVersion">
+                <span class="settings-about-dep-version">v{{ vozduxanVersion }}</span>
+              </template>
+            </div>
+            <div class="settings-card-status">Стриминг аудио из торрент-роёв в реальном времени · C++ · libtorrent</div>
+            <div class="settings-about-links">
+              <a
+                class="settings-about-link"
+                href="https://github.com/neegde/vozduxan"
+                rel="noopener noreferrer"
+                @click.prevent="openExternalUrl('https://github.com/neegde/vozduxan')"
+              >GitHub</a>
+            </div>
+          </div>
+        </div>
+        </div>
       </div>
     </div>
 
@@ -1091,7 +1390,7 @@ watch(nerdOpen, (open) => {
   line-height: 1.4;
 }
 
-/* ── Параметры для задротов ───────────────────────────────────────────────── */
+/* ── Параметры для задротов ────────────────────────────────────────────────────────── */
 .nerd-toggle {
   display: flex;
   align-items: center;
@@ -1111,6 +1410,19 @@ watch(nerdOpen, (open) => {
 .nerd-toggle:hover { color: var(--text); }
 .nerd-toggle-icon  { font-size: 10px; }
 
+.nerd-toggle-inline {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  margin-left: auto;
+}
+.nerd-toggle-inline input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .nerd-custom-dot {
   width: 6px;
   height: 6px;
@@ -1121,6 +1433,47 @@ watch(nerdOpen, (open) => {
 }
 
 .nerd-card { margin-top: 0; }
+
+/* Быстрая очистка кэша (основные настройки) */
+.settings-card--cache-quick {
+  border-left: 3px solid var(--accent);
+}
+.cache-quick-desc {
+  margin-bottom: 4px;
+}
+.cache-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+@media (min-width: 520px) {
+  .cache-quick-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+.cache-quick-btn {
+  flex: 1;
+  min-width: min(100%, 240px);
+}
+
+.nerd-merge-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  margin: 2px 0 10px;
+}
+.nerd-cache-stats-divider {
+  margin: 20px 0 14px;
+  height: 1px;
+  background: var(--border, rgba(255, 255, 255, 0.08));
+}
+.nerd-stats-lead--merge {
+  margin-top: 0;
+}
 
 .nerd-stack {
   display: flex;
@@ -1164,6 +1517,12 @@ watch(nerdOpen, (open) => {
   gap: 8px;
   margin-top: 10px;
   align-items: center;
+}
+
+.nerd-proxy-probe-ok {
+  margin-top: 10px;
+  margin-bottom: 0;
+  color: var(--success);
 }
 
 .nerd-mirror-row {
@@ -1267,22 +1626,6 @@ watch(nerdOpen, (open) => {
 .nerd-app-debug-open-btn {
   align-self: flex-start;
 }
-.nerd-cache-divider {
-  margin: 18px 0 12px;
-  height: 1px;
-  background: var(--border, rgba(255,255,255,.08));
-}
-.nerd-cache-clear-intro {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 0 0 10px;
-}
-.nerd-cache-clear-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
 .nerd-btn-danger {
   display: inline-flex;
   align-items: center;
@@ -1317,7 +1660,8 @@ watch(nerdOpen, (open) => {
 }
 
 /* ── Память и данные (диагностика) ─────────────────────────────────────────── */
-.nerd-card--stats .settings-card-header {
+.nerd-card--stats .settings-card-header,
+.nerd-card--cache-stats .settings-card-header {
   align-items: flex-start;
 }
 .nerd-refresh-stats {
@@ -1464,6 +1808,16 @@ watch(nerdOpen, (open) => {
 .settings-card-header--about {
   align-items: flex-start;
 }
+.settings-about-stack {
+  --about-icon-size: 72px;
+  --about-connector-x: calc(20px + var(--about-icon-size) / 2);
+}
+.settings-about-stack > .settings-card > .settings-card-header > .settings-card-icon:first-child {
+  width: var(--about-icon-size);
+  min-width: var(--about-icon-size);
+  height: var(--about-icon-size);
+  flex-shrink: 0;
+}
 .settings-card-icon--about-logo {
   padding: 0;
   overflow: hidden;
@@ -1474,6 +1828,15 @@ watch(nerdOpen, (open) => {
   object-fit: cover;
   display: block;
   border-radius: inherit;
+}
+.settings-card-icon.settings-card-icon--vozduxan-logo {
+  border-radius: 14px;
+  background: transparent;
+}
+.settings-about-vozduxan-img {
+  object-fit: contain;
+  padding: 5px;
+  box-sizing: border-box;
 }
 .settings-about-links {
   display: flex;
@@ -1496,6 +1859,132 @@ watch(nerdOpen, (open) => {
 }
 .settings-about-link:hover {
   color: var(--text);
+}
+.settings-about-stack > .settings-about-stack__app.settings-card {
+  margin-bottom: 0;
+}
+.settings-about-stack .settings-card--vozduxan {
+  margin-top: 0;
+}
+.settings-about-connector {
+  position: relative;
+  height: 32px;
+  margin: 0;
+  pointer-events: none;
+}
+.settings-about-connector__rail {
+  position: absolute;
+  left: var(--about-connector-x);
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--accent-rgb), 0.38) 0%,
+    rgba(var(--accent-rgb), 0.26) 55%,
+    rgba(var(--accent-rgb), 0.12) 100%
+  );
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.12);
+}
+.settings-about-connector__pulse {
+  position: absolute;
+  left: var(--about-connector-x);
+  top: 0;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(255, 255, 255, 0.45),
+    var(--accent) 55%,
+    rgba(var(--accent-rgb), 0.35) 100%
+  );
+  box-shadow:
+    0 0 10px rgba(var(--accent-rgb), 0.65),
+    0 0 18px rgba(var(--accent-rgb), 0.35);
+  animation: settings-about-pulse-move 2.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.settings-about-connector__pulse::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  opacity: 0.55;
+  animation: settings-about-pulse-ring 2.6s ease-in-out infinite;
+}
+.settings-about-connector__pulse--echo {
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  opacity: 0.55;
+  box-shadow:
+    0 0 8px rgba(var(--accent-rgb), 0.45),
+    0 0 14px rgba(var(--accent-rgb), 0.22);
+  animation-delay: 1.3s;
+}
+.settings-about-connector__pulse--echo::after {
+  display: none;
+}
+@keyframes settings-about-pulse-move {
+  0% {
+    transform: translateY(21px) scale(0.88);
+    opacity: 0.45;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(5px) scale(1);
+    opacity: 0.55;
+  }
+}
+@keyframes settings-about-pulse-ring {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.2;
+  }
+  45% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-about-connector__pulse,
+  .settings-about-connector__pulse::after {
+    animation: none;
+  }
+  .settings-about-connector__pulse {
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.65;
+  }
+  .settings-about-connector__pulse::after {
+    display: none;
+  }
+  .settings-about-connector__pulse--echo {
+    display: none;
+  }
+}
+.settings-card-name--with-dep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.4em;
+}
+.settings-about-dep-version {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--muted);
+  letter-spacing: 0.01em;
 }
 .settings-release-check {
   display: flex;

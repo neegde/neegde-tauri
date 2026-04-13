@@ -1,3 +1,5 @@
+import { OPEN_TRACKERS } from "./openTrackers.js";
+
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
 const COVER_NAMES = ["cover", "folder", "front", "albumart", "album", "artwork", "thumb"];
 
@@ -67,12 +69,7 @@ export function orderedAudioFiles(files) {
   return detectAlbums(files).flatMap((a) => a.audioFiles);
 }
 
-const TRACKERS = [
-  "udp://tracker.opentrackr.org:1337/announce",
-  "udp://open.tracker.cl:1337/announce",
-  "udp://tracker.openbittorrent.com:6969/announce",
-  "udp://exodus.desync.com:6969/announce",
-];
+const TRACKERS = OPEN_TRACKERS;
 
 export function makeMagnet(hash, name) {
   const tr = TRACKERS.map((t) => `tr=${encodeURIComponent(t)}`).join("&");
@@ -80,8 +77,8 @@ export function makeMagnet(hash, name) {
 }
 
 /**
- * Appends public UDP trackers to a magnet from an indexer page so clients can find peers when
- * the page only listed a single announce URL (e.g. Rutracker HTML magnet).
+ * Appends public tracker announce URLs (ngosang/trackerslist `trackers_all`) to a magnet so
+ * clients can find peers when the page only listed a single announce URL (e.g. Rutracker HTML magnet).
  *
  * Args:
  *     magnet: Raw magnet string.

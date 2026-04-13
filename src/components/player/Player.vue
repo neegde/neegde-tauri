@@ -7,6 +7,7 @@ import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
+  hoverActivateTorrentStreamUrl,
 } from "../../torrent/torrentSession.js";
 import {
   ensureEqualizer,
@@ -52,14 +53,39 @@ const props = defineProps({
   hoverPrefetchKey: { type: String, default: "" },
   /** Словарь лайков из App.vue — для отображения состояния лайка текущего трека. */
   likes: { type: Object, default: null },
+  /** Текущая очередь воспроизведения (копия из App). */
+  playbackQueue: { type: Array, default: () => [] },
+  /** Индекс текущего трека в очереди. */
+  queueIndex: { type: Number, default: 0 },
+  /** `off` | `all` | `one` — циклическое переключение из App. */
+  repeatMode: { type: String, default: "off" },
+  shuffleOn: Boolean,
 });
 
-const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed", "toggle-like", "search-artist", "open-torrent"]);
+const emit = defineEmits([
+  "prev",
+  "next",
+  "ended",
+  "playing-change",
+  "request-stream",
+  "hover-prefetch-consumed",
+  "toggle-like",
+  "search-artist",
+  "open-torrent",
+  "queue-jump",
+  "queue-remove",
+  "cycle-repeat",
+  "toggle-shuffle",
+]);
 
 const currentArtist = computed(() =>
   enrichedMeta.value?.artist ||
   extractTrackArtist(props.track?.torrentName, props.track?.albumDirPath, props.track?.artist, props.track?.magnet) ||
   ""
+);
+
+const displayTitle = computed(
+  () => enrichedMeta.value?.title || trackDisplayBasename(props.track?.fileName ?? "")
 );
 
 function onArtistClick() {
@@ -159,12 +185,25 @@ const streamError = ref("");
 const bufferedPercent = ref(0);
 /** Отмена загрузки без смены трека — не применять URL после await. */
 const loadCancelledByUser = ref(false);
+/** Watchdog: превращает бесконечный buffering после piece-timeout в явный error. */
+let bufferingWatchdogTimer = null;
+/** Чуть больше vozduxan PIECE_TIMEOUT_MS (20 000 мс). */
+const BUFFERING_WATCHDOG_MS = 25_000;
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
+/** Matches the in-flight / active prepare — suppresses duplicate watch runs for the same track. */
+const activeStreamPrepareSig = ref("");
 
 /** Последняя статистика BitTorrent из Tauri (событие torrent-prepare-progress). */
 const prepareProgress = ref(null);
+/** Сохраняем последнее значение, чтобы статус-меню показывало данные и в состоянии ready. */
+const lastPrepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
+
+/** Открыто ли pop-up меню статуса стрима. */
+const statusMenuOpen = ref(false);
+/** Панель списка очереди. */
+const queuePanelOpen = ref(false);
 
 /** URL из `torrent_prefetch_next_track` (другой торрент), пока не переключились на этот трек. */
 const prefetchedStream = ref({ url: "", forKey: "" });
@@ -188,8 +227,10 @@ const PREFETCH_MIN_RATIO = 0.12;
  *     String key or empty when invalid.
  */
 function queueTrackKey(t) {
-  if (!t?.magnet || t.fileIdx == null) return "";
-  return `${t.magnet}\0${t.fileIdx}`;
+  if (!t?.magnet || t.fileIdx == null || t.fileIdx === "") return "";
+  const n = Number(t.fileIdx);
+  if (!Number.isFinite(n)) return "";
+  return `${t.magnet}\0${n}`;
 }
 
 /**
@@ -268,12 +309,68 @@ const prepareHintDetail = computed(() => {
   return `${etaLine}\n${second}`;
 });
 
+/* ── Status menu computeds ─────────────────────────────────────────── */
+
+/** Цвет точки для всех активных фаз, включая ready. */
+const streamDotClass = computed(() => {
+  if (streamPhase.value === "ready") return "prepare-dot--ok";
+  return prepareDotClass.value;
+});
+
+/** Одна фраза-заголовок для pop-up. */
+const streamStatusHeadline = computed(() => {
+  switch (streamPhase.value) {
+    case "preparing": return "Подготовка потока";
+    case "buffering":  return "Буферизация";
+    case "ready":      return "Стрим активен";
+    default:           return "";
+  }
+});
+
+/** Человекочитаемое предложение о том, что сейчас происходит. */
+const streamStatusBody = computed(() => {
+  const p = lastPrepareProgress.value;
+  const msg = (p?.message ?? "").toLowerCase();
+
+  if (streamPhase.value === "ready") {
+    const live = p?.peersLive ?? 0;
+    return live > 0
+      ? `Трек воспроизводится через торрент-сеть · ${live} источн.`
+      : "Трек воспроизводится через торрент-сеть";
+  }
+  if (msg.includes("metadata") || msg.includes("resolv")) return "Получение информации о файле…";
+  if (msg.includes("buffer"))                              return "Загрузка начала трека…";
+  if (msg.includes("ready"))                               return "Трек готов к воспроизведению";
+  return "Поиск источников в сети…";
+});
+
+/** Строки с данными в таблице pop-up. */
+const streamStatusRows = computed(() => {
+  const p = lastPrepareProgress.value;
+  if (!p) return [];
+  const rows = [];
+  if ((p.peersLive ?? 0) > 0)
+    rows.push({ label: "Подключено источников", value: String(p.peersLive) });
+  const pending = (p.peersConnecting ?? 0) + (p.peersQueued ?? 0);
+  if (pending > 0)
+    rows.push({ label: "Подключается", value: String(pending) });
+  if ((p.downloadMbps ?? 0) > 0.001)
+    rows.push({ label: "Скорость загрузки", value: `${p.downloadMbps.toFixed(2)} МБ/с` });
+  const seeds = props.track?.seeders;
+  if (seeds != null && Number.isFinite(Number(seeds)))
+    rows.push({ label: "Раздающих", value: String(Number(seeds)) });
+  return rows;
+});
+
 watch(
-  () => [props.track?.magnet, props.track?.fileIdx],
+  () => queueTrackKey(props.track),
   () => {
+    activeStreamPrepareSig.value = "";
     prepareAttempt.value = 0;
     prefetchOkFingerprint.value = "";
     secondPrefetchDoneFingerprint = "";
+    lastPrepareProgress.value = null;
+    statusMenuOpen.value = false;
     const nk = props.track ? queueTrackKey(props.track) : "";
     if (prefetchedStream.value.url && prefetchedStream.value.forKey !== nk) {
       void releaseTorrentStreamUrl(prefetchedStream.value.url);
@@ -308,11 +405,11 @@ function logPlayRejected(context, err) {
   });
 }
 
-function cancelLoad() {
+async function cancelLoad() {
   void appDebugLog("player", "cancelLoad", { source: "user" });
   loadCancelledByUser.value = true;
   void torrentPrepareCancel();
-  void releaseTorrentStreamUrl(src.value);
+  const prevUrl = src.value;
   stopBufferPoll();
   src.value = "";
   current.value = 0;
@@ -321,11 +418,12 @@ function cancelLoad() {
   streamError.value = "";
   streamPhase.value = "idle";
   playing.value = false;
+  await releaseTorrentStreamUrl(prevUrl);
 }
 
 function onPlayButtonClick() {
-  if (isLoading.value) {
-    cancelLoad();
+  if (streamPhase.value === "preparing") {
+    void cancelLoad();
     return;
   }
   togglePlay();
@@ -379,7 +477,7 @@ function onKey(e) {
   }
   if (e.code === "Space" && hasTrack.value) {
     e.preventDefault();
-    if (isLoading.value) cancelLoad();
+    if (streamPhase.value === "preparing") void cancelLoad();
     else togglePlay();
   }
   if (e.code === "ArrowRight" && props.hasNext) { e.preventDefault(); emit("next"); }
@@ -450,6 +548,7 @@ watch(streamPhase, (phase, prev) => {
     from: prev,
     fileIdx: props.track?.fileIdx,
   });
+  if (phase !== "buffering") clearBufferingWatchdog();
 });
 
 watchEffect(() => {
@@ -631,9 +730,66 @@ function onAudioPlay() {
   void resumeEqualizerContext();
 }
 
-function onAudioPlaying() {
-  streamPhase.value = "ready";
+/**
+ * Marks the stream as ready for UI (spinner off). Uses `canplay`, not only `playing`,
+ * because autoplay may be blocked (mobile / WebView) or `playing` may be delayed
+ * while the element already reached HAVE_FUTURE_DATA.
+ */
+function bumpStreamPhaseReady() {
+  if (streamPhase.value !== "error" && streamPhase.value !== "idle") {
+    streamPhase.value = "ready";
+  }
   void resumeEqualizerContext();
+}
+
+function onAudioCanPlay() {
+  updateBufferStats();
+  bumpStreamPhaseReady();
+}
+
+function onAudioPlaying() {
+  bumpStreamPhaseReady();
+}
+
+/**
+ * Browsers often fire `waiting` / `stalled` while paused; do not show buffering or
+ * the play button will call cancelLoad instead of resume.
+ */
+function onAudioWaiting() {
+  const a = audioRef.value;
+  if (a && !a.paused) {
+    streamPhase.value = "buffering";
+    startBufferingWatchdog();
+  }
+}
+
+function onAudioStalled() {
+  const a = audioRef.value;
+  if (a && !a.paused) {
+    streamPhase.value = "buffering";
+    startBufferingWatchdog();
+  }
+}
+
+function startBufferingWatchdog() {
+  clearBufferingWatchdog();
+  bufferingWatchdogTimer = setTimeout(() => {
+    bufferingWatchdogTimer = null;
+    if (streamPhase.value === "buffering") {
+      streamError.value = "Поток прерван: не удалось получить данные от раздачи";
+      streamPhase.value = "error";
+      void appDebugLog("player", "buffering watchdog: stream stall timeout", {
+        currentTime: audioRef.value?.currentTime,
+      });
+    }
+  }, BUFFERING_WATCHDOG_MS);
+}
+
+function clearBufferingWatchdog() {
+  if (bufferingWatchdogTimer !== null) {
+    clearTimeout(bufferingWatchdogTimer);
+    bufferingWatchdogTimer = null;
+  }
 }
 
 let bufferPollRaf = 0;
@@ -671,6 +827,11 @@ async function maybeTriggerPrefetch() {
   const c = current.value;
   if (!Number.isFinite(d) || d <= 0) return;
   if (c < PREFETCH_MIN_SEC && c / d < PREFETCH_MIN_RATIO) return;
+
+  // Don't start a new prefetch if there's already a ready URL for the next track.
+  // Starting a new prefetch would call torrent_prefetch_next_track, which releases the old
+  // prefetch_token — killing the URL before prepareTrack() has a chance to use it.
+  if (prefetchedStream.value.url) return;
 
   const fp = prefetchFingerprint(props.track, props.nextTrack);
   if (!fp || fp === prefetchOkFingerprint.value) return;
@@ -713,7 +874,9 @@ async function maybeTriggerSecondPrefetch() {
 
   secondPrefetchInFlight = true;
   try {
-    const result = await prefetchNextInQueue(props.nextTrack, props.secondNextTrack);
+    const result = await prefetchNextInQueue(props.nextTrack, props.secondNextTrack, {
+      warmOnly: true,
+    });
     // Release the URL immediately — we just want the torrent warmed in session
     if (result?.kind === "streamReady" && result.url) {
       void releaseTorrentStreamUrl(result.url);
@@ -752,18 +915,22 @@ watch(
 
 watch(
   () => [
-    props.track?.magnet,
-    props.track?.fileIdx,
+    queueTrackKey(props.track),
     prepareAttempt.value,
     props.suppressAutoplay,
   ],
-  async ([magnet, fileIdx, , suppressed], _, onCleanup) => {
-    if (!props.track || !magnet) {
+  async ([, , suppressed], _, onCleanup) => {
+    const t = props.track;
+    const magnet = t?.magnet;
+    const fileIdx = t?.fileIdx;
+    if (!t || !magnet) {
+      activeStreamPrepareSig.value = "";
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
-      void releaseTorrentStreamUrl(src.value);
+      const prevUrl = src.value;
       src.value = "";
+      await releaseTorrentStreamUrl(prevUrl);
       current.value = 0;
       duration.value = 0;
       bufferedPercent.value = 0;
@@ -774,11 +941,13 @@ watch(
     }
 
     if (suppressed) {
+      activeStreamPrepareSig.value = "";
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
-      void releaseTorrentStreamUrl(src.value);
+      const prevUrl = src.value;
       src.value = "";
+      await releaseTorrentStreamUrl(prevUrl);
       current.value = 0;
       duration.value = 0;
       bufferedPercent.value = 0;
@@ -788,16 +957,27 @@ watch(
       return;
     }
 
+    const prepareSig = `${queueTrackKey(t)}\0${prepareAttempt.value}`;
+    if (
+      prepareSig === activeStreamPrepareSig.value &&
+      streamPhase.value !== "idle" &&
+      streamPhase.value !== "error"
+    ) {
+      return;
+    }
+    activeStreamPrepareSig.value = prepareSig;
+
     loadCancelledByUser.value = false;
     prepareProgress.value = null;
     playing.value = false;
-    void releaseTorrentStreamUrl(src.value);
+    const prevUrl = src.value;
     src.value = "";
     current.value = 0;
     duration.value = 0;
     bufferedPercent.value = 0;
     streamError.value = "";
     streamPhase.value = "preparing";
+    await releaseTorrentStreamUrl(prevUrl);
 
     let cancelled = false;
     onCleanup(() => { cancelled = true; });
@@ -815,12 +995,18 @@ watch(
         prefetchedStream.value = { url: "", forKey: "" };
         void appDebugLog("player", "stream prepare used prefetched URL", { fileIdx });
       } else if (props.hoverPrefetchUrl && props.hoverPrefetchKey === preparedKey) {
-        // Hover-prefetch hit (user hovered this track before clicking)
+        // Hover-prefetch hit (user hovered this track before clicking).
+        // Promote hover_token → current_token BEFORE assigning src to the audio element.
+        await hoverActivateTorrentStreamUrl(props.hoverPrefetchUrl);
         nextSrc = props.hoverPrefetchUrl;
         emit("hover-prefetch-consumed");
         void appDebugLog("player", "stream prepare used hover-prefetch URL", { fileIdx });
       } else {
-        nextSrc = await streamUrl(magnet, fileIdx, {
+        const fileIdxNorm =
+          fileIdx != null && fileIdx !== "" && Number.isFinite(Number(fileIdx))
+            ? Number(fileIdx)
+            : fileIdx;
+        nextSrc = await streamUrl(magnet, fileIdxNorm, {
           source: props.track?.source,
           torrentId: props.track?.torrentId,
         });
@@ -835,7 +1021,12 @@ watch(
       if (!cancelled && !loadCancelledByUser.value) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
-        if (!nextSrc) {
+        if (nextSrc) {
+          // WKWebView does not fire `stalled` when the HTTP server holds the connection open
+          // but sends no data (vozduxan waiting for a piece). Start watchdog immediately so
+          // we don't spin in infinite buffering if the piece never arrives.
+          startBufferingWatchdog();
+        } else {
           console.error("[player/stream] empty URL", { magnetLen: magnet?.length, fileIdx });
           streamError.value = "Пустой URL потока";
         }
@@ -864,6 +1055,7 @@ watch(
         src.value = "";
         streamPhase.value = "error";
         prepareProgress.value = null;
+        activeStreamPrepareSig.value = "";
         const detail =
           typeof e === "string"
             ? e
@@ -887,18 +1079,149 @@ watch(
   { immediate: true }
 );
 
+function onDocClick() {
+  statusMenuOpen.value = false;
+  queuePanelOpen.value = false;
+}
+
+const queueLen = computed(() => props.playbackQueue?.length ?? 0);
+
+const playerTrackInfoRef = ref(null);
+const titleMarqueeWrapRef = ref(null);
+const artistMarqueeWrapRef = ref(null);
+const titleScroll = ref(false);
+const artistScroll = ref(false);
+const titleMarqueeStyle = ref({});
+const artistMarqueeStyle = ref({});
+
+const marqueeResizeObserver =
+  typeof ResizeObserver !== "undefined"
+    ? new ResizeObserver(() => {
+        void nextTick(() => {
+          measureTitleMarquee();
+          measureArtistMarquee();
+        });
+      })
+    : null;
+
+/**
+ * Enables horizontal marquee when the title is wider than the player strip.
+ */
+function measureTitleMarquee() {
+  const wrap = titleMarqueeWrapRef.value;
+  if (!wrap) return;
+  const first = wrap.querySelector(".player-marquee-chunk");
+  if (!first) return;
+  const overflow = first.scrollWidth > wrap.clientWidth + 1;
+  if (overflow !== titleScroll.value) {
+    titleScroll.value = overflow;
+    void nextTick(() => measureTitleMarquee());
+    return;
+  }
+  if (overflow) {
+    const w = first.scrollWidth;
+    const sec = Math.max(8, Math.min(48, w / 28));
+    titleMarqueeStyle.value = { "--marquee-duration": `${sec}s` };
+  } else {
+    titleMarqueeStyle.value = {};
+  }
+}
+
+/**
+ * Enables horizontal marquee when the artist line overflows.
+ */
+function measureArtistMarquee() {
+  const wrap = artistMarqueeWrapRef.value;
+  if (!wrap) return;
+  const first = wrap.querySelector(".player-marquee-chunk");
+  if (!first) return;
+  const overflow = first.scrollWidth > wrap.clientWidth + 1;
+  if (overflow !== artistScroll.value) {
+    artistScroll.value = overflow;
+    void nextTick(() => measureArtistMarquee());
+    return;
+  }
+  if (overflow) {
+    const w = first.scrollWidth;
+    const sec = Math.max(8, Math.min(48, w / 28));
+    artistMarqueeStyle.value = { "--marquee-duration": `${sec}s` };
+  } else {
+    artistMarqueeStyle.value = {};
+  }
+}
+
+watch(
+  () => [displayTitle.value, props.track?.fileName],
+  () => {
+    titleScroll.value = false;
+    void nextTick(() => measureTitleMarquee());
+  }
+);
+
+watch(currentArtist, () => {
+  artistScroll.value = false;
+  void nextTick(() => measureArtistMarquee());
+});
+
+watch(hasTrack, (v) => {
+  if (v) void nextTick(() => {
+    measureTitleMarquee();
+    measureArtistMarquee();
+  });
+});
+
+watchEffect((onCleanup) => {
+  const el = playerTrackInfoRef.value;
+  const ro = marqueeResizeObserver;
+  if (el && ro) {
+    ro.observe(el);
+    onCleanup(() => {
+      ro.unobserve(el);
+    });
+  }
+});
+
+const repeatCycleTitle = computed(() => {
+  if (props.repeatMode === "all") return "Повтор: вся очередь";
+  if (props.repeatMode === "one") return "Повтор: один трек";
+  return "Повтор выключен";
+});
+
+/**
+ * On natural end: repeat-one (or repeat-all with a single track) restarts the same
+ * clip; otherwise App advances the queue.
+ */
+function onAudioEnded() {
+  const qLen = props.playbackQueue?.length ?? 0;
+  const loopSameTrack =
+    props.repeatMode === "one" || (props.repeatMode === "all" && qLen === 1);
+  if (loopSameTrack) {
+    const a = audioRef.value;
+    if (!a) return;
+    a.currentTime = 0;
+    void a.play().catch((err) => {
+      logPlayRejected("repeatLoop", err);
+    });
+    return;
+  }
+  emit("ended");
+}
+
 onMounted(async () => {
   installMediaSessionHandlers();
   window.addEventListener("keydown", onKey);
+  document.addEventListener("click", onDocClick);
   try {
     unlistenPrepareProgress = await listen("torrent-prepare-progress", (e) => {
       prepareProgress.value = e.payload;
+      if (e.payload) lastPrepareProgress.value = e.payload;
     });
   } catch {
     unlistenPrepareProgress = () => {};
   }
 });
 onUnmounted(() => {
+  marqueeResizeObserver?.disconnect();
   if (prefetchedStream.value.url) {
     void releaseTorrentStreamUrl(prefetchedStream.value.url);
     prefetchedStream.value = { url: "", forKey: "" };
@@ -910,6 +1233,7 @@ onUnmounted(() => {
   void clearDiscordPresence();
   destroyEqualizer();
   window.removeEventListener("keydown", onKey);
+  document.removeEventListener("click", onDocClick);
 });
 </script>
 
@@ -927,20 +1251,48 @@ onUnmounted(() => {
           :radius="4"
           fallback="♪"
         />
-        <div class="player-track-info">
+        <div ref="playerTrackInfoRef" class="player-track-info">
           <button
             type="button"
             class="player-name player-name--link"
             :title="`Открыть альбом`"
             @click="onTrackClick"
-          >{{ enrichedMeta?.title || trackDisplayBasename(track.fileName) }}</button>
+          >
+            <span ref="titleMarqueeWrapRef" class="player-marquee">
+              <span
+                class="player-marquee-track"
+                :class="{ 'player-marquee-track--active': titleScroll }"
+                :style="titleMarqueeStyle"
+              >
+                <span class="player-marquee-chunk">{{ displayTitle }}</span><span
+                  v-if="titleScroll"
+                  class="player-marquee-chunk"
+                  aria-hidden="true"
+                >{{ displayTitle }}</span>
+              </span>
+            </span>
+          </button>
           <button
             v-if="currentArtist"
             type="button"
             class="player-artist player-artist--link"
             :title="`Найти: ${currentArtist}`"
             @click="onArtistClick"
-          >{{ currentArtist }}</button>
+          >
+            <span ref="artistMarqueeWrapRef" class="player-marquee">
+              <span
+                class="player-marquee-track"
+                :class="{ 'player-marquee-track--active': artistScroll }"
+                :style="artistMarqueeStyle"
+              >
+                <span class="player-marquee-chunk">{{ currentArtist }}</span><span
+                  v-if="artistScroll"
+                  class="player-marquee-chunk"
+                  aria-hidden="true"
+                >{{ currentArtist }}</span>
+              </span>
+            </span>
+          </button>
           <span v-else class="player-artist" />
         </div>
         <button
@@ -962,20 +1314,50 @@ onUnmounted(() => {
       <!-- Center: controls + progress -->
       <div class="player-center">
         <div class="player-controls">
-          <div v-if="isLoading" class="prepare-hint">
+          <div
+            v-if="streamPhase !== 'idle' && streamPhase !== 'error'"
+            class="stream-status"
+            @click.stop
+          >
             <button
               type="button"
-              class="prepare-hint-trigger"
-              aria-label="Статус загрузки BitTorrent"
+              class="stream-status-btn"
+              :aria-expanded="statusMenuOpen"
+              aria-label="Статус потока"
+              @click="statusMenuOpen = !statusMenuOpen"
             >
-              <span class="prepare-hint-dot-wrap" aria-hidden="true">
-                <span :class="['prepare-dot', prepareDotClass]" />
+              <span class="stream-status-dot-wrap" aria-hidden="true">
+                <span :class="['prepare-dot', streamDotClass, isLoading ? 'prepare-dot--pulse' : '']" />
               </span>
             </button>
-            <div class="prepare-hint-panel" role="tooltip">
-              <pre class="prepare-hint-pre">{{ prepareHintDetail }}</pre>
-            </div>
+
+            <Transition name="status-menu">
+              <div v-if="statusMenuOpen" class="stream-status-panel" role="dialog" aria-label="Статус стрима">
+                <div class="status-headline">{{ streamStatusHeadline }}</div>
+                <div class="status-body">{{ streamStatusBody }}</div>
+                <div v-if="streamStatusRows.length" class="status-rows">
+                  <div v-for="row in streamStatusRows" :key="row.label" class="status-row">
+                    <span class="status-label">{{ row.label }}</span>
+                    <span class="status-val">{{ row.value }}</span>
+                  </div>
+                </div>
+              </div>
+            </Transition>
           </div>
+
+          <button
+            type="button"
+            class="ctrl-btn ctrl-btn-shuffle"
+            :class="{ 'ctrl-btn--shuffle-on': shuffleOn }"
+            :disabled="queueLen < 2"
+            :title="shuffleOn ? 'Случайный порядок: вкл' : 'Случайный порядок: выкл'"
+            :aria-label="shuffleOn ? 'Выключить перемешивание' : 'Включить перемешивание'"
+            @click="emit('toggle-shuffle')"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l9 9"/>
+            </svg>
+          </button>
 
           <button
             class="ctrl-btn"
@@ -1016,6 +1398,28 @@ onUnmounted(() => {
               <rect x="16" y="5" width="3" height="14" rx="1.5"/>
             </svg>
           </button>
+
+          <button
+            type="button"
+            class="ctrl-btn ctrl-btn-repeat"
+            :class="{
+              'ctrl-btn--repeat-all': repeatMode === 'all',
+              'ctrl-btn--repeat-one': repeatMode === 'one',
+            }"
+            :title="repeatCycleTitle"
+            :aria-label="repeatCycleTitle"
+            @click="emit('cycle-repeat')"
+          >
+            <span class="ctrl-repeat-wrap" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="17 1 21 5 17 9"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <polyline points="7 23 3 19 7 15"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              </svg>
+              <span v-if="repeatMode === 'one'" class="ctrl-repeat-one-mark">1</span>
+            </span>
+          </button>
         </div>
 
         <div class="player-progress">
@@ -1040,8 +1444,62 @@ onUnmounted(() => {
         <div v-if="streamPhase === 'error' && streamError" class="stream-inline-error">{{ streamError }}</div>
       </div>
 
-      <!-- Right: volume -->
+      <!-- Right: queue + volume -->
       <div class="player-right">
+        <div v-if="queueLen > 0" class="player-queue-wrap" @click.stop>
+          <button
+            type="button"
+            class="player-queue-btn"
+            :class="{ 'player-queue-btn--open': queuePanelOpen }"
+            :aria-expanded="queuePanelOpen"
+            aria-label="Очередь воспроизведения"
+            :title="'Очередь: ' + queueLen + ' ' + (queueLen === 1 ? 'трек' : queueLen < 5 ? 'трека' : 'треков')"
+            @click="queuePanelOpen = !queuePanelOpen"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span class="player-queue-badge">{{ queueLen }}</span>
+          </button>
+          <Transition name="queue-panel">
+            <div
+              v-if="queuePanelOpen"
+              class="player-queue-panel"
+              role="dialog"
+              aria-label="Очередь"
+            >
+              <div class="player-queue-head">Очередь</div>
+              <ul class="player-queue-list">
+                <li
+                  v-for="(q, idx) in playbackQueue"
+                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                >
+                  <button
+                    type="button"
+                    class="player-queue-item-main"
+                    @click="emit('queue-jump', idx); queuePanelOpen = false"
+                  >
+                    <span class="player-queue-item-title">{{ trackDisplayBasename(q.fileName) }}</span>
+                    <span class="player-queue-item-sub">{{ q.artist || q.torrentName || '' }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="player-queue-item-remove"
+                    aria-label="Убрать из очереди"
+                    title="Убрать"
+                    @click="emit('queue-remove', idx)"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </Transition>
+        </div>
         <div class="player-volume" @wheel.prevent="onVolumeWheel">
           <button
             type="button"
@@ -1088,14 +1546,14 @@ onUnmounted(() => {
         @playing="onAudioPlaying"
         @pause="playing = false"
         @progress="updateBufferStats"
-        @canplay="updateBufferStats"
+        @canplay="onAudioCanPlay"
         @loadedmetadata="duration = audioRef?.duration ?? 0; updateBufferStats()"
         @durationchange="duration = audioRef?.duration ?? 0; updateBufferStats()"
-        @waiting="streamPhase = 'buffering'"
-        @stalled="streamPhase = 'buffering'"
+        @waiting="onAudioWaiting"
+        @stalled="onAudioStalled"
         @error="onAudioError"
         @timeupdate="current = audioRef?.currentTime ?? 0"
-        @ended="emit('ended')"
+        @ended="onAudioEnded"
       />
     </template>
 
@@ -1115,6 +1573,19 @@ onUnmounted(() => {
       </div>
       <div class="player-center">
         <div class="player-controls">
+          <button
+            type="button"
+            class="ctrl-btn ctrl-btn-shuffle"
+            :class="{ 'ctrl-btn--shuffle-on': shuffleOn }"
+            :disabled="queueLen < 2"
+            :title="shuffleOn ? 'Случайный порядок: вкл' : 'Случайный порядок: выкл'"
+            :aria-label="shuffleOn ? 'Выключить перемешивание' : 'Включить перемешивание'"
+            @click="emit('toggle-shuffle')"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l9 9"/>
+            </svg>
+          </button>
           <button class="ctrl-btn" disabled>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <polygon points="19,5 9,12 19,19"/>
@@ -1132,6 +1603,27 @@ onUnmounted(() => {
               <rect x="16" y="5" width="3" height="14" rx="1.5"/>
             </svg>
           </button>
+          <button
+            type="button"
+            class="ctrl-btn ctrl-btn-repeat"
+            :class="{
+              'ctrl-btn--repeat-all': repeatMode === 'all',
+              'ctrl-btn--repeat-one': repeatMode === 'one',
+            }"
+            :title="repeatCycleTitle"
+            :aria-label="repeatCycleTitle"
+            @click="emit('cycle-repeat')"
+          >
+            <span class="ctrl-repeat-wrap" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="17 1 21 5 17 9"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <polyline points="7 23 3 19 7 15"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              </svg>
+              <span v-if="repeatMode === 'one'" class="ctrl-repeat-one-mark">1</span>
+            </span>
+          </button>
         </div>
         <div class="player-progress">
           <span class="progress-time">0:00</span>
@@ -1139,7 +1631,62 @@ onUnmounted(() => {
           <span class="progress-time">0:00</span>
         </div>
       </div>
-      <div class="player-right" />
+      <div class="player-right">
+        <div v-if="queueLen > 0" class="player-queue-wrap" @click.stop>
+          <button
+            type="button"
+            class="player-queue-btn"
+            :class="{ 'player-queue-btn--open': queuePanelOpen }"
+            :aria-expanded="queuePanelOpen"
+            aria-label="Очередь воспроизведения"
+            :title="'Очередь: ' + queueLen + ' ' + (queueLen === 1 ? 'трек' : queueLen < 5 ? 'трека' : 'треков')"
+            @click="queuePanelOpen = !queuePanelOpen"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span class="player-queue-badge">{{ queueLen }}</span>
+          </button>
+          <Transition name="queue-panel">
+            <div
+              v-if="queuePanelOpen"
+              class="player-queue-panel"
+              role="dialog"
+              aria-label="Очередь"
+            >
+              <div class="player-queue-head">Очередь</div>
+              <ul class="player-queue-list">
+                <li
+                  v-for="(q, idx) in playbackQueue"
+                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                >
+                  <button
+                    type="button"
+                    class="player-queue-item-main"
+                    @click="emit('queue-jump', idx); queuePanelOpen = false"
+                  >
+                    <span class="player-queue-item-title">{{ trackDisplayBasename(q.fileName) }}</span>
+                    <span class="player-queue-item-sub">{{ q.artist || q.torrentName || '' }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="player-queue-item-remove"
+                    aria-label="Убрать из очереди"
+                    title="Убрать"
+                    @click="emit('queue-remove', idx)"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </Transition>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -1257,21 +1804,82 @@ onUnmounted(() => {
   height: 4px;
 }
 
-/* Индикатор загрузки торрента (цвет + подсказка с пирами и скоростью) */
+/* ── Индикатор + pop-up статуса стрима ─────────────────────────────── */
 .player-controls {
   flex-wrap: wrap;
   justify-content: center;
   position: relative;
+  gap: 14px;
 }
-.prepare-hint {
+
+.ctrl-btn--shuffle-on,
+.ctrl-btn--repeat-all,
+.ctrl-btn--repeat-one {
+  color: var(--accent);
+}
+
+/*
+ * Global `style.css` uses `.ctrl-btn:hover { color: var(--text) }`, which beats the
+ * accent color above — toggles looked unchanged until pointer leave. Override hover
+ * and add a clear :active press state for transport controls.
+ */
+.player .player-controls .ctrl-btn.ctrl-btn--shuffle-on:hover:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-all:hover:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-one:hover:not(:disabled) {
+  color: var(--accent-h);
+  transform: scale(1.1);
+}
+
+.player .player-controls .ctrl-btn:not(.ctrl-btn-play):active:not(:disabled) {
+  transform: scale(0.88);
+  transition: transform 0.06s ease, color 0.06s ease, background 0.06s ease;
+}
+
+.player .player-controls .ctrl-btn.ctrl-btn--shuffle-on:active:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-all:active:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-one:active:not(:disabled) {
+  color: var(--accent);
+}
+
+.player .player-controls .ctrl-btn:not(.ctrl-btn-play):not(.ctrl-btn--shuffle-on):not(
+    .ctrl-btn--repeat-all
+  ):not(.ctrl-btn--repeat-one):active:not(:disabled) {
+  color: var(--accent);
+}
+
+.player .player-controls .ctrl-btn.ctrl-btn-play:active:not(:disabled) {
+  transform: scale(0.96) !important;
+  background: var(--accent-h);
+  filter: brightness(0.95);
+}
+
+.ctrl-repeat-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ctrl-repeat-one-mark {
   position: absolute;
-  left: -36px;
+  right: -3px;
+  bottom: -2px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.stream-status {
+  position: absolute;
+  left: -82px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   align-items: center;
 }
-.prepare-hint-trigger {
+
+.stream-status-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1280,68 +1888,108 @@ onUnmounted(() => {
   border-radius: 50%;
   background: transparent;
   color: inherit;
-  cursor: help;
+  cursor: pointer;
   line-height: 0;
+  transition: background 0.15s;
 }
-.prepare-hint-trigger:hover {
+.stream-status-btn:hover {
   background: rgba(255, 255, 255, 0.08);
 }
-.prepare-hint-dot-wrap {
+
+.stream-status-dot-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
 }
+
+/* ── Точка состояния ─────────────────── */
 .prepare-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  transition: background 0.3s;
 }
-.prepare-dot--info {
-  background: linear-gradient(145deg, #6ab0ff, #3d7ccc);
+.prepare-dot--info { background: linear-gradient(145deg, #6ab0ff, #3d7ccc); }
+.prepare-dot--ok   { background: linear-gradient(145deg, #5fd68a, #2fa85c); }
+.prepare-dot--warn { background: linear-gradient(145deg, #f0c860, #d4a017); }
+.prepare-dot--bad  { background: linear-gradient(145deg, #ff7d7d, #c42e2e); }
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.55; transform: scale(0.78); }
 }
-.prepare-dot--ok {
-  background: linear-gradient(145deg, #5fd68a, #2fa85c);
+.prepare-dot--pulse {
+  animation: dot-pulse 1.4s ease-in-out infinite;
 }
-.prepare-dot--warn {
-  background: linear-gradient(145deg, #f0c860, #d4a017);
-}
-.prepare-dot--bad {
-  background: linear-gradient(145deg, #ff7d7d, #c42e2e);
-}
-.prepare-hint-panel {
-  display: none;
+
+/* ── Pop-up панель ───────────────────── */
+.stream-status-panel {
   position: absolute;
   left: 50%;
   bottom: calc(100% + 10px);
   transform: translateX(-50%);
   z-index: 80;
-  min-width: 240px;
-  max-width: min(92vw, 400px);
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: #f0ece8;
+  min-width: 220px;
+  max-width: min(90vw, 320px);
+  padding: 12px 14px;
+  border-radius: 10px;
   background: rgba(22, 20, 18, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   text-align: left;
+  pointer-events: auto;
 }
-.prepare-hint:hover .prepare-hint-panel {
-  display: block;
+
+.status-headline {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(240, 236, 232, 0.5);
+  margin-bottom: 4px;
 }
-.prepare-hint-pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+.status-body {
+  font-size: 13px;
+  font-weight: 500;
+  color: #f0ece8;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+.status-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
   font-size: 11.5px;
+  line-height: 1.4;
 }
+.status-label {
+  color: rgba(240, 236, 232, 0.5);
+  white-space: nowrap;
+}
+.status-val {
+  color: #f0ece8;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Анимация появления pop-up ─────────── */
+.status-menu-enter-active { transition: opacity 0.14s ease, transform 0.14s ease; }
+.status-menu-leave-active { transition: opacity 0.1s ease, transform 0.1s ease; }
+.status-menu-enter-from  { opacity: 0; transform: translateX(-50%) translateY(4px); }
+.status-menu-leave-to    { opacity: 0; transform: translateX(-50%) translateY(4px); }
 
 .player-like-btn {
   flex-shrink: 0;
@@ -1378,15 +2026,69 @@ onUnmounted(() => {
   outline-offset: 2px;
 }
 
+.player-marquee {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.player-marquee-track {
+  display: inline-flex;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.player-marquee-chunk {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.player-marquee-track--active {
+  animation: player-marquee-scroll var(--marquee-duration, 14s) linear infinite;
+}
+
+.player-marquee:hover .player-marquee-track--active {
+  animation-play-state: paused;
+}
+
+@keyframes player-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-marquee-track--active {
+    animation: none !important;
+  }
+  .player-marquee-chunk {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .player-marquee-track {
+    max-width: 100%;
+  }
+}
+
 .player-name--link {
   all: unset;
+  box-sizing: border-box;
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  white-space: nowrap;
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
   display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   transition: color 0.12s;
 }
 .player-name--link:hover {
@@ -1401,7 +2103,16 @@ onUnmounted(() => {
 }
 .player-artist--link {
   all: unset;
+  box-sizing: border-box;
   cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: normal;
+  overflow: hidden;
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   transition: color 0.12s;
 }
 .player-artist--link:hover {
@@ -1413,5 +2124,155 @@ onUnmounted(() => {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* ── Очередь воспроизведения ───────────────────────────────────────── */
+.player-queue-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.player-queue-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.player-queue-btn:hover {
+  background: var(--player-queue-btn-hover-bg, rgba(255, 255, 255, 0.08));
+  color: var(--text);
+}
+.player-queue-btn--open {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+.player-queue-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #141210;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+.player-queue-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(48vh, 320px);
+  display: flex;
+  flex-direction: column;
+  z-index: 90;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--player-queue-shadow, 0 -8px 32px rgba(0, 0, 0, 0.45));
+  overflow: hidden;
+}
+.player-queue-head {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  border-bottom: 1px solid var(--border);
+}
+.player-queue-list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.player-queue-item {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 8px;
+  margin-bottom: 2px;
+}
+.player-queue-item:last-child {
+  margin-bottom: 0;
+}
+.player-queue-item--current {
+  background: rgba(var(--accent-rgb), 0.12);
+  outline: 1px solid rgba(var(--accent-rgb), 0.35);
+}
+.player-queue-item-main {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.player-queue-item-main:hover {
+  background: var(--surface-h);
+}
+.player-queue-item-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.player-queue-item-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.player-queue-item-remove {
+  flex-shrink: 0;
+  width: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+.player-queue-item-remove:hover {
+  background: rgba(233, 53, 68, 0.14);
+  color: var(--red);
+}
+.queue-panel-enter-active,
+.queue-panel-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.queue-panel-enter-from,
+.queue-panel-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 </style>

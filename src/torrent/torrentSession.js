@@ -26,3 +26,48 @@ export function releaseTorrentStreamUrl(url) {
 export function torrentPrepareCancel() {
   return invoke("torrent_prepare_cancel").catch(() => {});
 }
+
+/** Extract the token from a stream URL like http://127.0.0.1:PORT/stream/TOKEN */
+function tokenFromUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  const marker = "/stream/";
+  const i = url.indexOf(marker);
+  if (i < 0) return null;
+  const rest = url.slice(i + marker.length);
+  return rest.split(/[/?#]/)[0] || null;
+}
+
+/** Release a hover-prefetch stream without activating it (user left without clicking). */
+export function hoverReleaseTorrentStreamUrl(url) {
+  const token = tokenFromUrl(url);
+  if (!token) return Promise.resolve();
+  return invoke("torrent_hover_release_stream", { token }).catch(() => {});
+}
+
+/** Promote the hover-prefetch token → current_token. Call before assigning the hover URL to the audio element. */
+export function hoverActivateTorrentStreamUrl(url) {
+  const token = tokenFromUrl(url);
+  if (!token) return Promise.resolve();
+  return invoke("torrent_hover_activate", { token }).catch(() => {});
+}
+
+/**
+ * Уведомляет движок о текущей позиции воспроизведения в байтах.
+ * Вызывай при seek-е; движок сдвинет окно приоритета пьес.
+ *
+ * @param {string} url  URL потока вида http://127.0.0.1:PORT/stream/TOKEN
+ * @param {number} byteOffset  Текущая позиция в байтах
+ */
+export function vozduxanNotifyPosition(url, byteOffset) {
+  if (!url || typeof url !== "string") return Promise.resolve();
+  const marker = "/stream/";
+  const i = url.indexOf(marker);
+  if (i < 0) return Promise.resolve();
+  const rest = url.slice(i + marker.length);
+  const token = rest.split(/[/?#]/)[0];
+  if (!token) return Promise.resolve();
+  return invoke("vozduxan_notify_position", {
+    token,
+    byteOffset: Math.floor(byteOffset),
+  }).catch(() => {});
+}
