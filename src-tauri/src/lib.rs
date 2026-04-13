@@ -1,3 +1,5 @@
+mod vozduxan_ffi;
+mod vozduxan_stream;
 mod cache_commands;
 mod cache_settings;
 mod cover_art;
@@ -20,6 +22,7 @@ use tauri::{
 /// Avoids repeat HTTP round-trips for the same artist/album.
 type CoverArtCache = Mutex<LruCache<String, Option<String>>>;
 
+use vozduxan_stream::VozduxanStreamState;
 use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
 
 use discord_presence::DiscordPresenceState;
@@ -83,7 +86,7 @@ async fn fetch_album_cover(
         }
     }
 
-    let client = state.client.clone();
+    let client = state.http_client()?;
     let result = cover_art::fetch_album_cover(&client, &artist, &album).await;
 
     cache.lock().unwrap().put(key, result.clone());
@@ -109,9 +112,11 @@ pub fn run() {
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
                 NonZeroUsize::new(200).unwrap(),
             )));
-            app.manage(torrent_stream::TorrentStreamState::new(
-                app.handle().clone(),
-            ));
+            // TorrentStreamState owns the shared debug log; VozduxanStreamState borrows it.
+            let ts = torrent_stream::TorrentStreamState::new(app.handle().clone());
+            let vozduxan_debug = ts.debug_log();
+            app.manage(VozduxanStreamState::new(app.handle(), vozduxan_debug));
+            app.manage(ts);
             app.manage(torrent_image::TorrentImageState::new(app.handle()));
             app.manage(DiscordPresenceState::new());
 
@@ -175,12 +180,21 @@ pub fn run() {
             rutracker::rutracker_get_torrent_details,
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
-            torrent_stream::torrent_prepare_stream,
-            torrent_stream::torrent_magnet_list_files,
-            torrent_stream::torrent_prefetch_next_track,
-            torrent_stream::torrent_prepare_cancel,
-            torrent_stream::torrent_dispose_preview,
-            torrent_stream::torrent_release_stream,
+            rutracker::rutracker_get_http_proxy,
+            rutracker::rutracker_set_http_proxy,
+            rutracker::rutracker_probe_http_proxy,
+            // ── Streaming: now backed by vozduxan (C++ + libtorrent) ──
+            vozduxan_stream::torrent_prepare_stream,
+            vozduxan_stream::torrent_magnet_list_files,
+            vozduxan_stream::torrent_prefetch_next_track,
+            vozduxan_stream::torrent_prepare_cancel,
+            vozduxan_stream::torrent_dispose_preview,
+            vozduxan_stream::torrent_release_stream,
+            vozduxan_stream::vozduxan_notify_position,
+            vozduxan_stream::torrent_hover_prepare_stream,
+            vozduxan_stream::torrent_hover_release_stream,
+            vozduxan_stream::torrent_hover_activate,
+            // ── Export: full-download to user library (librqbit) ─────────
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,

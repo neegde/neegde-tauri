@@ -82,7 +82,7 @@ function setViewMode(mode) {
   localStorage.setItem("albumViewMode", mode);
 }
 
-/** Gallery → тот же предпросмотр, что при открытии лайкнутого альбома (только файлы альбома). */
+/** Gallery card: open album preview. Play starts only on explicit ▶ button press. */
 function openAlbumFromGallery(wrap) {
   emit("open-album-preview", {
     album: wrap.raw,

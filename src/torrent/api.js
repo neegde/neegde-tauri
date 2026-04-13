@@ -104,6 +104,28 @@ export async function streamUrl(magnet, fileIdx, opts = {}) {
 }
 
 /**
+ * Like `streamUrl` but calls `torrent_hover_prepare_stream` — stores the token in
+ * hover_token so it NEVER releases the active playback stream.
+ * Use this for hover-prefetch only. Activate with `hoverActivateTorrentStreamUrl` before playback.
+ */
+export async function hoverStreamUrl(magnet, fileIdx, opts = {}) {
+  if (!magnet || fileIdx == null || fileIdx < 0) return "";
+  const m = enrichMagnetWithOpenTrackers(magnet);
+  let torrentFileB64 = null;
+  const src = opts.source != null ? String(opts.source) : "";
+  const tid = opts.torrentId != null ? String(opts.torrentId) : "";
+  if (src === "rutracker" && tid !== "") {
+    torrentFileB64 = await _cachedTorrentFileB64(tid);
+  }
+  const ready = await invoke("torrent_hover_prepare_stream", {
+    magnet: m,
+    fileIdx,
+    torrentFileB64,
+  });
+  return ready?.url ?? "";
+}
+
+/**
  * Fetches RuTracker .torrent base64 when needed (same rules as `streamUrl`).
  * Uses an in-memory cache so repeated calls for the same track are instant.
  *
@@ -127,11 +149,13 @@ export async function torrentFileB64ForTrack(track) {
  * Args:
  *     current: Current queue item (`magnet`, `fileIdx`, optional `source` / `torrentId`).
  *     next: Next queue item.
+ *     opts: `{ warmOnly?: boolean }` — if true, only warms cache for track+2 without evicting
+ *           the real next-track prefetch slot.
  *
  * Returns:
  *     `{ kind: 'sameTorrentMerged' }` or `{ kind: 'streamReady', url }`, or null on invalid input.
  */
-export async function prefetchNextInQueue(current, next) {
+export async function prefetchNextInQueue(current, next, opts = {}) {
   if (!current?.magnet || next?.magnet == null || next.fileIdx == null || next.fileIdx < 0) {
     return null;
   }
@@ -144,5 +168,6 @@ export async function prefetchNextInQueue(current, next) {
     nextMagnet: m1,
     nextFileIdx: next.fileIdx,
     nextTorrentFileB64,
+    warmOnly: opts.warmOnly === true,
   });
 }

@@ -21,11 +21,12 @@ import {
 import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
+import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
-import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
-import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
+import { torrentFileB64ForTrack, streamUrl, hoverStreamUrl, magnetListFiles } from "./torrent/api.js";
+import { releaseTorrentStreamUrl, torrentPrepareCancel, hoverReleaseTorrentStreamUrl } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 
 import SearchBar    from "./components/search/SearchBar.vue";
@@ -89,12 +90,12 @@ async function handleHoverTrack(fileIdx) {
   if (nowPlaying.value && `${nowPlaying.value.magnet}\0${nowPlaying.value.fileIdx}` === key) return;
   // Release previous hover prefetch if not used
   if (hoverPrefetchUrl.value) {
-    void releaseTorrentStreamUrl(hoverPrefetchUrl.value);
+    void hoverReleaseTorrentStreamUrl(hoverPrefetchUrl.value);
     hoverPrefetchUrl.value = "";
     hoverPrefetchKey.value = "";
   }
   try {
-    const url = await streamUrl(magnet, fileIdx, {
+    const url = await hoverStreamUrl(magnet, fileIdx, {
       source: selected.value?.source,
       torrentId: selected.value?.id,
     });
@@ -162,6 +163,9 @@ onMounted(async () => {
     const s = normalizeLoginStatus(raw);
     if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
   } catch (_) { /* offline or no saved session — stay logged out */ }
+  try {
+    await syncRtHttpProxyCacheFromBackend();
+  } catch (_) { /* нет Tauri API (превью в браузере) */ }
   try {
     appDebugEnabled.value = await invoke("get_app_debug_enabled");
   } catch (_) { /* нет Tauri API (превью в браузере) */ }
@@ -264,6 +268,8 @@ const searchQuery = ref("");
 const results = shallowRef([]);
 const loading = ref(false);
 const error   = ref(null);
+/** Счётчик запросов: старый поиск не сбрасывает спиннер, если уже запущен новый. */
+let searchRequestSeq = 0;
 
 // ── Torrent ───────────────────────────────────────────────────────────────────
 const selected      = ref(null);
@@ -421,6 +427,7 @@ async function handleSearch(query) {
   }
 
   if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: false });
+  const seq = ++searchRequestSeq;
   loading.value = true;
   results.value = [];
   try {
@@ -432,7 +439,9 @@ async function handleSearch(query) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
     if (appDebugEnabled.value) appDebugLog("search", "error", { q, err: String(e) });
   } finally {
-    loading.value = false;
+    if (seq === searchRequestSeq) {
+      loading.value = false;
+    }
   }
 }
 
@@ -617,6 +626,9 @@ async function handleSelect(torrent) {
   files.value         = [];
   torrentMagnet.value = "";
   torrentCover.value  = null;
+  queue.value         = [];
+  queuePos.value      = 0;
+  suppressAutoplayAfterSessionRestore.value = false;
   loadingFiles.value  = true;
   try {
     const details = await getTorrentDetails(torrent.id);

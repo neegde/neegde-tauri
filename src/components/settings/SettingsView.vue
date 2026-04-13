@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -18,6 +18,15 @@ import {
   setMirrorMode,
   probeMirrorsNow,
 } from "../../rutracker/config.js";
+import {
+  RT_HTTP_PROXY_PX1,
+  RT_HTTP_PROXY_PX2,
+  getHttpProxy,
+  setHttpProxy,
+  setRtHttpProxyCache,
+  hasHttpProxyConfigured,
+  probeHttpProxy,
+} from "../../rutracker/proxyConfig.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
@@ -27,6 +36,7 @@ import {
   normalizeVersionTag,
 } from "../../githubReleaseCheck.js";
 import appIconSrc from "../../assets/neegde-logo.png";
+import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -50,6 +60,8 @@ const emit = defineEmits([
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
 const appVersion = __APP_VERSION__;
+/** Версия vozduxan из `vozduxan/CMakeLists.txt`, инжектится в `vite.config.js`. */
+const vozduxanVersion = __VOZDUXAN_VERSION__;
 
 /** URL GitHub API «последний релиз»; пусто, если в `package.json` нет `repository` с GitHub. */
 const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
@@ -59,6 +71,40 @@ const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
 const releaseCheckState = ref(githubReleaseApiUrl ? "loading" : "idle");
 const releaseRemoteTag = ref(null);
 const releasePageUrl = ref(null);
+
+const aboutStackEl = ref(null);
+const aboutAppCardEl = ref(null);
+const aboutVozCardEl = ref(null);
+let aboutPairResizeObserver = null;
+
+/**
+ * Sets both «About» cards to the same height (the taller natural height).
+ *
+ * @returns {void}
+ */
+function syncAboutPairHeights() {
+  const a = aboutAppCardEl.value;
+  const b = aboutVozCardEl.value;
+  const stack = aboutStackEl.value;
+  if (!a || !b) return;
+  if (aboutPairResizeObserver) {
+    aboutPairResizeObserver.disconnect();
+  }
+  a.style.minHeight = "";
+  b.style.minHeight = "";
+  const ha = a.getBoundingClientRect().height;
+  const hb = b.getBoundingClientRect().height;
+  const h = Math.max(ha, hb);
+  if (h > 0) {
+    a.style.minHeight = `${h}px`;
+    b.style.minHeight = `${h}px`;
+  }
+  requestAnimationFrame(() => {
+    if (aboutPairResizeObserver && stack) {
+      aboutPairResizeObserver.observe(stack);
+    }
+  });
+}
 
 /**
  * Fetches the latest GitHub release and compares it to `appVersion`.
@@ -217,7 +263,31 @@ onMounted(() => {
   persistedMirrorMode.value = getMirrorMode();
   syncMirrorSelectFromStorage();
   activeMirrorDisplay.value = getMirror();
+  getHttpProxy()
+    .then((url) => {
+      proxySelect.value = proxyUrlToSelect(url);
+    })
+    .catch(() => {});
   if (githubReleaseApiUrl) runReleaseCheck();
+  nextTick(() => {
+    aboutPairResizeObserver = new ResizeObserver(() => {
+      syncAboutPairHeights();
+    });
+    syncAboutPairHeights();
+  });
+  window.addEventListener("resize", syncAboutPairHeights);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("resize", syncAboutPairHeights);
+  if (aboutPairResizeObserver) {
+    aboutPairResizeObserver.disconnect();
+    aboutPairResizeObserver = null;
+  }
+});
+
+watch(releaseCheckState, () => {
+  nextTick(() => syncAboutPairHeights());
 });
 
 watch(mirrorMode, (v) => {
@@ -284,6 +354,92 @@ function doResetMirror() {
   clearRutrackerCoverCache();
   mirrorSaved.value = true;
   setTimeout(() => { mirrorSaved.value = false; }, 2000);
+}
+
+const PROXY_SELECT_NONE = "none";
+const PROXY_SELECT_PX1 = "px1";
+const PROXY_SELECT_PX2 = "px2";
+
+/**
+ * Maps persisted proxy URL to the nerd select value.
+ *
+ * @param {string | null | undefined} url
+ * @returns {string}
+ */
+function proxyUrlToSelect(url) {
+  if (!url) return PROXY_SELECT_NONE;
+  if (url === RT_HTTP_PROXY_PX1) return PROXY_SELECT_PX1;
+  if (url === RT_HTTP_PROXY_PX2) return PROXY_SELECT_PX2;
+  return PROXY_SELECT_NONE;
+}
+
+/**
+ * @param {string} sel
+ * @returns {string | null}
+ */
+function proxySelectToUrl(sel) {
+  if (sel === PROXY_SELECT_PX1) return RT_HTTP_PROXY_PX1;
+  if (sel === PROXY_SELECT_PX2) return RT_HTTP_PROXY_PX2;
+  return null;
+}
+
+const proxySelect = ref(PROXY_SELECT_NONE);
+const proxySaved = ref(false);
+const proxySaveBusy = ref(false);
+const proxySaveError = ref(null);
+const proxyProbeBusy = ref(false);
+const proxyProbeOk = ref(false);
+const proxyProbeError = ref(null);
+
+/**
+ * @returns {string}
+ */
+function rutrackerProbeTargetUrl() {
+  const base = getMirror().replace(/\/$/, "");
+  return `${base}/forum/index.php`;
+}
+
+/**
+ * GETs the configured mirror's `forum/index.php` via the proxy preset currently selected in UI.
+ *
+ * @returns {Promise<void>}
+ */
+async function probeProxy() {
+  proxyProbeError.value = null;
+  proxyProbeOk.value = false;
+  proxyProbeBusy.value = true;
+  try {
+    const url = proxySelectToUrl(proxySelect.value);
+    await probeHttpProxy(url, rutrackerProbeTargetUrl());
+    proxyProbeOk.value = true;
+    window.setTimeout(() => {
+      proxyProbeOk.value = false;
+    }, 5000);
+  } catch (e) {
+    proxyProbeError.value = e?.toString?.() ?? String(e);
+  } finally {
+    proxyProbeBusy.value = false;
+  }
+}
+
+async function saveProxy() {
+  proxySaveError.value = null;
+  proxyProbeError.value = null;
+  proxyProbeOk.value = false;
+  proxySaveBusy.value = true;
+  try {
+    const url = proxySelectToUrl(proxySelect.value);
+    await setHttpProxy(url);
+    setRtHttpProxyCache(url || "");
+    proxySaved.value = true;
+    setTimeout(() => {
+      proxySaved.value = false;
+    }, 2000);
+  } catch (e) {
+    proxySaveError.value = e?.toString?.() ?? String(e);
+  } finally {
+    proxySaveBusy.value = false;
+  }
 }
 
 // ── Память и кэш (диагностика) ───────────────────────────────────────────────
@@ -591,7 +747,11 @@ watch(nerdOpen, (open) => {
       <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
         <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
         Параметры для задротов
-        <span v-if="hasCustomMirror()" class="nerd-custom-dot" title="Зеркало изменено" />
+        <span
+          v-if="hasCustomMirror() || hasHttpProxyConfigured()"
+          class="nerd-custom-dot"
+          title="Нестандартные зеркало или прокси"
+        />
       </button>
 
       <div v-if="nerdOpen" class="nerd-stack">
@@ -699,6 +859,59 @@ watch(nerdOpen, (open) => {
             >
               Сбросить к rutracker.net (ручной режим)
             </button>
+          </div>
+        </div>
+
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">🌐</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">HTTP-прокси</div>
+              <div class="settings-card-status">Тип HTTP · пресеты blockme</div>
+            </div>
+          </div>
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Исходящие запросы бэкенда (Rutracker, обложки iTunes) пойдут через выбранный
+              прокси. Торренты и стриминг к ним не относятся.
+            </p>
+            <div class="nerd-mirror-row nerd-mirror-row--stack">
+              <select v-model="proxySelect" class="login-input nerd-mirror-select">
+                <option :value="PROXY_SELECT_NONE">Нет</option>
+                <option :value="PROXY_SELECT_PX1">px1.blockme.site · порт 23128</option>
+                <option :value="PROXY_SELECT_PX2">px2.blockme.site · порт 3128</option>
+              </select>
+            </div>
+            <div class="nerd-mirror-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="proxySaveBusy || proxyProbeBusy"
+                @click="saveProxy"
+              >
+                <span v-if="proxySaveBusy" class="spinner" />
+                <template v-else>{{ proxySaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+              </button>
+              <button
+                type="button"
+                class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                :disabled="proxyProbeBusy || proxySaveBusy"
+                @click="probeProxy"
+              >
+                <span v-if="proxyProbeBusy" class="spinner" />
+                <template v-else>Проверить</template>
+              </button>
+            </div>
+            <p v-if="proxyProbeOk" class="settings-card-desc nerd-desc nerd-proxy-probe-ok">
+              Запрос к текущему зеркалу (forum/index.php) прошёл — для выбранного варианта прокси
+              соединение работает.
+            </p>
+            <p v-if="proxyProbeError" class="login-error nerd-probe-error">{{ proxyProbeError }}</p>
+            <p v-if="proxySaveError" class="login-error nerd-probe-error">{{ proxySaveError }}</p>
+            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
+              Проверка использует выбранный выше вариант (можно до «Сохранить») и адрес зеркала из
+              блока выше. По умолчанию без прокси. Порты: 23128 — для px1; 3128 — для px2.
+            </p>
           </div>
         </div>
 
@@ -951,19 +1164,20 @@ watch(nerdOpen, (open) => {
     <div class="settings-section">
       <div class="settings-section-label">О приложении</div>
 
-      <div class="settings-card">
-        <div class="settings-card-header settings-card-header--about">
-          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
-            <img
-              class="settings-about-logo-img"
-              :src="appIconSrc"
-              alt="Нигде"
-              width="42"
-              height="42"
-            />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Нигде</div>
+      <div ref="aboutStackEl" class="settings-about-stack">
+        <div ref="aboutAppCardEl" class="settings-card settings-about-stack__app">
+          <div class="settings-card-header settings-card-header--about">
+            <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
+              <img
+                class="settings-about-logo-img"
+                :src="appIconSrc"
+                alt="Нигде"
+                width="72"
+                height="72"
+              />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Нигде</div>
             <div class="settings-card-status">Версия {{ appVersion }} · Tauri + Vue 3</div>
             <div
               v-if="githubProjectUrl || telegramChannelUrl"
@@ -1031,6 +1245,45 @@ watch(nerdOpen, (open) => {
               </template>
             </div>
           </div>
+        </div>
+        </div>
+
+        <div class="settings-about-connector" aria-hidden="true">
+          <span class="settings-about-connector__rail" />
+          <span class="settings-about-connector__pulse" />
+          <span class="settings-about-connector__pulse settings-about-connector__pulse--echo" />
+        </div>
+
+        <!-- vozduxan -->
+        <div ref="aboutVozCardEl" class="settings-card settings-card--vozduxan">
+        <div class="settings-card-header settings-card-header--about">
+          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo settings-card-icon--vozduxan-logo">
+            <img
+              class="settings-about-logo-img settings-about-vozduxan-img"
+              :src="vozduxanLogoSrc"
+              alt=""
+              width="72"
+              height="72"
+            />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name settings-card-name--with-dep">
+              <span>vozduxan</span>
+              <template v-if="vozduxanVersion">
+                <span class="settings-about-dep-version">v{{ vozduxanVersion }}</span>
+              </template>
+            </div>
+            <div class="settings-card-status">Стриминг аудио из торрент-роёв в реальном времени · C++ · libtorrent</div>
+            <div class="settings-about-links">
+              <a
+                class="settings-about-link"
+                href="https://github.com/neegde/vozduxan"
+                rel="noopener noreferrer"
+                @click.prevent="openExternalUrl('https://github.com/neegde/vozduxan')"
+              >GitHub</a>
+            </div>
+          </div>
+        </div>
         </div>
       </div>
     </div>
@@ -1164,6 +1417,12 @@ watch(nerdOpen, (open) => {
   gap: 8px;
   margin-top: 10px;
   align-items: center;
+}
+
+.nerd-proxy-probe-ok {
+  margin-top: 10px;
+  margin-bottom: 0;
+  color: var(--success);
 }
 
 .nerd-mirror-row {
@@ -1464,6 +1723,16 @@ watch(nerdOpen, (open) => {
 .settings-card-header--about {
   align-items: flex-start;
 }
+.settings-about-stack {
+  --about-icon-size: 72px;
+  --about-connector-x: calc(20px + var(--about-icon-size) / 2);
+}
+.settings-about-stack > .settings-card > .settings-card-header > .settings-card-icon:first-child {
+  width: var(--about-icon-size);
+  min-width: var(--about-icon-size);
+  height: var(--about-icon-size);
+  flex-shrink: 0;
+}
 .settings-card-icon--about-logo {
   padding: 0;
   overflow: hidden;
@@ -1474,6 +1743,15 @@ watch(nerdOpen, (open) => {
   object-fit: cover;
   display: block;
   border-radius: inherit;
+}
+.settings-card-icon.settings-card-icon--vozduxan-logo {
+  border-radius: 14px;
+  background: transparent;
+}
+.settings-about-vozduxan-img {
+  object-fit: contain;
+  padding: 5px;
+  box-sizing: border-box;
 }
 .settings-about-links {
   display: flex;
@@ -1496,6 +1774,132 @@ watch(nerdOpen, (open) => {
 }
 .settings-about-link:hover {
   color: var(--text);
+}
+.settings-about-stack > .settings-about-stack__app.settings-card {
+  margin-bottom: 0;
+}
+.settings-about-stack .settings-card--vozduxan {
+  margin-top: 0;
+}
+.settings-about-connector {
+  position: relative;
+  height: 32px;
+  margin: 0;
+  pointer-events: none;
+}
+.settings-about-connector__rail {
+  position: absolute;
+  left: var(--about-connector-x);
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--accent-rgb), 0.38) 0%,
+    rgba(var(--accent-rgb), 0.26) 55%,
+    rgba(var(--accent-rgb), 0.12) 100%
+  );
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.12);
+}
+.settings-about-connector__pulse {
+  position: absolute;
+  left: var(--about-connector-x);
+  top: 0;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(255, 255, 255, 0.45),
+    var(--accent) 55%,
+    rgba(var(--accent-rgb), 0.35) 100%
+  );
+  box-shadow:
+    0 0 10px rgba(var(--accent-rgb), 0.65),
+    0 0 18px rgba(var(--accent-rgb), 0.35);
+  animation: settings-about-pulse-move 2.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.settings-about-connector__pulse::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  opacity: 0.55;
+  animation: settings-about-pulse-ring 2.6s ease-in-out infinite;
+}
+.settings-about-connector__pulse--echo {
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  opacity: 0.55;
+  box-shadow:
+    0 0 8px rgba(var(--accent-rgb), 0.45),
+    0 0 14px rgba(var(--accent-rgb), 0.22);
+  animation-delay: 1.3s;
+}
+.settings-about-connector__pulse--echo::after {
+  display: none;
+}
+@keyframes settings-about-pulse-move {
+  0% {
+    transform: translateY(21px) scale(0.88);
+    opacity: 0.45;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(5px) scale(1);
+    opacity: 0.55;
+  }
+}
+@keyframes settings-about-pulse-ring {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.2;
+  }
+  45% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-about-connector__pulse,
+  .settings-about-connector__pulse::after {
+    animation: none;
+  }
+  .settings-about-connector__pulse {
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.65;
+  }
+  .settings-about-connector__pulse::after {
+    display: none;
+  }
+  .settings-about-connector__pulse--echo {
+    display: none;
+  }
+}
+.settings-card-name--with-dep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.4em;
+}
+.settings-about-dep-version {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--muted);
+  letter-spacing: 0.01em;
 }
 .settings-release-check {
   display: flex;
