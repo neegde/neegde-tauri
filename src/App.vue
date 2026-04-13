@@ -72,14 +72,60 @@ const queuePos = ref(
     ? _savedPlayer.queuePos
     : 0
 );
+
+function loadRepeatMode() {
+  const v = localStorage.getItem("neegde.player.repeatMode");
+  if (v === "all" || v === "one" || v === "off") return v;
+  return "off";
+}
+
+function loadShuffleOn() {
+  return localStorage.getItem("neegde.player.shuffle") === "1";
+}
+
+/** `off` → no wrap; `all` → loop queue; `one` → current track restarts (handled in Player). */
+const repeatMode = ref(loadRepeatMode());
+const shuffleOn = ref(loadShuffleOn());
+
+watch(repeatMode, (v) => {
+  localStorage.setItem("neegde.player.repeatMode", v);
+});
+
 const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
 const nextInQueue = computed(() => {
-  if (queuePos.value >= queue.value.length - 1) return null;
-  return queue.value[queuePos.value + 1];
+  const q = queue.value;
+  const len = q.length;
+  if (len === 0) return null;
+  const pos = queuePos.value;
+  if (pos < len - 1) return q[pos + 1];
+  if (repeatMode.value === "all") return q[0];
+  return null;
 });
 const secondNextInQueue = computed(() => {
-  if (queuePos.value >= queue.value.length - 2) return null;
-  return queue.value[queuePos.value + 2];
+  const q = queue.value;
+  const len = q.length;
+  if (len < 2) return null;
+  const pos = queuePos.value;
+  if (pos < len - 2) return q[pos + 2];
+  if (pos === len - 2) {
+    return repeatMode.value === "all" ? q[0] : null;
+  }
+  if (repeatMode.value !== "all") return null;
+  return len > 2 ? q[1] : q[0];
+});
+
+const playerHasNext = computed(() => {
+  const len = queue.value.length;
+  if (len === 0) return false;
+  if (queuePos.value < len - 1) return true;
+  return repeatMode.value === "all";
+});
+
+const playerHasPrev = computed(() => {
+  const len = queue.value.length;
+  if (len === 0) return false;
+  if (queuePos.value > 0) return true;
+  return repeatMode.value === "all" && len > 1;
 });
 
 // ── Hover-prefetch state ──────────────────────────────────────────────────────
@@ -1252,14 +1298,77 @@ async function handleDeepLink(urlStr) {
   }
 }
 
-function handleNext() {
-  allowPlayerAutoplay();
-  if (queuePos.value < queue.value.length - 1) queuePos.value++;
-  else { queue.value = []; queuePos.value = 0; }
+/**
+ * Randomizes order of all tracks except the current one; current becomes first.
+ */
+function shuffleQueueInPlaceKeepingCurrent() {
+  const q = queue.value;
+  const len = q.length;
+  if (len < 2) return;
+  const pos = queuePos.value;
+  if (pos < 0 || pos >= len) return;
+  const cur = q[pos];
+  const rest = q.filter((_, i) => i !== pos);
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = rest[i];
+    rest[i] = rest[j];
+    rest[j] = t;
+  }
+  queue.value = [cur, ...rest];
+  queuePos.value = 0;
 }
+
+function toggleShuffle() {
+  if (queue.value.length < 2) return;
+  if (shuffleOn.value) {
+    shuffleOn.value = false;
+    localStorage.setItem("neegde.player.shuffle", "0");
+    return;
+  }
+  shuffleOn.value = true;
+  localStorage.setItem("neegde.player.shuffle", "1");
+  shuffleQueueInPlaceKeepingCurrent();
+}
+
+function cycleRepeatMode() {
+  const order = ["off", "all", "one"];
+  const i = order.indexOf(repeatMode.value);
+  repeatMode.value = order[(i + 1) % order.length];
+}
+
+/** Next track: UI, media keys, and explicit skip — supports repeat-all wrap. */
+function handlePlayerNext() {
+  allowPlayerAutoplay();
+  const len = queue.value.length;
+  if (len === 0) return;
+  if (queuePos.value < len - 1) queuePos.value++;
+  else if (repeatMode.value === "all") queuePos.value = 0;
+  else {
+    queue.value = [];
+    queuePos.value = 0;
+  }
+}
+
+/** Natural track end (`repeat-one` is handled in Player — `ended` is not emitted). */
+function handleTrackEnded() {
+  allowPlayerAutoplay();
+  const len = queue.value.length;
+  if (len === 0) return;
+  if (queuePos.value < len - 1) queuePos.value++;
+  else if (repeatMode.value === "all") queuePos.value = 0;
+  else {
+    queue.value = [];
+    queuePos.value = 0;
+  }
+}
+
 function handlePrev() {
   allowPlayerAutoplay();
-  queuePos.value = Math.max(0, queuePos.value - 1);
+  const len = queue.value.length;
+  if (len === 0) return;
+  if (queuePos.value > 0) queuePos.value--;
+  else if (repeatMode.value === "all" && len > 1) queuePos.value = len - 1;
 }
 
 function handleOpenRecent(item) {
@@ -1741,16 +1850,20 @@ function onMouseSideButtonUp(e) {
       :next-track="nextInQueue"
       :second-next-track="secondNextInQueue"
       :suppress-autoplay="suppressAutoplayAfterSessionRestore"
-      :has-prev="queuePos > 0"
-      :has-next="queuePos < queue.length - 1"
+      :has-prev="playerHasPrev"
+      :has-next="playerHasNext"
+      :repeat-mode="repeatMode"
+      :shuffle-on="shuffleOn"
       :hover-prefetch-url="hoverPrefetchUrl"
       :hover-prefetch-key="hoverPrefetchKey"
       :likes="likes"
       :playback-queue="queue"
       :queue-index="queuePos"
       @prev="handlePrev"
-      @next="handleNext"
-      @ended="handleNext"
+      @next="handlePlayerNext"
+      @ended="handleTrackEnded"
+      @cycle-repeat="cycleRepeatMode"
+      @toggle-shuffle="toggleShuffle"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
       @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"

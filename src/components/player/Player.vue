@@ -57,6 +57,9 @@ const props = defineProps({
   playbackQueue: { type: Array, default: () => [] },
   /** Индекс текущего трека в очереди. */
   queueIndex: { type: Number, default: 0 },
+  /** `off` | `all` | `one` — циклическое переключение из App. */
+  repeatMode: { type: String, default: "off" },
+  shuffleOn: Boolean,
 });
 
 const emit = defineEmits([
@@ -71,6 +74,8 @@ const emit = defineEmits([
   "open-torrent",
   "queue-jump",
   "queue-remove",
+  "cycle-repeat",
+  "toggle-shuffle",
 ]);
 
 const currentArtist = computed(() =>
@@ -1077,6 +1082,32 @@ function onDocClick() {
 
 const queueLen = computed(() => props.playbackQueue?.length ?? 0);
 
+const repeatCycleTitle = computed(() => {
+  if (props.repeatMode === "all") return "Повтор: вся очередь";
+  if (props.repeatMode === "one") return "Повтор: один трек";
+  return "Повтор выключен";
+});
+
+/**
+ * On natural end: repeat-one (or repeat-all with a single track) restarts the same
+ * clip; otherwise App advances the queue.
+ */
+function onAudioEnded() {
+  const qLen = props.playbackQueue?.length ?? 0;
+  const loopSameTrack =
+    props.repeatMode === "one" || (props.repeatMode === "all" && qLen === 1);
+  if (loopSameTrack) {
+    const a = audioRef.value;
+    if (!a) return;
+    a.currentTime = 0;
+    void a.play().catch((err) => {
+      logPlayRejected("repeatLoop", err);
+    });
+    return;
+  }
+  emit("ended");
+}
+
 onMounted(async () => {
   installMediaSessionHandlers();
   window.addEventListener("keydown", onKey);
@@ -1187,6 +1218,20 @@ onUnmounted(() => {
           </div>
 
           <button
+            type="button"
+            class="ctrl-btn ctrl-btn-shuffle"
+            :class="{ 'ctrl-btn--shuffle-on': shuffleOn }"
+            :disabled="queueLen < 2"
+            :title="shuffleOn ? 'Случайный порядок: вкл' : 'Случайный порядок: выкл'"
+            :aria-label="shuffleOn ? 'Выключить перемешивание' : 'Включить перемешивание'"
+            @click="emit('toggle-shuffle')"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l9 9"/>
+            </svg>
+          </button>
+
+          <button
             class="ctrl-btn"
             :disabled="!hasPrev"
             @click="emit('prev')"
@@ -1224,6 +1269,28 @@ onUnmounted(() => {
               <polygon points="5,5 15,12 5,19"/>
               <rect x="16" y="5" width="3" height="14" rx="1.5"/>
             </svg>
+          </button>
+
+          <button
+            type="button"
+            class="ctrl-btn ctrl-btn-repeat"
+            :class="{
+              'ctrl-btn--repeat-all': repeatMode === 'all',
+              'ctrl-btn--repeat-one': repeatMode === 'one',
+            }"
+            :title="repeatCycleTitle"
+            :aria-label="repeatCycleTitle"
+            @click="emit('cycle-repeat')"
+          >
+            <span class="ctrl-repeat-wrap" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="17 1 21 5 17 9"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <polyline points="7 23 3 19 7 15"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              </svg>
+              <span v-if="repeatMode === 'one'" class="ctrl-repeat-one-mark">1</span>
+            </span>
           </button>
         </div>
 
@@ -1358,7 +1425,7 @@ onUnmounted(() => {
         @stalled="onAudioStalled"
         @error="onAudioError"
         @timeupdate="current = audioRef?.currentTime ?? 0"
-        @ended="emit('ended')"
+        @ended="onAudioEnded"
       />
     </template>
 
@@ -1378,6 +1445,19 @@ onUnmounted(() => {
       </div>
       <div class="player-center">
         <div class="player-controls">
+          <button
+            type="button"
+            class="ctrl-btn ctrl-btn-shuffle"
+            :class="{ 'ctrl-btn--shuffle-on': shuffleOn }"
+            :disabled="queueLen < 2"
+            :title="shuffleOn ? 'Случайный порядок: вкл' : 'Случайный порядок: выкл'"
+            :aria-label="shuffleOn ? 'Выключить перемешивание' : 'Включить перемешивание'"
+            @click="emit('toggle-shuffle')"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l9 9"/>
+            </svg>
+          </button>
           <button class="ctrl-btn" disabled>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <polygon points="19,5 9,12 19,19"/>
@@ -1394,6 +1474,27 @@ onUnmounted(() => {
               <polygon points="5,5 15,12 5,19"/>
               <rect x="16" y="5" width="3" height="14" rx="1.5"/>
             </svg>
+          </button>
+          <button
+            type="button"
+            class="ctrl-btn ctrl-btn-repeat"
+            :class="{
+              'ctrl-btn--repeat-all': repeatMode === 'all',
+              'ctrl-btn--repeat-one': repeatMode === 'one',
+            }"
+            :title="repeatCycleTitle"
+            :aria-label="repeatCycleTitle"
+            @click="emit('cycle-repeat')"
+          >
+            <span class="ctrl-repeat-wrap" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="17 1 21 5 17 9"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <polyline points="7 23 3 19 7 15"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              </svg>
+              <span v-if="repeatMode === 'one'" class="ctrl-repeat-one-mark">1</span>
+            </span>
           </button>
         </div>
         <div class="player-progress">
@@ -1580,11 +1681,70 @@ onUnmounted(() => {
   flex-wrap: wrap;
   justify-content: center;
   position: relative;
+  gap: 14px;
+}
+
+.ctrl-btn--shuffle-on,
+.ctrl-btn--repeat-all,
+.ctrl-btn--repeat-one {
+  color: var(--accent);
+}
+
+/*
+ * Global `style.css` uses `.ctrl-btn:hover { color: var(--text) }`, which beats the
+ * accent color above — toggles looked unchanged until pointer leave. Override hover
+ * and add a clear :active press state for transport controls.
+ */
+.player .player-controls .ctrl-btn.ctrl-btn--shuffle-on:hover:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-all:hover:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-one:hover:not(:disabled) {
+  color: var(--accent-h);
+  transform: scale(1.1);
+}
+
+.player .player-controls .ctrl-btn:not(.ctrl-btn-play):active:not(:disabled) {
+  transform: scale(0.88);
+  transition: transform 0.06s ease, color 0.06s ease, background 0.06s ease;
+}
+
+.player .player-controls .ctrl-btn.ctrl-btn--shuffle-on:active:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-all:active:not(:disabled),
+.player .player-controls .ctrl-btn.ctrl-btn--repeat-one:active:not(:disabled) {
+  color: var(--accent);
+}
+
+.player .player-controls .ctrl-btn:not(.ctrl-btn-play):not(.ctrl-btn--shuffle-on):not(
+    .ctrl-btn--repeat-all
+  ):not(.ctrl-btn--repeat-one):active:not(:disabled) {
+  color: var(--accent);
+}
+
+.player .player-controls .ctrl-btn.ctrl-btn-play:active:not(:disabled) {
+  transform: scale(0.96) !important;
+  background: var(--accent-h);
+  filter: brightness(0.95);
+}
+
+.ctrl-repeat-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ctrl-repeat-one-mark {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .stream-status {
   position: absolute;
-  left: -36px;
+  left: -82px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
