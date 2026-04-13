@@ -160,6 +160,10 @@ const streamError = ref("");
 const bufferedPercent = ref(0);
 /** Отмена загрузки без смены трека — не применять URL после await. */
 const loadCancelledByUser = ref(false);
+/** Watchdog: превращает бесконечный buffering после piece-timeout в явный error. */
+let bufferingWatchdogTimer = null;
+/** Чуть больше vozduxan PIECE_TIMEOUT_MS (20 000 мс). */
+const BUFFERING_WATCHDOG_MS = 25_000;
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
 
@@ -512,6 +516,7 @@ watch(streamPhase, (phase, prev) => {
     from: prev,
     fileIdx: props.track?.fileIdx,
   });
+  if (phase !== "buffering") clearBufferingWatchdog();
 });
 
 watchEffect(() => {
@@ -722,6 +727,7 @@ function onAudioWaiting() {
   const a = audioRef.value;
   if (a && !a.paused) {
     streamPhase.value = "buffering";
+    startBufferingWatchdog();
   }
 }
 
@@ -729,6 +735,28 @@ function onAudioStalled() {
   const a = audioRef.value;
   if (a && !a.paused) {
     streamPhase.value = "buffering";
+    startBufferingWatchdog();
+  }
+}
+
+function startBufferingWatchdog() {
+  clearBufferingWatchdog();
+  bufferingWatchdogTimer = setTimeout(() => {
+    bufferingWatchdogTimer = null;
+    if (streamPhase.value === "buffering") {
+      streamError.value = "Поток прерван: не удалось получить данные от раздачи";
+      streamPhase.value = "error";
+      void appDebugLog("player", "buffering watchdog: stream stall timeout", {
+        currentTime: audioRef.value?.currentTime,
+      });
+    }
+  }, BUFFERING_WATCHDOG_MS);
+}
+
+function clearBufferingWatchdog() {
+  if (bufferingWatchdogTimer !== null) {
+    clearTimeout(bufferingWatchdogTimer);
+    bufferingWatchdogTimer = null;
   }
 }
 
