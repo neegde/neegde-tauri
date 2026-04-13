@@ -45,7 +45,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libboost-all-dev
+
+      - name: Install Boost (macOS)
+        if: runner.os == 'macOS'
+        run: brew install boost
+
+      - name: Install Boost (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install boost-msvc-14.3 -y --no-progress
+          $d = Get-ChildItem -LiteralPath 'C:\local' -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'boost_*' } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if ($null -eq $d) {
+            Write-Error 'Boost install directory not found under C:\local after choco install'
+            exit 1
+          }
+          "BOOST_ROOT=$($d.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install npm dependencies
         run: npm ci
