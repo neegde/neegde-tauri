@@ -462,6 +462,10 @@ impl VozduxanStreamState {
         magnet: String,
         torrent_bytes: Option<Vec<u8>>,
     ) -> Result<Vec<TorrentFile>, String> {
+        // Clear any stale cancel flag so that a previous closeMagnetPanel() call
+        // does not poison this new list_files request with "Загрузка отменена".
+        self.inner.prepare_cancelled.store(false, Ordering::Relaxed);
+
         let inner = self.inner.clone();
 
         let list = tokio::task::spawn_blocking(move || {
