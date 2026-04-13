@@ -838,6 +838,104 @@ function handlePlayAlbum(albumFiles) {
   queuePos.value = 0;
 }
 
+/**
+ * @param {object} a
+ * @param {object} b
+ * @returns {boolean}
+ */
+function sameQueueItem(a, b) {
+  return String(a.magnet) === String(b.magnet) && Number(a.fileIdx) === Number(b.fileIdx);
+}
+
+/**
+ * Appends a track to the end of the playback queue. Ignores duplicates.
+ *
+ * @param {object} item - Same shape as `makeQueueItem` output.
+ * @returns {void}
+ */
+function appendToQueue(item) {
+  if (queue.value.some((q) => sameQueueItem(q, item))) return;
+  const wasEmpty = queue.value.length === 0;
+  queue.value = [...queue.value, item];
+  if (wasEmpty) queuePos.value = 0;
+}
+
+/**
+ * @param {number} fileIdx - `origIdx` of an audio file in the open torrent.
+ * @returns {void}
+ */
+function handleAddToQueueFromTorrent(fileIdx) {
+  const audioFiles = orderedAudioFiles(files.value);
+  const f = audioFiles.find((x) => x.origIdx === fileIdx);
+  if (!f || !selected.value || !torrentMagnet.value) return;
+  appendToQueue(makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
+}
+
+/**
+ * @param {object} like - Track like from `likes`.
+ * @returns {void}
+ */
+function handleAddToQueueFromLike(like) {
+  appendToQueue({
+    magnet: like.magnet,
+    fileIdx: like.fileIdx,
+    fileName: trackDisplayBasename(like.fileName),
+    torrentName: like.torrentName,
+    torrentId: like.torrentId,
+    source: like.source,
+    artist: like.artist ?? null,
+    coverFileIdx: trackCoverFileIdxForLike(like, likes.value),
+    albumDirPath: like.albumDirPath ?? null,
+    seeders: null,
+  });
+}
+
+/**
+ * @param {object} track - Saved playlist track row.
+ * @returns {void}
+ */
+function handleAddToQueueFromPlaylistTrack(track) {
+  appendToQueue({
+    magnet: track.magnet,
+    fileIdx: track.fileIdx,
+    fileName: trackDisplayBasename(track.fileName),
+    torrentName: track.torrentName,
+    torrentId: track.torrentId,
+    source: track.source,
+    artist: track.artist ?? null,
+    coverFileIdx: track.coverFileIdx ?? null,
+    albumDirPath: track.albumDirPath ?? null,
+    seeders: track.seeders ?? null,
+  });
+}
+
+/**
+ * @param {number} i - Target index in the queue.
+ * @returns {void}
+ */
+function handleQueueJump(i) {
+  if (i < 0 || i >= queue.value.length) return;
+  allowPlayerAutoplay();
+  queuePos.value = i;
+}
+
+/**
+ * @param {number} i - Index to remove.
+ * @returns {void}
+ */
+function handleQueueRemove(i) {
+  const cur = queuePos.value;
+  const next = queue.value.filter((_, j) => j !== i);
+  let pos = cur;
+  if (i < cur) pos--;
+  else if (i === cur) {
+    if (next.length === 0) pos = 0;
+    else if (cur >= next.length) pos = next.length - 1;
+  }
+  queue.value = next;
+  queuePos.value = pos;
+}
+
 function handleToggleLike(like) {
   const next = { ...likes.value };
   if (next[like.id]) delete next[like.id];
@@ -1526,6 +1624,7 @@ function onMouseSideButtonUp(e) {
             @play-album="handlePlayAlbumFromLike"
             @open-torrent="handleOpenTorrentFromLike"
             @download="handleDownloadTrackFromLike"
+            @add-to-queue="handleAddToQueueFromLike"
           />
         </KeepAlive>
 
@@ -1556,6 +1655,7 @@ function onMouseSideButtonUp(e) {
           @remove-track="handleRemoveTrackFromPlaylist(currentPlaylistId, $event)"
           @delete="handleDeletePlaylist(currentPlaylistId)"
           @rename="handleRenamePlaylist(currentPlaylistId, $event)"
+          @add-to-queue="handleAddToQueueFromPlaylistTrack"
         />
 
         <!-- Search view -->
@@ -1628,6 +1728,7 @@ function onMouseSideButtonUp(e) {
             @open-album-preview="handleOpenAlbumPreview"
             @hover-track="handleHoverTrack"
             @add-to-playlist="handleShowAddToPlaylist"
+            @add-to-queue="handleAddToQueueFromTorrent"
           />
         </template>
 
@@ -1645,6 +1746,8 @@ function onMouseSideButtonUp(e) {
       :hover-prefetch-url="hoverPrefetchUrl"
       :hover-prefetch-key="hoverPrefetchKey"
       :likes="likes"
+      :playback-queue="queue"
+      :queue-index="queuePos"
       @prev="handlePrev"
       @next="handleNext"
       @ended="handleNext"
@@ -1654,6 +1757,8 @@ function onMouseSideButtonUp(e) {
       @toggle-like="handleToggleLike"
       @search-artist="handleSearchArtist"
       @open-torrent="handleOpenTorrentFromPlayer"
+      @queue-jump="handleQueueJump"
+      @queue-remove="handleQueueRemove"
     />
 
     <DownloadProgressOverlay

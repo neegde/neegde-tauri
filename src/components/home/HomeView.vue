@@ -330,10 +330,8 @@ onUnmounted(() => {
   margin-bottom: 0;
   padding: 22px 22px 26px;
   border-radius: 16px;
-  background:
-    radial-gradient(ellipse 80% 60% at 50% -20%, rgba(var(--accent-rgb), 0.14), transparent 55%),
-    var(--surface);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--home-intro-radial), var(--surface);
+  border: 1px solid var(--border);
   overflow: hidden;
 }
 .home-intro-head {
@@ -361,8 +359,8 @@ onUnmounted(() => {
   margin-top: 4px;
   padding: 14px 12px 12px;
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  background: var(--home-story-inset-bg);
+  border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -375,7 +373,7 @@ onUnmounted(() => {
 .home-story-track {
   height: 4px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--home-story-track-bg);
   overflow: hidden;
 }
 .home-story-track-fill {
@@ -485,7 +483,7 @@ onUnmounted(() => {
 .home-fig-track {
   height: 8px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--home-fig-track-bg);
 }
 .home-fig-track--on {
   background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.35), var(--accent));
@@ -567,8 +565,8 @@ onUnmounted(() => {
 .home-fig-buf-track {
   height: 20px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--home-fig-buf-trough-bg);
+  border: 1px solid var(--border);
   overflow: hidden;
 }
 .home-fig-buf-fill {
@@ -690,12 +688,12 @@ onUnmounted(() => {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--home-story-dot-idle);
   cursor: pointer;
   transition: transform 0.15s ease, background 0.15s ease;
 }
 .home-story-dot:hover {
-  background: rgba(255, 255, 255, 0.35);
+  background: var(--home-story-dot-hover);
 }
 .home-story-dot--active {
   background: var(--accent);
@@ -705,10 +703,10 @@ onUnmounted(() => {
 .home-unified-foot {
   margin: 0;
   padding-top: 8px;
-  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  border-top: 1px solid var(--border);
   font-size: 11px;
   line-height: 1.45;
-  color: var(--muted2);
+  color: var(--muted);
   text-align: center;
 }
 

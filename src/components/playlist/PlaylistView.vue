@@ -2,6 +2,7 @@
 import { ref, computed } from "vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import CoverThumb from "../shared/CoverThumb.vue";
+import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { trackDisplayBasename } from "../../lib/utils.js";
 
 const props = defineProps({
@@ -15,6 +16,7 @@ const emit = defineEmits([
   "remove-track",   // { magnet, fileIdx }
   "delete",
   "rename",         // newName
+  "add-to-queue",
 ]);
 
 // ── Rename ────────────────────────────────────────────────────────────────────
@@ -41,6 +43,32 @@ function isPlaying(track) {
 }
 
 const trackCount = computed(() => props.playlist.tracks.length);
+
+const ctxOpen = ref(false);
+const ctxX = ref(0);
+const ctxY = ref(0);
+/** @type {import('vue').Ref<object | null>} */
+const ctxTrack = ref(null);
+
+/**
+ * @param {MouseEvent} e
+ * @param {object} track
+ * @returns {void}
+ */
+function openTrackCtx(e, track) {
+  e.preventDefault();
+  ctxX.value = e.clientX;
+  ctxY.value = e.clientY;
+  ctxTrack.value = track;
+  ctxOpen.value = true;
+}
+
+/**
+ * @returns {void}
+ */
+function onCtxAddToQueue() {
+  if (ctxTrack.value) emit("add-to-queue", ctxTrack.value);
+}
 </script>
 
 <template>
@@ -146,6 +174,7 @@ const trackCount = computed(() => props.playlist.tracks.length);
         :key="`${track.magnet}-${track.fileIdx}`"
         :class="['pl-track-row', isPlaying(track) ? 'pl-track-row--playing' : '']"
         @click="emit('play', i)"
+        @contextmenu.prevent="openTrackCtx($event, track)"
       >
         <div class="pl-col-n">
           <PlayingIndicator v-if="isPlaying(track)" :live="playerPlaying" />
@@ -183,6 +212,12 @@ const trackCount = computed(() => props.playlist.tracks.length);
       </div>
     </div>
 
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      @action="onCtxAddToQueue"
+    />
   </div>
 </template>
 

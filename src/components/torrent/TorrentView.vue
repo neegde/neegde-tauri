@@ -23,6 +23,7 @@ import {
 import { enrichAlbumTracklist } from "../../audio/metadataEnrich.js";
 import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
+import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
@@ -55,7 +56,33 @@ const emit = defineEmits([
   "open-album-preview",
   "hover-track",
   "add-to-playlist",
+  "add-to-queue",
 ]);
+
+const ctxOpen = ref(false);
+const ctxX = ref(0);
+const ctxY = ref(0);
+const ctxOrigIdx = ref(null);
+
+/**
+ * @param {MouseEvent} e
+ * @param {number} origIdx
+ * @returns {void}
+ */
+function openTrackCtx(e, origIdx) {
+  e.preventDefault();
+  ctxX.value = e.clientX;
+  ctxY.value = e.clientY;
+  ctxOrigIdx.value = origIdx;
+  ctxOpen.value = true;
+}
+
+/**
+ * @returns {void}
+ */
+function onCtxAddToQueue() {
+  if (ctxOrigIdx.value != null) emit("add-to-queue", ctxOrigIdx.value);
+}
 
 // ── Hover prefetch ────────────────────────────────────────────────────────────
 let _hoverTimer = null;
@@ -494,6 +521,7 @@ watch(
           :key="f.origIdx"
           :class="['album-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @contextmenu.prevent="openTrackCtx($event, f.origIdx)"
           @mouseenter="onTrackHover(f.origIdx)"
           @mouseleave="onTrackLeave"
         >
@@ -697,6 +725,7 @@ watch(
           :key="f.origIdx"
           :class="['track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
+          @contextmenu.prevent="openTrackCtx($event, f.origIdx)"
           @mouseenter="onTrackHover(f.origIdx)"
           @mouseleave="onTrackLeave"
         >
@@ -786,6 +815,12 @@ watch(
     </template>
     </template>
 
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      @action="onCtxAddToQueue"
+    />
   </div>
 </template>
 

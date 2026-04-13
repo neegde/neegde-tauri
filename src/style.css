@@ -16,6 +16,20 @@
   --sidebar-w:   248px;
   --main-pad-inline: 32px;
   --main-pad-top:    28px;
+  /* HomeView «Как это работает»: внутренний блок и мини-иллюстрации */
+  --home-story-inset-bg: rgba(0, 0, 0, 0.2);
+  --home-story-track-bg: rgba(255, 255, 255, 0.07);
+  --home-story-dot-idle: rgba(255, 255, 255, 0.2);
+  --home-story-dot-hover: rgba(255, 255, 255, 0.35);
+  --home-fig-track-bg: rgba(255, 255, 255, 0.08);
+  --home-fig-buf-trough-bg: rgba(0, 0, 0, 0.35);
+  --home-intro-radial: radial-gradient(
+    ellipse 80% 60% at 50% -20%,
+    rgba(var(--accent-rgb), 0.14),
+    transparent 55%
+  );
+  --player-queue-btn-hover-bg: rgba(255, 255, 255, 0.08);
+  --player-queue-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2175,6 +2189,19 @@ body {
   --nav-btn-bg-hover:       rgba(0, 0, 0, 0.12);
   --nav-btn-sidebar-bg:     rgba(0, 0, 0, 0.07);
   --nav-btn-sidebar-bg-hover: rgba(0, 0, 0, 0.12);
+  --home-story-inset-bg: rgba(0, 0, 0, 0.045);
+  --home-story-track-bg: rgba(0, 0, 0, 0.11);
+  --home-story-dot-idle: rgba(0, 0, 0, 0.22);
+  --home-story-dot-hover: rgba(0, 0, 0, 0.34);
+  --home-fig-track-bg: rgba(0, 0, 0, 0.09);
+  --home-fig-buf-trough-bg: rgba(0, 0, 0, 0.1);
+  --home-intro-radial: radial-gradient(
+    ellipse 80% 60% at 50% -20%,
+    rgba(var(--accent-rgb), 0.1),
+    transparent 55%
+  );
+  --player-queue-btn-hover-bg: rgba(0, 0, 0, 0.07);
+  --player-queue-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
 }
 
 [data-theme="light"] .main-wrap {
@@ -2289,3 +2316,22 @@ body {
 [data-theme="light"] .likes-hero-label { color: rgba(0,0,0,0.7); }
 [data-theme="light"] .likes-hero-title { color: var(--text); }
 [data-theme="light"] .likes-hero-meta  { color: rgba(0,0,0,0.55); }
+
+/* Настройки: деструктивные кнопки кэша на светлом фоне */
+[data-theme="light"] .nerd-btn-danger {
+  background: rgba(185, 28, 28, 0.1);
+  color: #b91c1c;
+}
+[data-theme="light"] .nerd-btn-danger:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.18);
+  color: #991b1b;
+}
+[data-theme="light"] .nerd-btn-danger--ghost {
+  background: transparent;
+  border-color: rgba(185, 28, 28, 0.45);
+  color: #b91c1c;
+}
+[data-theme="light"] .nerd-btn-danger--ghost:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.08);
+  color: #991b1b;
+}

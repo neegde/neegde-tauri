@@ -53,9 +53,25 @@ const props = defineProps({
   hoverPrefetchKey: { type: String, default: "" },
   /** Словарь лайков из App.vue — для отображения состояния лайка текущего трека. */
   likes: { type: Object, default: null },
+  /** Текущая очередь воспроизведения (копия из App). */
+  playbackQueue: { type: Array, default: () => [] },
+  /** Индекс текущего трека в очереди. */
+  queueIndex: { type: Number, default: 0 },
 });
 
-const emit = defineEmits(["prev", "next", "ended", "playing-change", "request-stream", "hover-prefetch-consumed", "toggle-like", "search-artist", "open-torrent"]);
+const emit = defineEmits([
+  "prev",
+  "next",
+  "ended",
+  "playing-change",
+  "request-stream",
+  "hover-prefetch-consumed",
+  "toggle-like",
+  "search-artist",
+  "open-torrent",
+  "queue-jump",
+  "queue-remove",
+]);
 
 const currentArtist = computed(() =>
   enrichedMeta.value?.artist ||
@@ -177,6 +193,8 @@ let unlistenPrepareProgress = () => {};
 
 /** Открыто ли pop-up меню статуса стрима. */
 const statusMenuOpen = ref(false);
+/** Панель списка очереди. */
+const queuePanelOpen = ref(false);
 
 /** URL из `torrent_prefetch_next_track` (другой торрент), пока не переключились на этот трек. */
 const prefetchedStream = ref({ url: "", forKey: "" });
@@ -1052,7 +1070,12 @@ watch(
   { immediate: true }
 );
 
-function onDocClick() { statusMenuOpen.value = false; }
+function onDocClick() {
+  statusMenuOpen.value = false;
+  queuePanelOpen.value = false;
+}
+
+const queueLen = computed(() => props.playbackQueue?.length ?? 0);
 
 onMounted(async () => {
   installMediaSessionHandlers();
@@ -1226,8 +1249,62 @@ onUnmounted(() => {
         <div v-if="streamPhase === 'error' && streamError" class="stream-inline-error">{{ streamError }}</div>
       </div>
 
-      <!-- Right: volume -->
+      <!-- Right: queue + volume -->
       <div class="player-right">
+        <div v-if="queueLen > 0" class="player-queue-wrap" @click.stop>
+          <button
+            type="button"
+            class="player-queue-btn"
+            :class="{ 'player-queue-btn--open': queuePanelOpen }"
+            :aria-expanded="queuePanelOpen"
+            aria-label="Очередь воспроизведения"
+            :title="'Очередь: ' + queueLen + ' ' + (queueLen === 1 ? 'трек' : queueLen < 5 ? 'трека' : 'треков')"
+            @click="queuePanelOpen = !queuePanelOpen"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span class="player-queue-badge">{{ queueLen }}</span>
+          </button>
+          <Transition name="queue-panel">
+            <div
+              v-if="queuePanelOpen"
+              class="player-queue-panel"
+              role="dialog"
+              aria-label="Очередь"
+            >
+              <div class="player-queue-head">Очередь</div>
+              <ul class="player-queue-list">
+                <li
+                  v-for="(q, idx) in playbackQueue"
+                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                >
+                  <button
+                    type="button"
+                    class="player-queue-item-main"
+                    @click="emit('queue-jump', idx); queuePanelOpen = false"
+                  >
+                    <span class="player-queue-item-title">{{ trackDisplayBasename(q.fileName) }}</span>
+                    <span class="player-queue-item-sub">{{ q.artist || q.torrentName || '' }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="player-queue-item-remove"
+                    aria-label="Убрать из очереди"
+                    title="Убрать"
+                    @click="emit('queue-remove', idx)"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </Transition>
+        </div>
         <div class="player-volume" @wheel.prevent="onVolumeWheel">
           <button
             type="button"
@@ -1325,7 +1402,62 @@ onUnmounted(() => {
           <span class="progress-time">0:00</span>
         </div>
       </div>
-      <div class="player-right" />
+      <div class="player-right">
+        <div v-if="queueLen > 0" class="player-queue-wrap" @click.stop>
+          <button
+            type="button"
+            class="player-queue-btn"
+            :class="{ 'player-queue-btn--open': queuePanelOpen }"
+            :aria-expanded="queuePanelOpen"
+            aria-label="Очередь воспроизведения"
+            :title="'Очередь: ' + queueLen + ' ' + (queueLen === 1 ? 'трек' : queueLen < 5 ? 'трека' : 'треков')"
+            @click="queuePanelOpen = !queuePanelOpen"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span class="player-queue-badge">{{ queueLen }}</span>
+          </button>
+          <Transition name="queue-panel">
+            <div
+              v-if="queuePanelOpen"
+              class="player-queue-panel"
+              role="dialog"
+              aria-label="Очередь"
+            >
+              <div class="player-queue-head">Очередь</div>
+              <ul class="player-queue-list">
+                <li
+                  v-for="(q, idx) in playbackQueue"
+                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                >
+                  <button
+                    type="button"
+                    class="player-queue-item-main"
+                    @click="emit('queue-jump', idx); queuePanelOpen = false"
+                  >
+                    <span class="player-queue-item-title">{{ trackDisplayBasename(q.fileName) }}</span>
+                    <span class="player-queue-item-sub">{{ q.artist || q.torrentName || '' }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="player-queue-item-remove"
+                    aria-label="Убрать из очереди"
+                    title="Убрать"
+                    @click="emit('queue-remove', idx)"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </Transition>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -1641,5 +1773,155 @@ onUnmounted(() => {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* ── Очередь воспроизведения ───────────────────────────────────────── */
+.player-queue-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.player-queue-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.player-queue-btn:hover {
+  background: var(--player-queue-btn-hover-bg, rgba(255, 255, 255, 0.08));
+  color: var(--text);
+}
+.player-queue-btn--open {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+.player-queue-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #141210;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+.player-queue-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(48vh, 320px);
+  display: flex;
+  flex-direction: column;
+  z-index: 90;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--player-queue-shadow, 0 -8px 32px rgba(0, 0, 0, 0.45));
+  overflow: hidden;
+}
+.player-queue-head {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  border-bottom: 1px solid var(--border);
+}
+.player-queue-list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.player-queue-item {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 8px;
+  margin-bottom: 2px;
+}
+.player-queue-item:last-child {
+  margin-bottom: 0;
+}
+.player-queue-item--current {
+  background: rgba(var(--accent-rgb), 0.12);
+  outline: 1px solid rgba(var(--accent-rgb), 0.35);
+}
+.player-queue-item-main {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.player-queue-item-main:hover {
+  background: var(--surface-h);
+}
+.player-queue-item-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.player-queue-item-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.player-queue-item-remove {
+  flex-shrink: 0;
+  width: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+.player-queue-item-remove:hover {
+  background: rgba(233, 53, 68, 0.14);
+  color: var(--red);
+}
+.queue-panel-enter-active,
+.queue-panel-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.queue-panel-enter-from,
+.queue-panel-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 </style>

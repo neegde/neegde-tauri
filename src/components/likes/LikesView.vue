@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from "vue";
 import CoverThumb from "../shared/CoverThumb.vue";
+import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import { trackCoverFileIdxForLike } from "../../library/likesCover.js";
 import { trackDisplayBasename, audioFormatLabel } from "../../lib/utils.js";
@@ -13,7 +14,33 @@ const props = defineProps({
   playerPlaying: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(["toggle-like", "play", "play-album", "open-torrent", "download"]);
+const emit = defineEmits(["toggle-like", "play", "play-album", "open-torrent", "download", "add-to-queue"]);
+
+const ctxOpen = ref(false);
+const ctxX = ref(0);
+const ctxY = ref(0);
+/** @type {import('vue').Ref<object | null>} */
+const ctxLike = ref(null);
+
+/**
+ * @param {MouseEvent} e
+ * @param {object} like
+ * @returns {void}
+ */
+function openTrackCtx(e, like) {
+  e.preventDefault();
+  ctxX.value = e.clientX;
+  ctxY.value = e.clientY;
+  ctxLike.value = like;
+  ctxOpen.value = true;
+}
+
+/**
+ * @returns {void}
+ */
+function onCtxAddToQueue() {
+  if (ctxLike.value) emit("add-to-queue", ctxLike.value);
+}
 
 const tab = ref("tracks");
 
@@ -118,6 +145,7 @@ function trackCoverFileIdx(like) {
           :key="like.id"
           :class="['track-row', 'likes-track-row', ...likesTrackRowClass(like)]"
           @click="emit('play', like)"
+          @contextmenu.prevent="openTrackCtx($event, like)"
         >
           <div class="track-num">
             <PlayingIndicator v-if="isNowPlayingTrack(like)" :live="playerPlaying" />
@@ -250,5 +278,11 @@ function trackCoverFileIdx(like) {
       </div>
     </div>
 
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      @action="onCtxAddToQueue"
+    />
   </div>
 </template>

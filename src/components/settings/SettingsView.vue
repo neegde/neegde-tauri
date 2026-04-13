@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, onActivated, watch, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -464,6 +464,21 @@ const nerdDiagError = ref(null);
  * }>} */
 const nerdDiag = ref(null);
 
+/**
+ * Bytes under app data dir not covered by stream + cover subfolders (DB, session state, etc.).
+ *
+ * @returns {number}
+ */
+const nerdDiagOtherBytes = computed(() => {
+  const d = nerdDiag.value;
+  if (!d) return 0;
+  const t = Number(d.totalAppDataBytes) || 0;
+  const s = Number(d.streamCacheBytes) || 0;
+  const c = Number(d.coverTorrentCacheBytes) || 0;
+  const o = t - s - c;
+  return o > 0 ? o : 0;
+});
+
 const cacheFormMaxMib = ref(500);
 const cacheFormTtlMinutes = ref(60);
 const cacheSaveBusy = ref(false);
@@ -760,33 +775,128 @@ async function confirmClearCoverTorrents() {
       </div>
     </div>
 
-    <!-- ── Память и данные ───────────────────────────────────────── -->
+    <!-- ── Кэш: быстрая очистка (вне «задротов») ─────────────────── -->
     <div class="settings-section">
-      <div class="settings-section-label">Память и данные</div>
-        <div class="settings-card nerd-card nerd-card--stats">
+      <div class="settings-section-label">Кэш</div>
+      <div class="settings-card settings-card--cache-quick">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">🗑</div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Очистка на диске</div>
+            <div class="settings-card-status">Удалить данные кэша без смены лимитов</div>
+          </div>
+        </div>
+        <div class="settings-card-body">
+          <p class="settings-card-desc cache-quick-desc">
+            Остановится воспроизведение при очистке стриминга. Обложки из торрентов хранятся отдельно.
+          </p>
+          <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
+          <div class="cache-quick-actions">
+            <button
+              type="button"
+              class="nerd-btn-danger cache-quick-btn"
+              :disabled="cacheClearBusy || cacheSaveBusy"
+              @click="confirmClearStreaming"
+            >
+              <span v-if="cacheClearBusy" class="spinner" />
+              <template v-else>Очистить кэш стриминга</template>
+            </button>
+            <button
+              type="button"
+              class="nerd-btn-danger nerd-btn-danger--ghost cache-quick-btn"
+              :disabled="cacheClearBusy || cacheSaveBusy"
+              @click="confirmClearCoverTorrents"
+            >
+              Очистить кэш обложек (торренты)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Параметры для задротов ─────────────────────────────── -->
+    <div class="settings-section">
+      <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
+        <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
+        Параметры для задротов
+        <span
+          v-if="hasCustomMirror() || hasHttpProxyConfigured()"
+          class="nerd-custom-dot"
+          title="Нестандартные зеркало или прокси"
+        />
+      </button>
+
+      <div v-if="nerdOpen" class="nerd-stack">
+        <div class="settings-card nerd-card nerd-card--cache-stats">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">◉</div>
+            <div class="settings-card-icon settings-card-icon--app">⏱</div>
             <div class="settings-card-info">
-              <div class="settings-card-name">Статистика</div>
-              <div class="settings-card-status">Сколько занимает процесс и кэш на диске</div>
+              <div class="settings-card-name">Кэш на диске и статистика</div>
+              <div class="settings-card-status">Лимиты TTL, объёмы и папка данных</div>
             </div>
             <button
               type="button"
               class="nerd-refresh-stats"
               :disabled="nerdDiagLoading"
-              title="Обновить"
+              title="Обновить статистику"
               @click="loadNerdDiagnostics"
             >
               <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
               <template v-else>↻</template>
             </button>
           </div>
-
           <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc nerd-stats-lead">
-              Ниже — фактическое использование RAM и папки данных приложения. Кэш стриминга
-              ограничен сверху; при выходе из приложения загруженные для прослушивания данные
-              обычно удаляются.
+            <p class="settings-card-desc nerd-desc">
+              Лимиты задают размер папки стриминга и время жизни неактивных торрентов. Ниже — фактические
+              объёмы RAM и диска (↻ обновляет цифры и подтягивает сохранённые лимиты).
+            </p>
+
+            <div class="nerd-merge-label">Лимиты</div>
+            <div class="nerd-cache-fields">
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
+                <input
+                  v-model.number="cacheFormMaxMib"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="50"
+                  max="8192"
+                  step="10"
+                />
+                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
+              </label>
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
+                <input
+                  v-model.number="cacheFormTtlMinutes"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="5"
+                  max="20160"
+                  step="5"
+                />
+                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
+              </label>
+            </div>
+
+            <div class="nerd-cache-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="cacheSaveBusy || cacheClearBusy"
+                @click="saveCacheSettings"
+              >
+                <span v-if="cacheSaveBusy" class="spinner" />
+                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
+              </button>
+            </div>
+
+            <div class="nerd-cache-stats-divider" />
+
+            <p class="settings-card-desc nerd-desc nerd-stats-lead nerd-stats-lead--merge">
+              Оценка RAM и размера каталога данных. «Всего по папке» — полный рекурсивный размер каталога;
+              ниже — два кэша и строка «Прочее» (всё, что не в этих подпапках). Лимит стриминга задаётся
+              выше; при выходе из приложения данные для воспроизведения обычно сбрасываются.
             </p>
 
             <p v-if="nerdDiagError" class="login-error nerd-probe-error">{{ nerdDiagError }}</p>
@@ -817,6 +927,9 @@ async function confirmClearCoverTorrents() {
                   <span class="nerd-stat-value">{{ formatBytes(nerdDiag.totalAppDataBytes) }}</span>
                 </div>
                 <p class="nerd-stat-path">{{ nerdDiag.appDataPath }}</p>
+                <p class="nerd-stat-hint">
+                  Включает все файлы в этом пути, не только папки кэша ниже.
+                </p>
               </div>
 
               <div class="nerd-stat-block">
@@ -860,6 +973,17 @@ async function confirmClearCoverTorrents() {
                 </p>
               </div>
 
+              <div v-if="nerdDiagOtherBytes > 0" class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Прочее в каталоге данных</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiagOtherBytes) }}</span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Разница между «всего по папке» и суммой двух кэшей выше: базы SQLite, состояние
+                  libtorrent / сессии стриминга, fastresume, журналы и другие файлы вне этих подпапок.
+                </p>
+              </div>
+
               <div class="nerd-stat-block nerd-stat-block--inline">
                 <div class="nerd-stat-row">
                   <span class="nerd-stat-label">Торрентов в сессии стриминга</span>
@@ -873,7 +997,7 @@ async function confirmClearCoverTorrents() {
                   <li>
                     Текущий лимит папки стриминга:
                     <strong>{{ formatBytes(nerdDiag.streamCacheLimitBytes) }}</strong>
-                    — при превышении вытесняются старые неактивные раздачи (лимиты — в «Параметры для задротов» → «Кэш на диске»).
+                    — при превышении вытесняются старые неактивные раздачи (лимиты задаются в блоке выше).
                   </li>
                   <li>
                     Неиспользуемые торренты старше
@@ -890,101 +1014,6 @@ async function confirmClearCoverTorrents() {
             </div>
 
             <p v-else class="nerd-stat-hint">Нажми ↻ чтобы обновить.</p>
-          </div>
-        </div>
-    </div>
-
-    <!-- ── Параметры для задротов ─────────────────────────────── -->
-    <div class="settings-section">
-      <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
-        <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
-        Параметры для задротов
-        <span
-          v-if="hasCustomMirror() || hasHttpProxyConfigured()"
-          class="nerd-custom-dot"
-          title="Нестандартные зеркало или прокси"
-        />
-      </button>
-
-      <div v-if="nerdOpen" class="nerd-stack">
-        <div class="settings-card nerd-card nerd-card--cache">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">⏱</div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Кэш на диске</div>
-              <div class="settings-card-status">Лимиты и ручная очистка</div>
-            </div>
-          </div>
-          <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc">
-              Стриминг хранит фрагменты треков в папке данных; обложки из торрентов — отдельно.
-              Можно задать максимальный размер и «возраст» неиспользуемых данных, а также
-              освободить место вручную.
-            </p>
-
-            <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
-
-            <div class="nerd-cache-fields">
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
-                <input
-                  v-model.number="cacheFormMaxMib"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="50"
-                  max="8192"
-                  step="10"
-                />
-                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
-              </label>
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
-                <input
-                  v-model.number="cacheFormTtlMinutes"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="5"
-                  max="20160"
-                  step="5"
-                />
-                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
-              </label>
-            </div>
-
-            <div class="nerd-cache-actions">
-              <button
-                type="button"
-                class="login-btn nerd-save-btn"
-                :disabled="cacheSaveBusy || cacheClearBusy"
-                @click="saveCacheSettings"
-              >
-                <span v-if="cacheSaveBusy" class="spinner" />
-                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
-              </button>
-            </div>
-
-            <div class="nerd-cache-divider" />
-
-            <p class="nerd-cache-clear-intro">Очистка сразу удаляет файлы с диска.</p>
-            <div class="nerd-cache-clear-row">
-              <button
-                type="button"
-                class="nerd-btn-danger"
-                :disabled="cacheClearBusy || cacheSaveBusy"
-                @click="confirmClearStreaming"
-              >
-                <span v-if="cacheClearBusy" class="spinner" />
-                <template v-else>Очистить кэш стриминга</template>
-              </button>
-              <button
-                type="button"
-                class="nerd-btn-danger nerd-btn-danger--ghost"
-                :disabled="cacheClearBusy || cacheSaveBusy"
-                @click="confirmClearCoverTorrents"
-              >
-                Очистить кэш обложек (торренты)
-              </button>
-            </div>
           </div>
         </div>
 
@@ -1405,6 +1434,47 @@ async function confirmClearCoverTorrents() {
 
 .nerd-card { margin-top: 0; }
 
+/* Быстрая очистка кэша (основные настройки) */
+.settings-card--cache-quick {
+  border-left: 3px solid var(--accent);
+}
+.cache-quick-desc {
+  margin-bottom: 4px;
+}
+.cache-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+@media (min-width: 520px) {
+  .cache-quick-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+.cache-quick-btn {
+  flex: 1;
+  min-width: min(100%, 240px);
+}
+
+.nerd-merge-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  margin: 2px 0 10px;
+}
+.nerd-cache-stats-divider {
+  margin: 20px 0 14px;
+  height: 1px;
+  background: var(--border, rgba(255, 255, 255, 0.08));
+}
+.nerd-stats-lead--merge {
+  margin-top: 0;
+}
+
 .nerd-stack {
   display: flex;
   flex-direction: column;
@@ -1556,22 +1626,6 @@ async function confirmClearCoverTorrents() {
 .nerd-app-debug-open-btn {
   align-self: flex-start;
 }
-.nerd-cache-divider {
-  margin: 18px 0 12px;
-  height: 1px;
-  background: var(--border, rgba(255,255,255,.08));
-}
-.nerd-cache-clear-intro {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 0 0 10px;
-}
-.nerd-cache-clear-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
 .nerd-btn-danger {
   display: inline-flex;
   align-items: center;
@@ -1606,7 +1660,8 @@ async function confirmClearCoverTorrents() {
 }
 
 /* ── Память и данные (диагностика) ─────────────────────────────────────────── */
-.nerd-card--stats .settings-card-header {
+.nerd-card--stats .settings-card-header,
+.nerd-card--cache-stats .settings-card-header {
   align-items: flex-start;
 }
 .nerd-refresh-stats {
