@@ -221,7 +221,7 @@ async function handleRtReconnect() {
   }
 }
 
-// ── Параметры для задротов ────────────────────────────────────────────────────
+// ── Дополнительно ─────────────────────────────────────────────────────────────
 const nerdOpen   = ref(false);
 const mirrorMode = ref(MIRROR_MODE_MANUAL);
 const mirrorSelect = ref(KNOWN_MIRRORS[0]);
@@ -742,11 +742,28 @@ watch(nerdOpen, (open) => {
       </div>
     </div>
 
-    <!-- ── Параметры для задротов ─────────────────────────────── -->
+    <!-- ── Звук ─────────────────────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Звук</div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">🎚</div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Эквалайзер</div>
+            <div class="settings-card-status">10 полос · Web Audio · локально</div>
+          </div>
+        </div>
+        <div class="settings-card-body settings-card-body--eq">
+          <EqualizerPanel />
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Дополнительно ─────────────────────────────── -->
     <div class="settings-section">
       <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
         <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
-        Параметры для задротов
+        Дополнительно
         <span
           v-if="hasCustomMirror() || hasHttpProxyConfigured()"
           class="nerd-custom-dot"
@@ -915,6 +932,32 @@ watch(nerdOpen, (open) => {
           </div>
         </div>
 
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">🪲</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Журнал отладки</div>
+              <div class="settings-card-status">Клики, экраны, плеер, торренты</div>
+            </div>
+            <label class="nerd-toggle-inline">
+              <input
+                type="checkbox"
+                :checked="appDebugEnabled"
+                @change="onAppDebugChange"
+              />
+            </label>
+          </div>
+          <div v-if="appDebugEnabled" class="settings-card-body">
+            <button
+              type="button"
+              class="login-btn nerd-save-btn"
+              @click="openAppDebugLogWindow"
+            >
+              Открыть журнал
+            </button>
+          </div>
+        </div>
+
         <div class="settings-card nerd-card nerd-card--cache">
           <div class="settings-card-header">
             <div class="settings-card-icon settings-card-icon--app">⏱</div>
@@ -968,25 +1011,6 @@ watch(nerdOpen, (open) => {
               >
                 <span v-if="cacheSaveBusy" class="spinner" />
                 <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
-              </button>
-            </div>
-
-            <div class="nerd-app-debug">
-              <label class="nerd-app-debug-row">
-                <input
-                  type="checkbox"
-                  :checked="appDebugEnabled"
-                  @change="onAppDebugChange"
-                />
-                <span>Журнал отладки: клики, экраны, плеер, торренты — только в отдельном окне</span>
-              </label>
-              <button
-                v-if="appDebugEnabled"
-                type="button"
-                class="login-btn nerd-save-btn nerd-app-debug-open-btn"
-                @click="openAppDebugLogWindow"
-              >
-                Открыть журнал отладки
               </button>
             </div>
 
@@ -1145,18 +1169,6 @@ watch(nerdOpen, (open) => {
           </div>
         </div>
 
-        <div class="settings-card nerd-card">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🎚</div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Эквалайзер</div>
-              <div class="settings-card-status">10 полос · Web Audio · локально</div>
-            </div>
-          </div>
-          <div class="settings-card-body settings-card-body--eq">
-            <EqualizerPanel />
-          </div>
-        </div>
       </div>
     </div>
 
@@ -1344,7 +1356,7 @@ watch(nerdOpen, (open) => {
   line-height: 1.4;
 }
 
-/* ── Параметры для задротов ───────────────────────────────────────────────── */
+/* ── Дополнительно ────────────────────────────────────────────────────────── */
 .nerd-toggle {
   display: flex;
   align-items: center;
@@ -1363,6 +1375,19 @@ watch(nerdOpen, (open) => {
 }
 .nerd-toggle:hover { color: var(--text); }
 .nerd-toggle-icon  { font-size: 10px; }
+
+.nerd-toggle-inline {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  margin-left: auto;
+}
+.nerd-toggle-inline input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
 
 .nerd-custom-dot {
   width: 6px;
