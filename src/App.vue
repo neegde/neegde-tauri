@@ -40,6 +40,11 @@ import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow, closeAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory } from "./lib/recentHistory.js";
 import { loadSearchHistory, addToSearchHistory } from "./lib/searchHistory.js";
+import {
+  loadPlaylists, createPlaylist, deletePlaylist, renamePlaylist,
+  addTrackToPlaylist, removeTrackFromPlaylist,
+} from "./lib/playlistStorage.js";
+import PlaylistView from "./components/playlist/PlaylistView.vue";
 
 // ── Search result LRU cache ───────────────────────────────────────────────────
 const _searchCache = new Map(); // normalized query → results[]
@@ -210,7 +215,7 @@ const rtLoggedIn  = ref(false);
 const rtUsername  = ref(null);
 const rtAvatarUrl = ref(null);
 // ── View ──────────────────────────────────────────────────────────────────────
-const view       = ref("home");  // "home" | "search" | "likes" | "settings"
+const view       = ref("home");  // "home" | "search" | "likes" | "settings" | "playlist"
 const returnView = ref("search");
 
 // ── Recent History ────────────────────────────────────────────────────────────
@@ -218,6 +223,81 @@ const recentHistory = ref(loadRecentHistory());
 
 // ── Search History ────────────────────────────────────────────────────────────
 const searchHistory = ref(loadSearchHistory());
+
+// ── Playlists ─────────────────────────────────────────────────────────────────
+const playlists = ref(loadPlaylists());
+const currentPlaylistId = ref(null);
+const currentPlaylist = computed(() => playlists.value.find((p) => p.id === currentPlaylistId.value) ?? null);
+
+const addToPlaylistModal = ref(false);
+const addToPlaylistTrack = ref(null);
+
+function openPlaylist(id) {
+  currentPlaylistId.value = id;
+  view.value = "playlist";
+}
+
+function handleCreatePlaylist() {
+  playlists.value = createPlaylist(`Плейлист ${playlists.value.length + 1}`);
+  const newPl = playlists.value[playlists.value.length - 1];
+  openPlaylist(newPl.id);
+}
+
+function handleDeletePlaylist(id) {
+  playlists.value = deletePlaylist(id);
+  if (currentPlaylistId.value === id) {
+    currentPlaylistId.value = null;
+    view.value = "home";
+  }
+}
+
+function handleRenamePlaylist(id, name) {
+  playlists.value = renamePlaylist(id, name);
+}
+
+function handleRemoveTrackFromPlaylist(id, { magnet, fileIdx }) {
+  playlists.value = removeTrackFromPlaylist(id, magnet, fileIdx);
+}
+
+function handleShowAddToPlaylist(track) {
+  addToPlaylistTrack.value = track;
+  addToPlaylistModal.value = true;
+}
+
+function handleAddToPlaylist(playlistId) {
+  if (!addToPlaylistTrack.value) return;
+  playlists.value = addTrackToPlaylist(playlistId, addToPlaylistTrack.value);
+  addToPlaylistModal.value = false;
+  addToPlaylistTrack.value = null;
+}
+
+function handleAddToPlaylistNew() {
+  playlists.value = createPlaylist(`Плейлист ${playlists.value.length + 1}`);
+  const newPl = playlists.value[playlists.value.length - 1];
+  if (addToPlaylistTrack.value) {
+    playlists.value = addTrackToPlaylist(newPl.id, addToPlaylistTrack.value);
+  }
+  addToPlaylistModal.value = false;
+  addToPlaylistTrack.value = null;
+  openPlaylist(newPl.id);
+}
+
+function handlePlayPlaylist(startIdx) {
+  const pl = currentPlaylist.value;
+  if (!pl?.tracks?.length) return;
+  allowPlayerAutoplay();
+  queue.value = pl.tracks.map((t) => ({
+    magnet: t.magnet,
+    fileIdx: t.fileIdx,
+    fileName: t.fileName,
+    torrentName: t.torrentName,
+    torrentId: t.torrentId,
+    source: t.source,
+    artist: t.artist ?? null,
+    coverFileIdx: t.coverFileIdx ?? null,
+  }));
+  queuePos.value = startIdx ?? 0;
+}
 
 /** Журнал отладки: UI, плеер, торренты — только в отдельном окне (настройки → чекбокс). */
 const appDebugEnabled = ref(false);
@@ -1332,6 +1412,32 @@ function onMouseSideButtonUp(e) {
           Мне нравится
         </button>
 
+        <!-- Playlists -->
+        <div class="nav-label nav-label--pl">
+          Плейлисты
+          <button class="sidebar-pl-create-btn" title="Новый плейлист" @click="handleCreatePlaylist">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sidebar-playlists">
+          <button
+            v-for="pl in playlists"
+            :key="pl.id"
+            :class="['source-btn sidebar-pl-item', currentPlaylistId === pl.id && view === 'playlist' ? 'active' : '']"
+            @click="openPlaylist(pl.id)"
+          >
+            <span class="source-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+            </span>
+            {{ pl.name }}
+          </button>
+        </div>
+
         <!-- Settings (bottom of nav) -->
         <div style="flex: 1" />
         <button
@@ -1440,8 +1546,20 @@ function onMouseSideButtonUp(e) {
           />
         </KeepAlive>
 
+        <!-- Playlist view -->
+        <PlaylistView
+          v-if="view === 'playlist' && currentPlaylist"
+          :playlist="currentPlaylist"
+          :now-playing="nowPlayingMatchForLikes"
+          :player-playing="playerPlaying"
+          @play="handlePlayPlaylist"
+          @remove-track="handleRemoveTrackFromPlaylist(currentPlaylistId, $event)"
+          @delete="handleDeletePlaylist(currentPlaylistId)"
+          @rename="handleRenamePlaylist(currentPlaylistId, $event)"
+        />
+
         <!-- Search view -->
-        <template v-if="view !== 'likes' && view !== 'settings' && view !== 'home'">
+        <template v-if="view !== 'likes' && view !== 'settings' && view !== 'home' && view !== 'playlist'">
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->
@@ -1509,6 +1627,7 @@ function onMouseSideButtonUp(e) {
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
             @hover-track="handleHoverTrack"
+            @add-to-playlist="handleShowAddToPlaylist"
           />
         </template>
 
@@ -1541,6 +1660,35 @@ function onMouseSideButtonUp(e) {
       v-model:expanded="downloadOverlayExpanded"
       :progress="downloadProgress"
     />
+
+    <!-- Add-to-playlist modal -->
+    <Teleport to="body">
+      <div v-if="addToPlaylistModal" class="pl-modal-overlay" @click.self="addToPlaylistModal = false">
+        <div class="pl-modal">
+          <div class="pl-modal-title">Добавить в плейлист</div>
+          <div class="pl-modal-list">
+            <button
+              v-for="pl in playlists"
+              :key="pl.id"
+              class="pl-modal-item"
+              @click="handleAddToPlaylist(pl.id)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+              {{ pl.name }}
+            </button>
+            <button class="pl-modal-new" @click="handleAddToPlaylistNew">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Новый плейлист
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
   </div>
 </template>

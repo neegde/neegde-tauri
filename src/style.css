@@ -1307,6 +1307,7 @@ body {
 .track-btn.like-btn       { font-size: 15px; }
 .track-btn.like-btn:hover { color: #e05c6a; }
 .track-btn.like-btn.liked { color: #e05c6a; opacity: 1; }
+.track-btn.add-to-pl:hover { color: var(--accent); }
 
 .album-like-btn {
   font-size: 18px !important;
@@ -1864,6 +1865,93 @@ body {
   color: var(--accent);
 }
 
+/* ── Sidebar Playlists ────────────────────────────────────────────────── */
+.nav-label--pl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 10px;
+}
+.sidebar-pl-create-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+.sidebar-pl-create-btn:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+.sidebar-playlists {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.sidebar-pl-item {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ── Add-to-playlist modal ────────────────────────────────────────────── */
+.pl-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pl-modal {
+  background: var(--surface);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 12px;
+  padding: 8px;
+  min-width: 240px;
+  max-width: 320px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+}
+.pl-modal-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 8px 12px 4px;
+}
+.pl-modal-item,
+.pl-modal-new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.pl-modal-item:hover { background: rgba(255,255,255,0.07); }
+.pl-modal-new {
+  color: var(--muted);
+  margin-top: 2px;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 0 0 6px 6px;
+}
+.pl-modal-new:hover { background: rgba(255,255,255,0.07); color: var(--text); }
+
 /* ── Scrollbar ────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -2130,6 +2218,10 @@ body {
 
 [data-theme="light"] .source-btn:hover                  { background: rgba(0,0,0,0.06); }
 [data-theme="light"] .source-btn.active                 { background: rgba(0,0,0,0.09); }
+[data-theme="light"] .sidebar-pl-create-btn:hover       { background: rgba(0,0,0,0.06); }
+[data-theme="light"] .pl-modal                          { background: #f5f5f5; }
+[data-theme="light"] .pl-modal-item:hover,
+[data-theme="light"] .pl-modal-new:hover                { background: rgba(0,0,0,0.06); }
 [data-theme="light"] .search-input-wrap                 { background: rgba(0,0,0,0.07); }
 [data-theme="light"] .search-input-wrap:focus-within    { background: rgba(0,0,0,0.12); }
 [data-theme="light"] .search-btn                        { color: #141210; }

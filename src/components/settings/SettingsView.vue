@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, onActivated, watch, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -276,6 +276,10 @@ onMounted(() => {
     syncAboutPairHeights();
   });
   window.addEventListener("resize", syncAboutPairHeights);
+});
+
+onActivated(() => {
+  loadNerdDiagnostics();
 });
 
 onUnmounted(() => {
@@ -585,9 +589,6 @@ async function confirmClearCoverTorrents() {
   }
 }
 
-watch(nerdOpen, (open) => {
-  if (open) loadNerdDiagnostics();
-});
 </script>
 
 <template>
@@ -759,6 +760,140 @@ watch(nerdOpen, (open) => {
       </div>
     </div>
 
+    <!-- ── Память и данные ───────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Память и данные</div>
+        <div class="settings-card nerd-card nerd-card--stats">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">◉</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Статистика</div>
+              <div class="settings-card-status">Сколько занимает процесс и кэш на диске</div>
+            </div>
+            <button
+              type="button"
+              class="nerd-refresh-stats"
+              :disabled="nerdDiagLoading"
+              title="Обновить"
+              @click="loadNerdDiagnostics"
+            >
+              <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
+              <template v-else>↻</template>
+            </button>
+          </div>
+
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc nerd-stats-lead">
+              Ниже — фактическое использование RAM и папки данных приложения. Кэш стриминга
+              ограничен сверху; при выходе из приложения загруженные для прослушивания данные
+              обычно удаляются.
+            </p>
+
+            <p v-if="nerdDiagError" class="login-error nerd-probe-error">{{ nerdDiagError }}</p>
+
+            <div v-else-if="nerdDiagLoading && !nerdDiag" class="nerd-stats-loading">
+              <span class="spinner" />
+              <span>Считаем размеры…</span>
+            </div>
+
+            <div v-else-if="nerdDiag" class="nerd-stats-body">
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Память процесса (RSS)</span>
+                  <span class="nerd-stat-value">
+                    {{
+                      nerdDiag.residentMemoryBytes != null
+                        ? formatBytes(nerdDiag.residentMemoryBytes)
+                        : "—"
+                    }}
+                  </span>
+                </div>
+                <p class="nerd-stat-hint">Оценка «сколько оперативной памяти» занимает приложение сейчас.</p>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Папка данных (всего)</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.totalAppDataBytes) }}</span>
+                </div>
+                <p class="nerd-stat-path">{{ nerdDiag.appDataPath }}</p>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Кэш стриминга</span>
+                  <span class="nerd-stat-value">
+                    {{ formatBytes(nerdDiag.streamCacheBytes) }}
+                    <span class="nerd-stat-of">
+                      / {{ formatBytes(nerdDiag.streamCacheLimitBytes) }}
+                    </span>
+                  </span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Папка «{{ nerdDiag.streamCacheDirLabel }}»: фрагменты треков для воспроизведения.
+                  Старые раздачи могут удаляться, если кэш переполняется или давно не использовались.
+                </p>
+                <div
+                  v-if="nerdDiag.streamCacheLimitBytes > 0"
+                  class="nerd-cache-bar"
+                  :title="`${Math.min(100, Math.round((nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100))}%`"
+                >
+                  <div
+                    class="nerd-cache-bar-fill"
+                    :style="{
+                      width: `${Math.min(
+                        100,
+                        (nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100
+                      )}%`,
+                    }"
+                  />
+                </div>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Кэш обложек (торренты)</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.coverTorrentCacheBytes) }}</span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Отдельная папка «{{ nerdDiag.coverCacheDirLabel }}» для обложек из раздач.
+                </p>
+              </div>
+
+              <div class="nerd-stat-block nerd-stat-block--inline">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Торрентов в сессии стриминга</span>
+                  <span class="nerd-stat-value">{{ nerdDiag.streamingTorrentCount }}</span>
+                </div>
+              </div>
+
+              <div class="nerd-policy-box">
+                <div class="nerd-policy-title">Как настроен кэш</div>
+                <ul class="nerd-policy-list">
+                  <li>
+                    Текущий лимит папки стриминга:
+                    <strong>{{ formatBytes(nerdDiag.streamCacheLimitBytes) }}</strong>
+                    — при превышении вытесняются старые неактивные раздачи (лимиты — в «Параметры для задротов» → «Кэш на диске»).
+                  </li>
+                  <li>
+                    Неиспользуемые торренты старше
+                    <strong>{{ formatTtlHuman(nerdDiag.streamCacheTtlSecs) }}</strong>
+                    могут быть удалены (пока приложение запущено или при следующем старте).
+                  </li>
+                  <li>
+                    Запись на диск буферизуется примерно
+                    <strong>{{ nerdDiag.deferWritesMb }} МиБ</strong>
+                    — меньше мелких обращений к диску во время прослушивания.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <p v-else class="nerd-stat-hint">Нажми ↻ чтобы обновить.</p>
+          </div>
+        </div>
+    </div>
+
     <!-- ── Параметры для задротов ─────────────────────────────── -->
     <div class="settings-section">
       <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
@@ -772,6 +907,87 @@ watch(nerdOpen, (open) => {
       </button>
 
       <div v-if="nerdOpen" class="nerd-stack">
+        <div class="settings-card nerd-card nerd-card--cache">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">⏱</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Кэш на диске</div>
+              <div class="settings-card-status">Лимиты и ручная очистка</div>
+            </div>
+          </div>
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Стриминг хранит фрагменты треков в папке данных; обложки из торрентов — отдельно.
+              Можно задать максимальный размер и «возраст» неиспользуемых данных, а также
+              освободить место вручную.
+            </p>
+
+            <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
+
+            <div class="nerd-cache-fields">
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
+                <input
+                  v-model.number="cacheFormMaxMib"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="50"
+                  max="8192"
+                  step="10"
+                />
+                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
+              </label>
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
+                <input
+                  v-model.number="cacheFormTtlMinutes"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="5"
+                  max="20160"
+                  step="5"
+                />
+                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
+              </label>
+            </div>
+
+            <div class="nerd-cache-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="cacheSaveBusy || cacheClearBusy"
+                @click="saveCacheSettings"
+              >
+                <span v-if="cacheSaveBusy" class="spinner" />
+                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
+              </button>
+            </div>
+
+            <div class="nerd-cache-divider" />
+
+            <p class="nerd-cache-clear-intro">Очистка сразу удаляет файлы с диска.</p>
+            <div class="nerd-cache-clear-row">
+              <button
+                type="button"
+                class="nerd-btn-danger"
+                :disabled="cacheClearBusy || cacheSaveBusy"
+                @click="confirmClearStreaming"
+              >
+                <span v-if="cacheClearBusy" class="spinner" />
+                <template v-else>Очистить кэш стриминга</template>
+              </button>
+              <button
+                type="button"
+                class="nerd-btn-danger nerd-btn-danger--ghost"
+                :disabled="cacheClearBusy || cacheSaveBusy"
+                @click="confirmClearCoverTorrents"
+              >
+                Очистить кэш обложек (торренты)
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
             <div class="settings-card-icon settings-card-icon--app">🪞</div>
@@ -955,217 +1171,6 @@ watch(nerdOpen, (open) => {
             >
               Открыть журнал
             </button>
-          </div>
-        </div>
-
-        <div class="settings-card nerd-card nerd-card--cache">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">⏱</div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Кэш на диске</div>
-              <div class="settings-card-status">Лимиты и ручная очистка</div>
-            </div>
-          </div>
-          <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc">
-              Стриминг хранит фрагменты треков в папке данных; обложки из торрентов — отдельно.
-              Можно задать максимальный размер и «возраст» неиспользуемых данных, а также
-              освободить место вручную.
-            </p>
-
-            <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
-
-            <div class="nerd-cache-fields">
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
-                <input
-                  v-model.number="cacheFormMaxMib"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="50"
-                  max="8192"
-                  step="10"
-                />
-                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
-              </label>
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
-                <input
-                  v-model.number="cacheFormTtlMinutes"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="5"
-                  max="20160"
-                  step="5"
-                />
-                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
-              </label>
-            </div>
-
-            <div class="nerd-cache-actions">
-              <button
-                type="button"
-                class="login-btn nerd-save-btn"
-                :disabled="cacheSaveBusy || cacheClearBusy"
-                @click="saveCacheSettings"
-              >
-                <span v-if="cacheSaveBusy" class="spinner" />
-                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
-              </button>
-            </div>
-
-            <div class="nerd-cache-divider" />
-
-            <p class="nerd-cache-clear-intro">Очистка сразу удаляет файлы с диска.</p>
-            <div class="nerd-cache-clear-row">
-              <button
-                type="button"
-                class="nerd-btn-danger"
-                :disabled="cacheClearBusy || cacheSaveBusy"
-                @click="confirmClearStreaming"
-              >
-                <span v-if="cacheClearBusy" class="spinner" />
-                <template v-else>Очистить кэш стриминга</template>
-              </button>
-              <button
-                type="button"
-                class="nerd-btn-danger nerd-btn-danger--ghost"
-                :disabled="cacheClearBusy || cacheSaveBusy"
-                @click="confirmClearCoverTorrents"
-              >
-                Очистить кэш обложек (торренты)
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="settings-card nerd-card nerd-card--stats">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">◉</div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Память и данные</div>
-              <div class="settings-card-status">Сколько занимает процесс и кэш на диске</div>
-            </div>
-            <button
-              type="button"
-              class="nerd-refresh-stats"
-              :disabled="nerdDiagLoading"
-              title="Обновить"
-              @click="loadNerdDiagnostics"
-            >
-              <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
-              <template v-else>↻</template>
-            </button>
-          </div>
-
-          <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc nerd-stats-lead">
-              Ниже — фактическое использование RAM и папки данных приложения. Кэш стриминга
-              ограничен сверху; при выходе из приложения загруженные для прослушивания данные
-              обычно удаляются.
-            </p>
-
-            <p v-if="nerdDiagError" class="login-error nerd-probe-error">{{ nerdDiagError }}</p>
-
-            <div v-else-if="nerdDiagLoading && !nerdDiag" class="nerd-stats-loading">
-              <span class="spinner" />
-              <span>Считаем размеры…</span>
-            </div>
-
-            <div v-else-if="nerdDiag" class="nerd-stats-body">
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Память процесса (RSS)</span>
-                  <span class="nerd-stat-value">
-                    {{
-                      nerdDiag.residentMemoryBytes != null
-                        ? formatBytes(nerdDiag.residentMemoryBytes)
-                        : "—"
-                    }}
-                  </span>
-                </div>
-                <p class="nerd-stat-hint">Оценка «сколько оперативной памяти» занимает приложение сейчас.</p>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Папка данных (всего)</span>
-                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.totalAppDataBytes) }}</span>
-                </div>
-                <p class="nerd-stat-path">{{ nerdDiag.appDataPath }}</p>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Кэш стриминга</span>
-                  <span class="nerd-stat-value">
-                    {{ formatBytes(nerdDiag.streamCacheBytes) }}
-                    <span class="nerd-stat-of">
-                      / {{ formatBytes(nerdDiag.streamCacheLimitBytes) }}
-                    </span>
-                  </span>
-                </div>
-                <p class="nerd-stat-hint">
-                  Папка «{{ nerdDiag.streamCacheDirLabel }}»: фрагменты треков для воспроизведения.
-                  Старые раздачи могут удаляться, если кэш переполняется или давно не использовались.
-                </p>
-                <div
-                  v-if="nerdDiag.streamCacheLimitBytes > 0"
-                  class="nerd-cache-bar"
-                  :title="`${Math.min(100, Math.round((nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100))}%`"
-                >
-                  <div
-                    class="nerd-cache-bar-fill"
-                    :style="{
-                      width: `${Math.min(
-                        100,
-                        (nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100
-                      )}%`,
-                    }"
-                  />
-                </div>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Кэш обложек (торренты)</span>
-                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.coverTorrentCacheBytes) }}</span>
-                </div>
-                <p class="nerd-stat-hint">
-                  Отдельная папка «{{ nerdDiag.coverCacheDirLabel }}» для обложек из раздач.
-                </p>
-              </div>
-
-              <div class="nerd-stat-block nerd-stat-block--inline">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Торрентов в сессии стриминга</span>
-                  <span class="nerd-stat-value">{{ nerdDiag.streamingTorrentCount }}</span>
-                </div>
-              </div>
-
-              <div class="nerd-policy-box">
-                <div class="nerd-policy-title">Как настроен кэш</div>
-                <ul class="nerd-policy-list">
-                  <li>
-                    Текущий лимит папки стриминга:
-                    <strong>{{ formatBytes(nerdDiag.streamCacheLimitBytes) }}</strong>
-                    — при превышении вытесняются старые неактивные раздачи (настраивается в блоке выше).
-                  </li>
-                  <li>
-                    Неиспользуемые торренты старше
-                    <strong>{{ formatTtlHuman(nerdDiag.streamCacheTtlSecs) }}</strong>
-                    могут быть удалены (пока приложение запущено или при следующем старте).
-                  </li>
-                  <li>
-                    Запись на диск буферизуется примерно
-                    <strong>{{ nerdDiag.deferWritesMb }} МиБ</strong>
-                    — меньше мелких обращений к диску во время прослушивания.
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <p v-else class="nerd-stat-hint">Нажми ↻ чтобы обновить.</p>
           </div>
         </div>
 
