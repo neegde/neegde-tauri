@@ -4,7 +4,7 @@
 
 Поиск через Rutracker. Стриминг через [vozduxan](https://github.com/neegde/vozduxan).
 
-<p align="center"><video src="images/demo.mp4" controls playsinline width="1280"></video></p>
+<p align="center"><video src="images/demo.mp4" controls playsinline width="720"></video></p>
 
 ---
 
