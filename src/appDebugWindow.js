@@ -11,9 +11,13 @@ export const APP_DEBUG_WINDOW_LABEL = "app-debug";
 export async function openAppDebugWindow() {
   const existing = await WebviewWindow.getByLabel(APP_DEBUG_WINDOW_LABEL);
   if (existing) {
-    await existing.show();
-    await existing.setFocus();
-    return existing;
+    try {
+      await existing.show();
+      await existing.setFocus();
+      return existing;
+    } catch {
+      // Window was closed/destroyed — fall through and create a new one
+    }
   }
   const win = new WebviewWindow(APP_DEBUG_WINDOW_LABEL, {
     url: "index.html#/app-debug",
