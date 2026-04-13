@@ -66,6 +66,30 @@ jobs:
           }
           "BOOST_ROOT=$($d.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Install OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install openssl -y --no-progress
+          $roots = @(
+            'C:\Program Files\OpenSSL-Win64',
+            'C:\Program Files\OpenSSL',
+            'C:\OpenSSL-Win64'
+          )
+          $found = $false
+          foreach ($r in $roots) {
+            if (Test-Path (Join-Path $r 'lib\libssl.lib')) {
+              "OPENSSL_ROOT_DIR=$r" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              Write-Host "OPENSSL_ROOT_DIR=$r"
+              $found = $true
+              break
+            }
+          }
+          if (-not $found) {
+            Write-Error 'libssl.lib not found after choco install openssl'
+            exit 1
+          }
+
       - name: Install npm dependencies
         run: npm ci
 

@@ -103,6 +103,9 @@ fn link_libtorrent_fallback() {
         println!("cargo:rustc-link-lib=static=torrent-rasterbar");
         println!("cargo:rustc-link-lib=dylib=ws2_32");
         println!("cargo:rustc-link-lib=dylib=iphlpapi");
+        // FetchContent-built libtorrent links OpenSSL (HTTPS trackers, crypto, SSL sockets).
+        // The static .lib does not carry OpenSSL — rustc must link libssl/libcrypto explicitly.
+        link_openssl_libs_windows_msvc();
     }
 }
 
@@ -135,6 +138,81 @@ fn link_homebrew_openssl_libs_macos() {
             return;
         }
     }
+}
+
+/// Emits Cargo link instructions for OpenSSL import/static libs on Windows MSVC.
+///
+/// Same idea as rust-openssl / openssl-sys: lib names `libssl` and `libcrypto`, search
+/// `OPENSSL_ROOT_DIR\\lib`, vcpkg, or Chocolatey's OpenSSL-Win64 layout.
+#[cfg(target_os = "windows")]
+fn link_openssl_libs_windows_msvc() {
+    use std::path::{Path, PathBuf};
+
+    for key in [
+        "OPENSSL_ROOT_DIR",
+        "OPENSSL_DIR",
+        "OPENSSL_LIB_DIR",
+    ] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(v) = std::env::var("OPENSSL_LIB_DIR") {
+        candidates.push(PathBuf::from(v));
+    }
+    for root_key in ["OPENSSL_ROOT_DIR", "OPENSSL_DIR"] {
+        if let Ok(v) = std::env::var(root_key) {
+            candidates.push(Path::new(&v).join("lib"));
+        }
+    }
+    if let Ok(vcpkg) = std::env::var("VCPKG_ROOT") {
+        let v = Path::new(&vcpkg);
+        candidates.push(v.join("installed/x64-windows/lib"));
+        candidates.push(v.join("installed/x64-windows-static/lib"));
+    }
+    candidates.push(r"C:\Program Files\OpenSSL-Win64\lib".into());
+    candidates.push(r"C:\Program Files (x86)\OpenSSL-Win64\lib".into());
+
+    fn ssl_lib_dir(dir: &Path) -> bool {
+        dir.join("libssl.lib").exists() && dir.join("libcrypto.lib").exists()
+    }
+
+    for dir in candidates {
+        if ssl_lib_dir(&dir) {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+            // openssl-sys: MSVC uses these names (libssl.lib / libcrypto.lib).
+            let bin_dir = dir.parent().map(|p| p.join("bin"));
+            let use_dll = bin_dir
+                .as_ref()
+                .map(|b| {
+                    b.join("libssl-3-x64.dll").exists()
+                        || b.join("libssl-1_1-x64.dll").exists()
+                        || std::fs::read_dir(b).map_or(false, |rd| {
+                            rd.flatten().any(|e| {
+                                let n = e.file_name();
+                                let n = n.to_string_lossy();
+                                n.starts_with("libssl-") && n.ends_with(".dll")
+                            })
+                        })
+                })
+                .unwrap_or(false);
+            let kind = if use_dll { "dylib" } else { "static" };
+            println!("cargo:rustc-link-lib={kind}=libssl");
+            println!("cargo:rustc-link-lib={kind}=libcrypto");
+            println!("cargo:rustc-link-lib=dylib=crypt32");
+            println!("cargo:rustc-link-lib=dylib=advapi32");
+            println!("cargo:rustc-link-lib=dylib=user32");
+            println!("cargo:rustc-link-lib=dylib=gdi32");
+            println!("cargo:rustc-link-lib=dylib=bcrypt");
+            return;
+        }
+    }
+
+    panic!(
+        "[vozduxan] Windows: libssl.lib / libcrypto.lib not found. Install OpenSSL (e.g. Chocolatey: \
+         `choco install openssl -y`) and set OPENSSL_ROOT_DIR to the install root, e.g. \
+         C:\\\\Program Files\\\\OpenSSL-Win64"
+    );
 }
 
 fn link_cxx_stdlib() {
