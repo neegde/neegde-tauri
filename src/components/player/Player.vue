@@ -84,6 +84,10 @@ const currentArtist = computed(() =>
   ""
 );
 
+const displayTitle = computed(
+  () => enrichedMeta.value?.title || trackDisplayBasename(props.track?.fileName ?? "")
+);
+
 function onArtistClick() {
   const a = currentArtist.value;
   if (a) emit("search-artist", a);
@@ -1082,6 +1086,101 @@ function onDocClick() {
 
 const queueLen = computed(() => props.playbackQueue?.length ?? 0);
 
+const playerTrackInfoRef = ref(null);
+const titleMarqueeWrapRef = ref(null);
+const artistMarqueeWrapRef = ref(null);
+const titleScroll = ref(false);
+const artistScroll = ref(false);
+const titleMarqueeStyle = ref({});
+const artistMarqueeStyle = ref({});
+
+const marqueeResizeObserver =
+  typeof ResizeObserver !== "undefined"
+    ? new ResizeObserver(() => {
+        void nextTick(() => {
+          measureTitleMarquee();
+          measureArtistMarquee();
+        });
+      })
+    : null;
+
+/**
+ * Enables horizontal marquee when the title is wider than the player strip.
+ */
+function measureTitleMarquee() {
+  const wrap = titleMarqueeWrapRef.value;
+  if (!wrap) return;
+  const first = wrap.querySelector(".player-marquee-chunk");
+  if (!first) return;
+  const overflow = first.scrollWidth > wrap.clientWidth + 1;
+  if (overflow !== titleScroll.value) {
+    titleScroll.value = overflow;
+    void nextTick(() => measureTitleMarquee());
+    return;
+  }
+  if (overflow) {
+    const w = first.scrollWidth;
+    const sec = Math.max(8, Math.min(48, w / 28));
+    titleMarqueeStyle.value = { "--marquee-duration": `${sec}s` };
+  } else {
+    titleMarqueeStyle.value = {};
+  }
+}
+
+/**
+ * Enables horizontal marquee when the artist line overflows.
+ */
+function measureArtistMarquee() {
+  const wrap = artistMarqueeWrapRef.value;
+  if (!wrap) return;
+  const first = wrap.querySelector(".player-marquee-chunk");
+  if (!first) return;
+  const overflow = first.scrollWidth > wrap.clientWidth + 1;
+  if (overflow !== artistScroll.value) {
+    artistScroll.value = overflow;
+    void nextTick(() => measureArtistMarquee());
+    return;
+  }
+  if (overflow) {
+    const w = first.scrollWidth;
+    const sec = Math.max(8, Math.min(48, w / 28));
+    artistMarqueeStyle.value = { "--marquee-duration": `${sec}s` };
+  } else {
+    artistMarqueeStyle.value = {};
+  }
+}
+
+watch(
+  () => [displayTitle.value, props.track?.fileName],
+  () => {
+    titleScroll.value = false;
+    void nextTick(() => measureTitleMarquee());
+  }
+);
+
+watch(currentArtist, () => {
+  artistScroll.value = false;
+  void nextTick(() => measureArtistMarquee());
+});
+
+watch(hasTrack, (v) => {
+  if (v) void nextTick(() => {
+    measureTitleMarquee();
+    measureArtistMarquee();
+  });
+});
+
+watchEffect((onCleanup) => {
+  const el = playerTrackInfoRef.value;
+  const ro = marqueeResizeObserver;
+  if (el && ro) {
+    ro.observe(el);
+    onCleanup(() => {
+      ro.unobserve(el);
+    });
+  }
+});
+
 const repeatCycleTitle = computed(() => {
   if (props.repeatMode === "all") return "Повтор: вся очередь";
   if (props.repeatMode === "one") return "Повтор: один трек";
@@ -1122,6 +1221,7 @@ onMounted(async () => {
   }
 });
 onUnmounted(() => {
+  marqueeResizeObserver?.disconnect();
   if (prefetchedStream.value.url) {
     void releaseTorrentStreamUrl(prefetchedStream.value.url);
     prefetchedStream.value = { url: "", forKey: "" };
@@ -1151,20 +1251,48 @@ onUnmounted(() => {
           :radius="4"
           fallback="♪"
         />
-        <div class="player-track-info">
+        <div ref="playerTrackInfoRef" class="player-track-info">
           <button
             type="button"
             class="player-name player-name--link"
             :title="`Открыть альбом`"
             @click="onTrackClick"
-          >{{ enrichedMeta?.title || trackDisplayBasename(track.fileName) }}</button>
+          >
+            <span ref="titleMarqueeWrapRef" class="player-marquee">
+              <span
+                class="player-marquee-track"
+                :class="{ 'player-marquee-track--active': titleScroll }"
+                :style="titleMarqueeStyle"
+              >
+                <span class="player-marquee-chunk">{{ displayTitle }}</span><span
+                  v-if="titleScroll"
+                  class="player-marquee-chunk"
+                  aria-hidden="true"
+                >{{ displayTitle }}</span>
+              </span>
+            </span>
+          </button>
           <button
             v-if="currentArtist"
             type="button"
             class="player-artist player-artist--link"
             :title="`Найти: ${currentArtist}`"
             @click="onArtistClick"
-          >{{ currentArtist }}</button>
+          >
+            <span ref="artistMarqueeWrapRef" class="player-marquee">
+              <span
+                class="player-marquee-track"
+                :class="{ 'player-marquee-track--active': artistScroll }"
+                :style="artistMarqueeStyle"
+              >
+                <span class="player-marquee-chunk">{{ currentArtist }}</span><span
+                  v-if="artistScroll"
+                  class="player-marquee-chunk"
+                  aria-hidden="true"
+                >{{ currentArtist }}</span>
+              </span>
+            </span>
+          </button>
           <span v-else class="player-artist" />
         </div>
         <button
@@ -1898,15 +2026,69 @@ onUnmounted(() => {
   outline-offset: 2px;
 }
 
+.player-marquee {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.player-marquee-track {
+  display: inline-flex;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.player-marquee-chunk {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.player-marquee-track--active {
+  animation: player-marquee-scroll var(--marquee-duration, 14s) linear infinite;
+}
+
+.player-marquee:hover .player-marquee-track--active {
+  animation-play-state: paused;
+}
+
+@keyframes player-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-marquee-track--active {
+    animation: none !important;
+  }
+  .player-marquee-chunk {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .player-marquee-track {
+    max-width: 100%;
+  }
+}
+
 .player-name--link {
   all: unset;
+  box-sizing: border-box;
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  white-space: nowrap;
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
   display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   transition: color 0.12s;
 }
 .player-name--link:hover {
@@ -1921,7 +2103,16 @@ onUnmounted(() => {
 }
 .player-artist--link {
   all: unset;
+  box-sizing: border-box;
   cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: normal;
+  overflow: hidden;
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   transition: color 0.12s;
 }
 .player-artist--link:hover {
