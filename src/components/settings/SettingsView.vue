@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -36,6 +36,7 @@ import {
   normalizeVersionTag,
 } from "../../githubReleaseCheck.js";
 import appIconSrc from "../../assets/neegde-logo.png";
+import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -70,6 +71,40 @@ const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
 const releaseCheckState = ref(githubReleaseApiUrl ? "loading" : "idle");
 const releaseRemoteTag = ref(null);
 const releasePageUrl = ref(null);
+
+const aboutStackEl = ref(null);
+const aboutAppCardEl = ref(null);
+const aboutVozCardEl = ref(null);
+let aboutPairResizeObserver = null;
+
+/**
+ * Sets both «About» cards to the same height (the taller natural height).
+ *
+ * @returns {void}
+ */
+function syncAboutPairHeights() {
+  const a = aboutAppCardEl.value;
+  const b = aboutVozCardEl.value;
+  const stack = aboutStackEl.value;
+  if (!a || !b) return;
+  if (aboutPairResizeObserver) {
+    aboutPairResizeObserver.disconnect();
+  }
+  a.style.minHeight = "";
+  b.style.minHeight = "";
+  const ha = a.getBoundingClientRect().height;
+  const hb = b.getBoundingClientRect().height;
+  const h = Math.max(ha, hb);
+  if (h > 0) {
+    a.style.minHeight = `${h}px`;
+    b.style.minHeight = `${h}px`;
+  }
+  requestAnimationFrame(() => {
+    if (aboutPairResizeObserver && stack) {
+      aboutPairResizeObserver.observe(stack);
+    }
+  });
+}
 
 /**
  * Fetches the latest GitHub release and compares it to `appVersion`.
@@ -234,6 +269,25 @@ onMounted(() => {
     })
     .catch(() => {});
   if (githubReleaseApiUrl) runReleaseCheck();
+  nextTick(() => {
+    aboutPairResizeObserver = new ResizeObserver(() => {
+      syncAboutPairHeights();
+    });
+    syncAboutPairHeights();
+  });
+  window.addEventListener("resize", syncAboutPairHeights);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("resize", syncAboutPairHeights);
+  if (aboutPairResizeObserver) {
+    aboutPairResizeObserver.disconnect();
+    aboutPairResizeObserver = null;
+  }
+});
+
+watch(releaseCheckState, () => {
+  nextTick(() => syncAboutPairHeights());
 });
 
 watch(mirrorMode, (v) => {
@@ -1110,19 +1164,20 @@ watch(nerdOpen, (open) => {
     <div class="settings-section">
       <div class="settings-section-label">О приложении</div>
 
-      <div class="settings-card">
-        <div class="settings-card-header settings-card-header--about">
-          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
-            <img
-              class="settings-about-logo-img"
-              :src="appIconSrc"
-              alt="Нигде"
-              width="42"
-              height="42"
-            />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Нигде</div>
+      <div ref="aboutStackEl" class="settings-about-stack">
+        <div ref="aboutAppCardEl" class="settings-card settings-about-stack__app">
+          <div class="settings-card-header settings-card-header--about">
+            <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
+              <img
+                class="settings-about-logo-img"
+                :src="appIconSrc"
+                alt="Нигде"
+                width="72"
+                height="72"
+              />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Нигде</div>
             <div class="settings-card-status">Версия {{ appVersion }} · Tauri + Vue 3</div>
             <div
               v-if="githubProjectUrl || telegramChannelUrl"
@@ -1191,21 +1246,34 @@ watch(nerdOpen, (open) => {
             </div>
           </div>
         </div>
-      </div>
+        </div>
 
-      <!-- vozduxan -->
-      <div class="settings-card settings-card--vozduxan">
-        <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-            </svg>
+        <div class="settings-about-connector" aria-hidden="true">
+          <span class="settings-about-connector__rail" />
+          <span class="settings-about-connector__pulse" />
+          <span class="settings-about-connector__pulse settings-about-connector__pulse--echo" />
+        </div>
+
+        <!-- vozduxan -->
+        <div ref="aboutVozCardEl" class="settings-card settings-card--vozduxan">
+        <div class="settings-card-header settings-card-header--about">
+          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo settings-card-icon--vozduxan-logo">
+            <img
+              class="settings-about-logo-img settings-about-vozduxan-img"
+              :src="vozduxanLogoSrc"
+              alt=""
+              width="72"
+              height="72"
+            />
           </div>
           <div class="settings-card-info">
-            <div class="settings-card-name">
-              vozduxan<template v-if="vozduxanVersion"> <span class="settings-about-dep-version">v{{ vozduxanVersion }}</span></template>
+            <div class="settings-card-name settings-card-name--with-dep">
+              <span>vozduxan</span>
+              <template v-if="vozduxanVersion">
+                <span class="settings-about-dep-version">v{{ vozduxanVersion }}</span>
+              </template>
             </div>
-            <div class="settings-card-status">Движок BitTorrent-стриминга (C++ / libtorrent)</div>
+            <div class="settings-card-status">Стриминг аудио из торрент-роёв в реальном времени · C++ · libtorrent</div>
             <div class="settings-about-links">
               <a
                 class="settings-about-link"
@@ -1215,6 +1283,7 @@ watch(nerdOpen, (open) => {
               >GitHub</a>
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>
@@ -1654,6 +1723,16 @@ watch(nerdOpen, (open) => {
 .settings-card-header--about {
   align-items: flex-start;
 }
+.settings-about-stack {
+  --about-icon-size: 72px;
+  --about-connector-x: calc(20px + var(--about-icon-size) / 2);
+}
+.settings-about-stack > .settings-card > .settings-card-header > .settings-card-icon:first-child {
+  width: var(--about-icon-size);
+  min-width: var(--about-icon-size);
+  height: var(--about-icon-size);
+  flex-shrink: 0;
+}
 .settings-card-icon--about-logo {
   padding: 0;
   overflow: hidden;
@@ -1664,6 +1743,15 @@ watch(nerdOpen, (open) => {
   object-fit: cover;
   display: block;
   border-radius: inherit;
+}
+.settings-card-icon.settings-card-icon--vozduxan-logo {
+  border-radius: 14px;
+  background: transparent;
+}
+.settings-about-vozduxan-img {
+  object-fit: contain;
+  padding: 5px;
+  box-sizing: border-box;
 }
 .settings-about-links {
   display: flex;
@@ -1687,12 +1775,129 @@ watch(nerdOpen, (open) => {
 .settings-about-link:hover {
   color: var(--text);
 }
-.settings-card--vozduxan {
-  margin-top: 8px;
+.settings-about-stack > .settings-about-stack__app.settings-card {
+  margin-bottom: 0;
+}
+.settings-about-stack .settings-card--vozduxan {
+  margin-top: 0;
+}
+.settings-about-connector {
+  position: relative;
+  height: 32px;
+  margin: 0;
+  pointer-events: none;
+}
+.settings-about-connector__rail {
+  position: absolute;
+  left: var(--about-connector-x);
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--accent-rgb), 0.38) 0%,
+    rgba(var(--accent-rgb), 0.26) 55%,
+    rgba(var(--accent-rgb), 0.12) 100%
+  );
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.12);
+}
+.settings-about-connector__pulse {
+  position: absolute;
+  left: var(--about-connector-x);
+  top: 0;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(255, 255, 255, 0.45),
+    var(--accent) 55%,
+    rgba(var(--accent-rgb), 0.35) 100%
+  );
+  box-shadow:
+    0 0 10px rgba(var(--accent-rgb), 0.65),
+    0 0 18px rgba(var(--accent-rgb), 0.35);
+  animation: settings-about-pulse-move 2.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.settings-about-connector__pulse::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  opacity: 0.55;
+  animation: settings-about-pulse-ring 2.6s ease-in-out infinite;
+}
+.settings-about-connector__pulse--echo {
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  opacity: 0.55;
+  box-shadow:
+    0 0 8px rgba(var(--accent-rgb), 0.45),
+    0 0 14px rgba(var(--accent-rgb), 0.22);
+  animation-delay: 1.3s;
+}
+.settings-about-connector__pulse--echo::after {
+  display: none;
+}
+@keyframes settings-about-pulse-move {
+  0% {
+    transform: translateY(21px) scale(0.88);
+    opacity: 0.45;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(5px) scale(1);
+    opacity: 0.55;
+  }
+}
+@keyframes settings-about-pulse-ring {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.2;
+  }
+  45% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-about-connector__pulse,
+  .settings-about-connector__pulse::after {
+    animation: none;
+  }
+  .settings-about-connector__pulse {
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.65;
+  }
+  .settings-about-connector__pulse::after {
+    display: none;
+  }
+  .settings-about-connector__pulse--echo {
+    display: none;
+  }
+}
+.settings-card-name--with-dep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.4em;
 }
 .settings-about-dep-version {
   font-size: 12px;
   font-weight: 400;
+  line-height: 1.2;
   color: var(--muted);
   letter-spacing: 0.01em;
 }
