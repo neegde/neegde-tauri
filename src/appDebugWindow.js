@@ -11,14 +11,17 @@ export const APP_DEBUG_WINDOW_LABEL = "app-debug";
 export async function openAppDebugWindow() {
   const existing = await WebviewWindow.getByLabel(APP_DEBUG_WINDOW_LABEL);
   if (existing) {
-    try {
-      await existing.show();
-      await existing.setFocus();
+    // Check if the window is actually alive
+    const visible = await existing.isVisible().catch(() => null);
+    if (visible) {
+      await existing.setFocus().catch(() => {});
       return existing;
-    } catch {
-      // Window was closed/destroyed — fall through and create a new one
     }
+    // Window is dead/closed but the label is still registered — destroy it
+    // so Tauri frees the label before we create a new window with the same label.
+    await existing.destroy().catch(() => {});
   }
+
   const win = new WebviewWindow(APP_DEBUG_WINDOW_LABEL, {
     url: "index.html#/app-debug",
     title: "Журнал отладки",
