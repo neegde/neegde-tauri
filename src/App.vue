@@ -38,7 +38,9 @@ import Player       from "./components/player/Player.vue";
 import NavArrows       from "./components/shell/NavArrows.vue";
 import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
+import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
+import { loadRecentHistory, addToRecentHistory } from "./lib/recentHistory.js";
 
 // ── Search result LRU cache ───────────────────────────────────────────────────
 const _searchCache = new Map(); // normalized query → results[]
@@ -209,8 +211,11 @@ const rtLoggedIn  = ref(false);
 const rtUsername  = ref(null);
 const rtAvatarUrl = ref(null);
 // ── View ──────────────────────────────────────────────────────────────────────
-const view       = ref("search");  // "search" | "likes" | "settings"
+const view       = ref("home");  // "home" | "search" | "likes" | "settings"
 const returnView = ref("search");
+
+// ── Recent History ────────────────────────────────────────────────────────────
+const recentHistory = ref(loadRecentHistory());
 
 /** Журнал отладки: UI, плеер, торренты — только в отдельном окне (настройки → чекбокс). */
 const appDebugEnabled = ref(false);
@@ -651,6 +656,14 @@ async function handleSelect(torrent) {
     // Warm .torrent file cache while user browses the track list.
     // By the time they click play it'll already be resolved → streamUrl skips the fetch.
     void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
+    // Record to recent history after a successful open.
+    recentHistory.value = addToRecentHistory({
+      id: String(torrent.id),
+      name: torrent.name ?? "",
+      source: torrent.source ?? "rutracker",
+      artist: details.artist ?? torrent.artist ?? "",
+      magnet: details.magnet ?? "",
+    });
   } catch (e) {
     console.error("handleSelect:", e);
     if (appDebugEnabled.value) appDebugLog("search", "openError", { id: torrent.id, err: String(e) });
@@ -1062,6 +1075,19 @@ function handlePrev() {
   queuePos.value = Math.max(0, queuePos.value - 1);
 }
 
+function handleOpenRecent(item) {
+  view.value = "search";
+  void handleSelect({
+    id: item.id,
+    name: item.name,
+    source: item.source ?? "rutracker",
+    seeders: "?",
+    size: 0,
+    category: "—",
+    added: "—",
+  });
+}
+
 function navToSearch() {
   forwardStack.value = [];
   backStack.value = [];
@@ -1245,6 +1271,22 @@ function onMouseSideButtonUp(e) {
       </header>
 
       <nav class="sidebar-nav">
+        <!-- Home -->
+        <button
+          :class="['source-btn', view === 'home' ? 'active' : '']"
+          @click="view = 'home'"
+        >
+          <span class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5z"/>
+              <polyline points="9,21 9,12 15,12 15,21"/>
+            </svg>
+          </span>
+          Главная
+        </button>
+
         <!-- Search -->
         <button
           :class="['source-btn search-nav-btn', view === 'search' ? 'active' : '']"
@@ -1339,6 +1381,19 @@ function onMouseSideButtonUp(e) {
           :resolving="loadingFiles && magnetPanelOpen"
           @submit="submitMagnetLink"
           @close="closeMagnetPanel"
+        />
+
+        <!-- Home view -->
+        <HomeView
+          v-if="view === 'home'"
+          :now-playing="nowPlaying"
+          :player-playing="playerPlaying"
+          :recent-history="recentHistory"
+          :likes="Object.values(likes)"
+          @open-recent="handleOpenRecent"
+          @open-liked-torrent="handleOpenTorrentFromLike"
+          @play-liked-album="handlePlayAlbumFromLike"
+          @go-to-search="navToSearch"
         />
 
         <!-- Likes view -->
