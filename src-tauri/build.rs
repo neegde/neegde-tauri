@@ -79,6 +79,8 @@ fn link_libtorrent_fallback() {
             }
         }
         println!("cargo:rustc-link-lib=dylib=torrent-rasterbar");
+        // FetchContent/static libtorrent links OpenSSL (ssl.cpp); rustc must see ssl/crypto too.
+        link_homebrew_openssl_libs_macos();
         println!("cargo:rustc-link-lib=framework=SystemConfiguration");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
         println!("cargo:rustc-link-lib=framework=IOKit");
@@ -101,6 +103,37 @@ fn link_libtorrent_fallback() {
         println!("cargo:rustc-link-lib=static=torrent-rasterbar");
         println!("cargo:rustc-link-lib=dylib=ws2_32");
         println!("cargo:rustc-link-lib=dylib=iphlpapi");
+    }
+}
+
+/// Emits Cargo link instructions for Apple Silicon/Intel Homebrew OpenSSL libraries.
+///
+/// FetchContent-built libtorrent links `libssl` / `libcrypto`; the final Rust link must
+/// include them when `pkg-config` is not used. Searches `opt/openssl@3` kegs then `lib/`.
+fn link_homebrew_openssl_libs_macos() {
+    let keg_libs = [
+        "/opt/homebrew/opt/openssl@3/lib",
+        "/opt/homebrew/opt/openssl/lib",
+        "/usr/local/opt/openssl@3/lib",
+        "/usr/local/opt/openssl/lib",
+    ];
+    for dir in keg_libs {
+        let p = std::path::Path::new(dir);
+        if p.join("libssl.dylib").exists() || p.join("libssl.a").exists() {
+            println!("cargo:rustc-link-search=native={}", p.display());
+            println!("cargo:rustc-link-lib=dylib=ssl");
+            println!("cargo:rustc-link-lib=dylib=crypto");
+            return;
+        }
+    }
+    for brew in &["/opt/homebrew", "/usr/local"] {
+        let lib = std::path::Path::new(*brew).join("lib");
+        if lib.join("libssl.dylib").exists() {
+            println!("cargo:rustc-link-search=native={}", lib.display());
+            println!("cargo:rustc-link-lib=dylib=ssl");
+            println!("cargo:rustc-link-lib=dylib=crypto");
+            return;
+        }
     }
 }
 
