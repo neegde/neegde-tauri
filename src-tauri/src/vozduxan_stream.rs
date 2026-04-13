@@ -580,7 +580,6 @@ pub struct StreamReady {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PrefetchNextResponse {
-    SameTorrentMerged,
     StreamReady { url: String },
 }
 
