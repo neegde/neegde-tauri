@@ -59,6 +59,8 @@ const emit = defineEmits([
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
 const appVersion = __APP_VERSION__;
+/** Версия vozduxan из `vozduxan/CMakeLists.txt`, инжектится в `vite.config.js`. */
+const vozduxanVersion = __VOZDUXAN_VERSION__;
 
 /** URL GitHub API «последний релиз»; пусто, если в `package.json` нет `repository` с GitHub. */
 const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
@@ -1190,6 +1192,31 @@ watch(nerdOpen, (open) => {
           </div>
         </div>
       </div>
+
+      <!-- vozduxan -->
+      <div class="settings-card settings-card--vozduxan">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">
+              vozduxan<template v-if="vozduxanVersion"> <span class="settings-about-dep-version">v{{ vozduxanVersion }}</span></template>
+            </div>
+            <div class="settings-card-status">Движок BitTorrent-стриминга (C++ / libtorrent)</div>
+            <div class="settings-about-links">
+              <a
+                class="settings-about-link"
+                href="https://github.com/neegde/vozduxan"
+                rel="noopener noreferrer"
+                @click.prevent="openExternalUrl('https://github.com/neegde/vozduxan')"
+              >GitHub</a>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -1659,6 +1686,15 @@ watch(nerdOpen, (open) => {
 }
 .settings-about-link:hover {
   color: var(--text);
+}
+.settings-card--vozduxan {
+  margin-top: 8px;
+}
+.settings-about-dep-version {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0.01em;
 }
 .settings-release-check {
   display: flex;
