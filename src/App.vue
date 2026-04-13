@@ -41,6 +41,7 @@ import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.
 import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory } from "./lib/recentHistory.js";
+import { loadSearchHistory, addToSearchHistory } from "./lib/searchHistory.js";
 
 // ── Search result LRU cache ───────────────────────────────────────────────────
 const _searchCache = new Map(); // normalized query → results[]
@@ -216,6 +217,9 @@ const returnView = ref("search");
 
 // ── Recent History ────────────────────────────────────────────────────────────
 const recentHistory = ref(loadRecentHistory());
+
+// ── Search History ────────────────────────────────────────────────────────────
+const searchHistory = ref(loadSearchHistory());
 
 /** Журнал отладки: UI, плеер, торренты — только в отдельном окне (настройки → чекбокс). */
 const appDebugEnabled = ref(false);
@@ -421,7 +425,13 @@ function handleLogout(evt) {
 }
 
 async function handleSearch(query) {
-  if (!query?.trim()) return;
+  if (!query?.trim()) {
+    results.value = [];
+    error.value = null;
+    selected.value = null;
+    files.value = [];
+    return;
+  }
   const q = query.trim();
   forwardStack.value = [];
   backStack.value    = [];
@@ -430,6 +440,8 @@ async function handleSearch(query) {
   files.value        = [];
   torrentCover.value = null;
   view.value         = "search";
+
+  searchHistory.value = addToSearchHistory(q);
 
   const cached = _searchCacheGet(q.toLowerCase());
   if (cached) {
@@ -1076,6 +1088,12 @@ function handlePrev() {
 }
 
 function handleOpenRecent(item) {
+  // Reset selected before calling handleSelect to avoid the deselect branch
+  // (if this torrent was already open, handleSelect would deselect it instead).
+  selected.value = null;
+  files.value = [];
+  searchQuery.value = "";
+  results.value = [];
   view.value = "search";
   void handleSelect({
     id: item.id,
@@ -1386,14 +1404,11 @@ function onMouseSideButtonUp(e) {
         <!-- Home view -->
         <HomeView
           v-if="view === 'home'"
-          :now-playing="nowPlaying"
-          :player-playing="playerPlaying"
           :recent-history="recentHistory"
-          :likes="Object.values(likes)"
+          :logged-in="rtLoggedIn"
           @open-recent="handleOpenRecent"
-          @open-liked-torrent="handleOpenTorrentFromLike"
-          @play-liked-album="handlePlayAlbumFromLike"
           @go-to-search="navToSearch"
+          @search-query="(q) => { searchQuery = q; view = 'search'; void handleSearch(q); }"
         />
 
         <!-- Likes view -->
@@ -1429,7 +1444,7 @@ function onMouseSideButtonUp(e) {
         </KeepAlive>
 
         <!-- Search view -->
-        <template v-if="view !== 'likes' && view !== 'settings'">
+        <template v-if="view !== 'likes' && view !== 'settings' && view !== 'home'">
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->
@@ -1442,6 +1457,32 @@ function onMouseSideButtonUp(e) {
                   Зайдите в <strong style="color:var(--text)">Настройки</strong> и введите логин — поиск заработает сразу.
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- Recent search queries -->
+          <div
+            v-if="!selected && !results.length && !loading && searchHistory.length"
+            class="search-history-wrap"
+          >
+            <div class="search-history-label">Недавние запросы</div>
+            <div class="search-history-pills">
+              <button
+                v-for="q in searchHistory"
+                :key="q"
+                class="search-history-pill"
+                @click="searchQuery = q; void handleSearch(q)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"
+                  style="opacity:0.5; flex-shrink:0">
+                  <polyline points="12 8 12 12 14 14"/>
+                  <path d="M3.05 11A9 9 0 1 0 4 6.1"/>
+                  <polyline points="3 3 3 7 7 7"/>
+                </svg>
+                {{ q }}
+              </button>
             </div>
           </div>
 

@@ -19,8 +19,12 @@ const cat = ref("100");
 
 function submit(e) {
   e.preventDefault();
-  const q = props.modelValue.trim();
-  if (q) emit("search", q, cat.value);
+  emit("search", props.modelValue.trim(), cat.value);
+}
+
+function clear() {
+  emit("update:modelValue", "");
+  emit("search", "", cat.value);
 }
 </script>
 
@@ -35,7 +39,21 @@ function submit(e) {
         :value="modelValue"
         @input="emit('update:modelValue', $event.target.value)"
       />
-      <button class="search-btn" type="submit" :disabled="loading || !modelValue.trim()">
+      <button
+        v-if="modelValue"
+        type="button"
+        class="search-clear-btn"
+        title="Очистить"
+        @click="clear"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+      <button class="search-btn" type="submit" :disabled="loading">
         <span v-if="loading" class="spinner" />
         <template v-else>Найти</template>
       </button>
