@@ -221,7 +221,7 @@ async function handleRtReconnect() {
   }
 }
 
-// ── Дополнительно ─────────────────────────────────────────────────────────────
+// ── Параметры для задротов ─────────────────────────────────────────────────────────────
 const nerdOpen   = ref(false);
 const mirrorMode = ref(MIRROR_MODE_MANUAL);
 const mirrorSelect = ref(KNOWN_MIRRORS[0]);
@@ -759,11 +759,11 @@ watch(nerdOpen, (open) => {
       </div>
     </div>
 
-    <!-- ── Дополнительно ─────────────────────────────── -->
+    <!-- ── Параметры для задротов ─────────────────────────────── -->
     <div class="settings-section">
       <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
         <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
-        Дополнительно
+        Параметры для задротов
         <span
           v-if="hasCustomMirror() || hasHttpProxyConfigured()"
           class="nerd-custom-dot"
@@ -1356,7 +1356,7 @@ watch(nerdOpen, (open) => {
   line-height: 1.4;
 }
 
-/* ── Дополнительно ────────────────────────────────────────────────────────── */
+/* ── Параметры для задротов ────────────────────────────────────────────────────────── */
 .nerd-toggle {
   display: flex;
   align-items: center;
