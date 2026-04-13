@@ -166,6 +166,8 @@ let bufferingWatchdogTimer = null;
 const BUFFERING_WATCHDOG_MS = 25_000;
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
+/** Matches the in-flight / active prepare — suppresses duplicate watch runs for the same track. */
+const activeStreamPrepareSig = ref("");
 
 /** Последняя статистика BitTorrent из Tauri (событие torrent-prepare-progress). */
 const prepareProgress = ref(null);
@@ -198,8 +200,10 @@ const PREFETCH_MIN_RATIO = 0.12;
  *     String key or empty when invalid.
  */
 function queueTrackKey(t) {
-  if (!t?.magnet || t.fileIdx == null) return "";
-  return `${t.magnet}\0${t.fileIdx}`;
+  if (!t?.magnet || t.fileIdx == null || t.fileIdx === "") return "";
+  const n = Number(t.fileIdx);
+  if (!Number.isFinite(n)) return "";
+  return `${t.magnet}\0${n}`;
 }
 
 /**
@@ -332,8 +336,9 @@ const streamStatusRows = computed(() => {
 });
 
 watch(
-  () => [props.track?.magnet, props.track?.fileIdx],
+  () => queueTrackKey(props.track),
   () => {
+    activeStreamPrepareSig.value = "";
     prepareAttempt.value = 0;
     prefetchOkFingerprint.value = "";
     secondPrefetchDoneFingerprint = "";
@@ -796,6 +801,11 @@ async function maybeTriggerPrefetch() {
   if (!Number.isFinite(d) || d <= 0) return;
   if (c < PREFETCH_MIN_SEC && c / d < PREFETCH_MIN_RATIO) return;
 
+  // Don't start a new prefetch if there's already a ready URL for the next track.
+  // Starting a new prefetch would call torrent_prefetch_next_track, which releases the old
+  // prefetch_token — killing the URL before prepareTrack() has a chance to use it.
+  if (prefetchedStream.value.url) return;
+
   const fp = prefetchFingerprint(props.track, props.nextTrack);
   if (!fp || fp === prefetchOkFingerprint.value) return;
   if (prefetchInFlight) return;
@@ -878,13 +888,16 @@ watch(
 
 watch(
   () => [
-    props.track?.magnet,
-    props.track?.fileIdx,
+    queueTrackKey(props.track),
     prepareAttempt.value,
     props.suppressAutoplay,
   ],
-  async ([magnet, fileIdx, , suppressed], _, onCleanup) => {
-    if (!props.track || !magnet) {
+  async ([, , suppressed], _, onCleanup) => {
+    const t = props.track;
+    const magnet = t?.magnet;
+    const fileIdx = t?.fileIdx;
+    if (!t || !magnet) {
+      activeStreamPrepareSig.value = "";
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
@@ -901,6 +914,7 @@ watch(
     }
 
     if (suppressed) {
+      activeStreamPrepareSig.value = "";
       stopBufferPoll();
       prepareProgress.value = null;
       playing.value = false;
@@ -915,6 +929,16 @@ watch(
       loadCancelledByUser.value = false;
       return;
     }
+
+    const prepareSig = `${queueTrackKey(t)}\0${prepareAttempt.value}`;
+    if (
+      prepareSig === activeStreamPrepareSig.value &&
+      streamPhase.value !== "idle" &&
+      streamPhase.value !== "error"
+    ) {
+      return;
+    }
+    activeStreamPrepareSig.value = prepareSig;
 
     loadCancelledByUser.value = false;
     prepareProgress.value = null;
@@ -951,7 +975,11 @@ watch(
         emit("hover-prefetch-consumed");
         void appDebugLog("player", "stream prepare used hover-prefetch URL", { fileIdx });
       } else {
-        nextSrc = await streamUrl(magnet, fileIdx, {
+        const fileIdxNorm =
+          fileIdx != null && fileIdx !== "" && Number.isFinite(Number(fileIdx))
+            ? Number(fileIdx)
+            : fileIdx;
+        nextSrc = await streamUrl(magnet, fileIdxNorm, {
           source: props.track?.source,
           torrentId: props.track?.torrentId,
         });
@@ -966,7 +994,12 @@ watch(
       if (!cancelled && !loadCancelledByUser.value) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
-        if (!nextSrc) {
+        if (nextSrc) {
+          // WKWebView does not fire `stalled` when the HTTP server holds the connection open
+          // but sends no data (vozduxan waiting for a piece). Start watchdog immediately so
+          // we don't spin in infinite buffering if the piece never arrives.
+          startBufferingWatchdog();
+        } else {
           console.error("[player/stream] empty URL", { magnetLen: magnet?.length, fileIdx });
           streamError.value = "Пустой URL потока";
         }
@@ -995,6 +1028,7 @@ watch(
         src.value = "";
         streamPhase.value = "error";
         prepareProgress.value = null;
+        activeStreamPrepareSig.value = "";
         const detail =
           typeof e === "string"
             ? e

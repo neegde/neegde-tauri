@@ -100,8 +100,16 @@ async function handleHoverTrack(fileIdx) {
       torrentId: selected.value?.id,
     });
     if (url) {
-      hoverPrefetchUrl.value = url;
-      hoverPrefetchKey.value = key;
+      // By the time hover-prepare completes (can take several seconds), nowPlaying may have
+      // changed to a different track from the same torrent. Storing a hover_token for the
+      // same torrent as the active stream can cause vozduxan to disrupt the current stream.
+      const np = nowPlaying.value;
+      if (np && np.magnet === magnet && `${np.magnet}\0${np.fileIdx}` !== key) {
+        void hoverReleaseTorrentStreamUrl(url);
+      } else {
+        hoverPrefetchUrl.value = url;
+        hoverPrefetchKey.value = key;
+      }
     }
   } catch {
     // Silently ignore hover-prefetch errors
@@ -626,9 +634,6 @@ async function handleSelect(torrent) {
   files.value         = [];
   torrentMagnet.value = "";
   torrentCover.value  = null;
-  queue.value         = [];
-  queuePos.value      = 0;
-  suppressAutoplayAfterSessionRestore.value = false;
   loadingFiles.value  = true;
   try {
     const details = await getTorrentDetails(torrent.id);
@@ -741,10 +746,11 @@ function handleToggleLike(like) {
 /** Предпросмотр одного альбома из галереи — как handleOpenTorrentFromLike для type === "album". */
 function handleOpenAlbumPreview({ album, displayName }) {
   if (!selected.value || !album?.audioFiles?.length) return;
-  if (torrentFilesBeforeAlbumPreview.value) return;
 
-  torrentFilesBeforeAlbumPreview.value = files.value;
-  torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
+  if (!torrentFilesBeforeAlbumPreview.value) {
+    torrentFilesBeforeAlbumPreview.value = files.value;
+    torrentSelectedBeforeAlbumPreview.value = { ...selected.value };
+  }
 
   const list = album.coverFile
     ? [...album.audioFiles, album.coverFile]
