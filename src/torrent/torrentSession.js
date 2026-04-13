@@ -58,7 +58,7 @@ export function hoverActivateTorrentStreamUrl(url) {
  * @param {string} url  URL потока вида http://127.0.0.1:PORT/stream/TOKEN
  * @param {number} byteOffset  Текущая позиция в байтах
  */
-export function blizNotifyPosition(url, byteOffset) {
+export function vozduxanNotifyPosition(url, byteOffset) {
   if (!url || typeof url !== "string") return Promise.resolve();
   const marker = "/stream/";
   const i = url.indexOf(marker);
@@ -66,7 +66,7 @@ export function blizNotifyPosition(url, byteOffset) {
   const rest = url.slice(i + marker.length);
   const token = rest.split(/[/?#]/)[0];
   if (!token) return Promise.resolve();
-  return invoke("bliz_notify_position", {
+  return invoke("vozduxan_notify_position", {
     token,
     byteOffset: Math.floor(byteOffset),
   }).catch(() => {});

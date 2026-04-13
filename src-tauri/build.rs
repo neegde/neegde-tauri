@@ -1,24 +1,24 @@
 fn main() {
     tauri_build::build();
-    build_blizorukost();
+    build_vozduxan();
 }
 
-fn build_blizorukost() {
+fn build_vozduxan() {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // src-tauri/ → repo root / blizorukost/ (git submodule)
-    let bliz_dir = manifest_dir.parent().unwrap().join("blizorukost");
+    // src-tauri/ → repo root / vozduxan/ (git submodule)
+    let vozduxan_dir = manifest_dir.parent().unwrap().join("vozduxan");
 
-    if !bliz_dir.exists() {
+    if !vozduxan_dir.exists() {
         panic!(
-            "[blizorukost] source directory not found: {}",
-            bliz_dir.display()
+            "[vozduxan] source directory not found: {}",
+            vozduxan_dir.display()
         );
     }
 
     // cmake::Config builds the project and installs it to a temp prefix.
-    // The built static library lands at <dst>/lib/libblizorukost.a (POSIX) or
-    // <dst>/lib/blizorukost.lib (Windows).
-    let dst = cmake::Config::new(&bliz_dir)
+    // The built static library lands at <dst>/lib/libvozduxan.a (POSIX) or
+    // <dst>/lib/vozduxan.lib (Windows).
+    let dst = cmake::Config::new(&vozduxan_dir)
         .define("CMAKE_BUILD_TYPE", "Release")
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         // Suppress noisy status output in CI; remove if you want verbose builds.
@@ -27,31 +27,31 @@ fn build_blizorukost() {
 
     let lib_dir = dst.join("lib");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=static=blizorukost");
+    println!("cargo:rustc-link-lib=static=vozduxan");
 
     // Re-run if any C++ source changes.
     // NOTE: Cargo's rerun-if-changed on a directory only tracks the directory
     // mtime, which macOS does NOT update when a file inside is modified.
     // We enumerate the individual source files so Cargo detects changes correctly.
-    for entry in std::fs::read_dir(bliz_dir.join("src"))
+    for entry in std::fs::read_dir(vozduxan_dir.join("src"))
         .into_iter()
         .flatten()
         .flatten()
     {
         println!("cargo:rerun-if-changed={}", entry.path().display());
     }
-    for entry in std::fs::read_dir(bliz_dir.join("include"))
+    for entry in std::fs::read_dir(vozduxan_dir.join("include"))
         .into_iter()
         .flatten()
         .flatten()
     {
         println!("cargo:rerun-if-changed={}", entry.path().display());
     }
-    println!("cargo:rerun-if-changed={}", bliz_dir.join("CMakeLists.txt").display());
+    println!("cargo:rerun-if-changed={}", vozduxan_dir.join("CMakeLists.txt").display());
 
     // ── C++ standard library ──────────────────────────────────────────────
     // Must come before libtorrent so the linker sees it while resolving
-    // unresolved symbols from libblizorukost.a.
+    // unresolved symbols from libvozduxan.a.
     link_cxx_stdlib();
 
     // ── Link against libtorrent-rasterbar ─────────────────────────────────
@@ -105,7 +105,7 @@ fn link_libtorrent_fallback() {
 }
 
 fn link_cxx_stdlib() {
-    // A static C++ library (blizorukost) pulls in C++ runtime symbols that Rust's
+    // A static C++ library (vozduxan) pulls in C++ runtime symbols that Rust's
     // linker won't resolve automatically.  We must explicitly link the C++ stdlib.
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=c++");         // libc++ (Clang/macOS)

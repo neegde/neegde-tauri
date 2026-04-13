@@ -1,16 +1,16 @@
-//! Safe Rust wrapper around blizorukost C API + Tauri command handlers.
+//! Safe Rust wrapper around vozduxan C API + Tauri command handlers.
 //!
 //! This module replaces the librqbit-backed streaming commands in torrent_stream
 //! while leaving the export (full-download) functionality untouched.
 //!
 //! Key design points:
-//! - BlizSessionInner owns the *mut BlizSession raw pointer; dropped via bliz_session_destroy.
+//! - VozduxanSessionInner owns the *mut VozduxanSession raw pointer; dropped via vozduxan_session_destroy.
 //! - All blocking C calls run in spawn_blocking to avoid blocking the async executor.
 //! - seek_generation is bumped only when a stream is released; parallel Range
 //!   requests must not cancel each other (browser often fetches start + end).
 //! - Each `prepare()` bumps `prepare_version`; stale blocking results are dropped
 //!   so a slow prepare cannot overwrite state after the user switched tracks.
-//! - bliz_notify_position updates piece-priority window from the UI seek position.
+//! - vozduxan_notify_position updates piece-priority window from the UI seek position.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::sync::{
@@ -22,7 +22,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use base64::Engine as _;
-use crate::bliz_ffi as ffi;
+use crate::vozduxan_ffi as ffi;
 use crate::rutracker::TorrentFile;
 use crate::torrent_stream::debug_log::AppDebugLog;
 
@@ -91,22 +91,22 @@ unsafe extern "C" fn on_progress(progress: f32, status: *const c_char, userdata:
     );
 }
 
-/* ── C log callback — forwards blizorukost C++ log lines to AppDebugLog ── */
-unsafe extern "C" fn on_bliz_log(message: *const c_char, userdata: *mut c_void) {
+/* ── C log callback — forwards vozduxan C++ log lines to AppDebugLog ── */
+unsafe extern "C" fn on_vozduxan_log(message: *const c_char, userdata: *mut c_void) {
     if message.is_null() || userdata.is_null() {
         return;
     }
-    // SAFETY: userdata is an Arc<AppDebugLog> raw pointer kept alive by BlizSessionInner.
+    // SAFETY: userdata is an Arc<AppDebugLog> raw pointer kept alive by VozduxanSessionInner.
     let debug_log = unsafe { &*(userdata as *const AppDebugLog) };
     let msg = unsafe { CStr::from_ptr(message) }
         .to_string_lossy()
         .into_owned();
-    debug_log.push("bliz", msg, None);
+    debug_log.push("vozduxan", msg, None);
 }
 
 /* ── Inner session (owns the C++ object) ───────────────────────────────── */
-struct BlizSessionInner {
-    ptr: *mut ffi::BlizSession,
+struct VozduxanSessionInner {
+    ptr: *mut ffi::VozduxanSession,
     /// Token of the currently active stream.
     current_token: Mutex<Option<String>>,
     /// Token of the prefetched (background) stream (queue look-ahead).
@@ -119,39 +119,39 @@ struct BlizSessionInner {
     prepare_cancelled: AtomicBool,
     /// Incremented at the start of every `prepare()`; stale completions compare against this.
     prepare_version: AtomicU64,
-    /// Keeps the Arc alive so the raw pointer in BlizConfig stays valid.
+    /// Keeps the Arc alive so the raw pointer in VozduxanConfig stays valid.
     _debug_log_arc: Arc<AppDebugLog>,
 }
 
-// SAFETY: BlizSessionImpl is fully thread-safe internally (mutexes + atomics).
-unsafe impl Send for BlizSessionInner {}
-unsafe impl Sync for BlizSessionInner {}
+// SAFETY: VozduxanSessionImpl is fully thread-safe internally (mutexes + atomics).
+unsafe impl Send for VozduxanSessionInner {}
+unsafe impl Sync for VozduxanSessionInner {}
 
-impl Drop for BlizSessionInner {
+impl Drop for VozduxanSessionInner {
     fn drop(&mut self) {
-        unsafe { ffi::bliz_session_destroy(self.ptr) };
+        unsafe { ffi::vozduxan_session_destroy(self.ptr) };
     }
 }
 
 /* ── Public state handle ───────────────────────────────────────────────── */
-pub struct BlizStreamState {
-    inner: Arc<BlizSessionInner>,
+pub struct VozduxanStreamState {
+    inner: Arc<VozduxanSessionInner>,
     pub debug_log: Arc<AppDebugLog>,
 }
 
-impl BlizStreamState {
+impl VozduxanStreamState {
     fn dlog(&self, msg: impl Into<String>) {
-        self.debug_log.push("bliz", msg.into(), None);
+        self.debug_log.push("vozduxan", msg.into(), None);
     }
 }
 
-impl BlizStreamState {
+impl VozduxanStreamState {
     pub fn new(app: &AppHandle, debug_log: Arc<AppDebugLog>) -> Self {
         let storage_path = {
             let dir_label = if cfg!(debug_assertions) {
-                "bliz_streams_dev"
+                "vozduxan_streams_dev"
             } else {
-                "bliz_streams"
+                "vozduxan_streams"
             };
             let path = app
                 .path()
@@ -165,23 +165,23 @@ impl BlizStreamState {
         let storage_c = CString::new(storage_path.to_string_lossy().as_ref()).unwrap();
 
         // Pass a raw pointer to the AppDebugLog into the C++ log callback.
-        // BlizSessionInner keeps _debug_log_arc alive so the pointer is valid.
+        // VozduxanSessionInner keeps _debug_log_arc alive so the pointer is valid.
         let log_userdata = Arc::as_ptr(&debug_log) as *mut c_void;
 
-        let cfg = ffi::BlizConfig {
+        let cfg = ffi::VozduxanConfig {
             storage_path: storage_c.as_ptr(),
             cache_max_bytes: 0, // 50 GB default
             cache_ttl_secs: 0,  // 3600 s default
             listen_port: 0,     // random
-            log_fn: Some(on_bliz_log),
+            log_fn: Some(on_vozduxan_log),
             log_userdata,
         };
 
-        let ptr = unsafe { ffi::bliz_session_create(&cfg) };
-        assert!(!ptr.is_null(), "bliz_session_create returned null");
+        let ptr = unsafe { ffi::vozduxan_session_create(&cfg) };
+        assert!(!ptr.is_null(), "vozduxan_session_create returned null");
 
-        BlizStreamState {
-            inner: Arc::new(BlizSessionInner {
+        VozduxanStreamState {
+            inner: Arc::new(VozduxanSessionInner {
                 ptr,
                 current_token: Mutex::new(None),
                 prefetch_token: Mutex::new(None),
@@ -217,11 +217,11 @@ impl BlizStreamState {
         let app_clone = app.clone();
         let dlog = self.debug_log.clone();
 
-        // All blizorukost calls happen inside spawn_blocking.
+        // All vozduxan calls happen inside spawn_blocking.
         // We do cancel-check and token management inside the closure
         // so that `inner` doesn't need to be used both inside and outside.
         let url = tokio::task::spawn_blocking(move || -> Result<String, String> {
-            let dlog = |msg: String| { dlog.push("bliz", msg, None); };
+            let dlog = |msg: String| { dlog.push("vozduxan", msg, None); };
             let magnet_c = CString::new(magnet.as_str()).unwrap();
 
             dlog(format!("prepare start — file_idx={file_idx} has_torrent_data={}", torrent_bytes.is_some()));
@@ -230,7 +230,7 @@ impl BlizStreamState {
             let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
 
             let info = unsafe {
-                ffi::bliz_stream_prepare(
+                ffi::vozduxan_stream_prepare(
                     inner.ptr,
                     magnet_c.as_ptr(),
                     torrent_bytes
@@ -249,10 +249,10 @@ impl BlizStreamState {
 
             if inner.prepare_version.load(Ordering::Acquire) != my_version {
                 dlog("prepare superseded — discarding result (track changed)".into());
-                if info.error == ffi::BlizError::Ok {
+                if info.error == ffi::VozduxanError::Ok {
                     let token = ffi::c_bytes_to_string(&info.token);
                     let token_c = CString::new(token).unwrap();
-                    unsafe { ffi::bliz_stream_release(inner.ptr, token_c.as_ptr()) };
+                    unsafe { ffi::vozduxan_stream_release(inner.ptr, token_c.as_ptr()) };
                 }
                 return Err("Отменено".into());
             }
@@ -260,15 +260,15 @@ impl BlizStreamState {
             // Handle cancel (prepare finished but caller gave up).
             if inner.prepare_cancelled.load(Ordering::Relaxed) {
                 dlog("prepare cancelled after C++ returned".into());
-                if info.error == ffi::BlizError::Ok {
+                if info.error == ffi::VozduxanError::Ok {
                     let token_c =
                         CString::new(ffi::c_bytes_to_string(&info.token)).unwrap();
-                    unsafe { ffi::bliz_stream_release(inner.ptr, token_c.as_ptr()) };
+                    unsafe { ffi::vozduxan_stream_release(inner.ptr, token_c.as_ptr()) };
                 }
                 return Err("Отменено".into());
             }
 
-            if info.error != ffi::BlizError::Ok {
+            if info.error != ffi::VozduxanError::Ok {
                 let msg = ffi::c_bytes_to_string(&info.error_msg);
                 dlog(format!("prepare ERROR: {:?} — {msg}", info.error));
                 return Err(msg);
@@ -283,7 +283,7 @@ impl BlizStreamState {
             if let Some(old) = current.take() {
                 dlog(format!("prepare: releasing old current token={old}"));
                 let old_c = CString::new(old).unwrap();
-                unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+                unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
             }
             *current = Some(token);
 
@@ -305,7 +305,7 @@ impl BlizStreamState {
         self.dlog(format!("release_token({token})"));
         let token_c = CString::new(token).unwrap();
         let t0 = std::time::Instant::now();
-        unsafe { ffi::bliz_stream_release(self.inner.ptr, token_c.as_ptr()) };
+        unsafe { ffi::vozduxan_stream_release(self.inner.ptr, token_c.as_ptr()) };
         self.dlog(format!("release_token({token}) done in {:?}", t0.elapsed()));
         let mut current = self.inner.current_token.lock().unwrap();
         if current.as_deref() == Some(token) {
@@ -326,22 +326,22 @@ impl BlizStreamState {
         let mut current = self.inner.current_token.lock().unwrap();
         if let Some(token) = current.take() {
             let c = CString::new(token).unwrap();
-            unsafe { ffi::bliz_stream_release(self.inner.ptr, c.as_ptr()) };
+            unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
         }
         let mut prefetch = self.inner.prefetch_token.lock().unwrap();
         if let Some(token) = prefetch.take() {
             let c = CString::new(token).unwrap();
-            unsafe { ffi::bliz_stream_release(self.inner.ptr, c.as_ptr()) };
+            unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
         }
         let mut warm = self.inner.warm_prefetch_token.lock().unwrap();
         if let Some(token) = warm.take() {
             let c = CString::new(token).unwrap();
-            unsafe { ffi::bliz_stream_release(self.inner.ptr, c.as_ptr()) };
+            unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
         }
         let mut hover = self.inner.hover_token.lock().unwrap();
         if let Some(token) = hover.take() {
             let c = CString::new(token).unwrap();
-            unsafe { ffi::bliz_stream_release(self.inner.ptr, c.as_ptr()) };
+            unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
         }
     }
 
@@ -361,7 +361,7 @@ impl BlizStreamState {
         let dlog_arc = self.debug_log.clone();
 
         let url = tokio::task::spawn_blocking(move || -> Result<String, String> {
-            let dlog = |msg: String| { dlog_arc.push("bliz", msg, None); };
+            let dlog = |msg: String| { dlog_arc.push("vozduxan", msg, None); };
             let magnet_c = CString::new(magnet.as_str()).unwrap();
             dlog(format!("hover_prepare start — file_idx={file_idx}"));
 
@@ -369,7 +369,7 @@ impl BlizStreamState {
             let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
 
             let info = unsafe {
-                ffi::bliz_stream_prepare(
+                ffi::vozduxan_stream_prepare(
                     inner.ptr,
                     magnet_c.as_ptr(),
                     torrent_bytes
@@ -384,7 +384,7 @@ impl BlizStreamState {
             };
             let _ = unsafe { Box::from_raw(ctx_ptr as *mut ProgressCtx) };
 
-            if info.error != ffi::BlizError::Ok {
+            if info.error != ffi::VozduxanError::Ok {
                 let msg = ffi::c_bytes_to_string(&info.error_msg);
                 dlog(format!("hover_prepare ERROR: {msg}"));
                 return Err(msg);
@@ -400,7 +400,7 @@ impl BlizStreamState {
             if let Some(old) = hover.take() {
                 dlog(format!("hover_prepare releasing old hover token={old}"));
                 let old_c = CString::new(old).unwrap();
-                unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+                unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
             }
             *hover = Some(token);
             Ok(url)
@@ -416,7 +416,7 @@ impl BlizStreamState {
     pub fn hover_release(&self, token: &str) {
         self.dlog(format!("hover_release({token})"));
         let token_c = CString::new(token).unwrap();
-        unsafe { ffi::bliz_stream_release(self.inner.ptr, token_c.as_ptr()) };
+        unsafe { ffi::vozduxan_stream_release(self.inner.ptr, token_c.as_ptr()) };
         let mut hover = self.inner.hover_token.lock().unwrap();
         if hover.as_deref() == Some(token) {
             *hover = None;
@@ -434,7 +434,7 @@ impl BlizStreamState {
             if old != token {
                 self.dlog(format!("hover_activate releasing old current={old}"));
                 let old_c = CString::new(old).unwrap();
-                unsafe { ffi::bliz_stream_release(self.inner.ptr, old_c.as_ptr()) };
+                unsafe { ffi::vozduxan_stream_release(self.inner.ptr, old_c.as_ptr()) };
             }
         }
         *current = Some(token.to_owned());
@@ -453,7 +453,7 @@ impl BlizStreamState {
     /* ── notify_position ───────────────────────────────────────────────── */
     pub fn notify_position(&self, token: &str, byte_offset: i64) {
         let token_c = CString::new(token).unwrap();
-        unsafe { ffi::bliz_stream_notify_position(self.inner.ptr, token_c.as_ptr(), byte_offset) };
+        unsafe { ffi::vozduxan_stream_notify_position(self.inner.ptr, token_c.as_ptr(), byte_offset) };
     }
 
     /* ── list_files ────────────────────────────────────────────────────── */
@@ -468,7 +468,7 @@ impl BlizStreamState {
             let magnet_c = CString::new(magnet.as_str()).unwrap();
 
             let mut list = unsafe {
-                ffi::bliz_list_files(
+                ffi::vozduxan_list_files(
                     inner.ptr,
                     magnet_c.as_ptr(),
                     torrent_bytes
@@ -479,13 +479,13 @@ impl BlizStreamState {
                 )
             };
 
-            if list.error != ffi::BlizError::Ok {
+            if list.error != ffi::VozduxanError::Ok {
                 let msg = ffi::c_bytes_to_string(&list.error_msg);
-                unsafe { ffi::bliz_file_list_free(&mut list) };
+                unsafe { ffi::vozduxan_file_list_free(&mut list) };
                 return Err(msg);
             }
 
-            // Convert BlizFileEntry array → Vec<TorrentFile>.
+            // Convert VozduxanFileEntry array → Vec<TorrentFile>.
             let entries = unsafe { std::slice::from_raw_parts(list.files, list.count as usize) };
             let files: Vec<TorrentFile> = entries
                 .iter()
@@ -495,7 +495,7 @@ impl BlizStreamState {
                 })
                 .collect();
 
-            unsafe { ffi::bliz_file_list_free(&mut list) };
+            unsafe { ffi::vozduxan_file_list_free(&mut list) };
             Ok(files)
         })
         .await
@@ -522,7 +522,7 @@ impl BlizStreamState {
             let magnet_c = CString::new(magnet.as_str()).unwrap();
 
             let info = unsafe {
-                ffi::bliz_stream_prepare(
+                ffi::vozduxan_stream_prepare(
                     inner.ptr,
                     magnet_c.as_ptr(),
                     torrent_bytes
@@ -536,7 +536,7 @@ impl BlizStreamState {
                 )
             };
 
-            if info.error != ffi::BlizError::Ok {
+            if info.error != ffi::VozduxanError::Ok {
                 return Err(ffi::c_bytes_to_string(&info.error_msg));
             }
 
@@ -547,14 +547,14 @@ impl BlizStreamState {
                 let mut warm = inner.warm_prefetch_token.lock().unwrap();
                 if let Some(old) = warm.take() {
                     let old_c = CString::new(old).unwrap();
-                    unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+                    unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
                 }
                 *warm = Some(token);
             } else {
                 let mut prefetch = inner.prefetch_token.lock().unwrap();
                 if let Some(old) = prefetch.take() {
                     let old_c = CString::new(old).unwrap();
-                    unsafe { ffi::bliz_stream_release(inner.ptr, old_c.as_ptr()) };
+                    unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
                 }
                 *prefetch = Some(token);
             }
@@ -589,7 +589,7 @@ pub enum PrefetchNextResponse {
 #[tauri::command]
 pub async fn torrent_prepare_stream(
     app: AppHandle,
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
     magnet: String,
     file_idx: usize,
     torrent_file_b64: Option<String>,
@@ -610,7 +610,7 @@ pub async fn torrent_prepare_stream(
 /// Release a stream by its token.
 #[tauri::command]
 pub async fn torrent_release_stream(
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
     token: String,
 ) -> Result<(), String> {
     state.release_token(&token);
@@ -620,7 +620,7 @@ pub async fn torrent_release_stream(
 /// Dispose the current preview stream (and any prefetch).
 #[tauri::command]
 pub async fn torrent_dispose_preview(
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
 ) -> Result<(), String> {
     state.dispose();
     Ok(())
@@ -629,7 +629,7 @@ pub async fn torrent_dispose_preview(
 /// Cancel an in-flight prepare call.
 #[tauri::command]
 pub async fn torrent_prepare_cancel(
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
 ) -> Result<(), String> {
     state.cancel_prepare();
     Ok(())
@@ -638,8 +638,8 @@ pub async fn torrent_prepare_cancel(
 /// Notify the engine of the current playback byte offset (for seek).
 /// Call this whenever the audio element fires `timeupdate` or a seek.
 #[tauri::command]
-pub async fn bliz_notify_position(
-    state: tauri::State<'_, BlizStreamState>,
+pub async fn vozduxan_notify_position(
+    state: tauri::State<'_, VozduxanStreamState>,
     token: String,
     byte_offset: i64,
 ) -> Result<(), String> {
@@ -652,7 +652,7 @@ pub async fn bliz_notify_position(
 #[tauri::command]
 pub async fn torrent_hover_prepare_stream(
     app: AppHandle,
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
     magnet: String,
     file_idx: usize,
     torrent_file_b64: Option<String>,
@@ -672,7 +672,7 @@ pub async fn torrent_hover_prepare_stream(
 /// Release a hover-prefetch stream without activating it (user navigated away).
 #[tauri::command]
 pub async fn torrent_hover_release_stream(
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
     token: String,
 ) -> Result<(), String> {
     state.hover_release(&token);
@@ -683,7 +683,7 @@ pub async fn torrent_hover_release_stream(
 /// Must be called before assigning the hover URL to the audio element.
 #[tauri::command]
 pub async fn torrent_hover_activate(
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
     token: String,
 ) -> Result<(), String> {
     state.hover_activate(&token);
@@ -693,7 +693,7 @@ pub async fn torrent_hover_activate(
 /// List files inside a magnet/torrent.
 #[tauri::command]
 pub async fn torrent_magnet_list_files(
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
     magnet: String,
 ) -> Result<Vec<TorrentFile>, String> {
     state.list_files(magnet, None).await
@@ -702,7 +702,7 @@ pub async fn torrent_magnet_list_files(
 /// Warm the next track while the current one plays.
 #[tauri::command]
 pub async fn torrent_prefetch_next_track(
-    state: tauri::State<'_, BlizStreamState>,
+    state: tauri::State<'_, VozduxanStreamState>,
     current_magnet: String,
     current_file_idx: usize,
     next_magnet: String,
@@ -710,7 +710,7 @@ pub async fn torrent_prefetch_next_track(
     next_torrent_file_b64: Option<String>,
     warm_only: Option<bool>,
 ) -> Result<PrefetchNextResponse, String> {
-    let _ = (current_magnet, current_file_idx); // unused in bliz path
+    let _ = (current_magnet, current_file_idx); // unused in vozduxan path
     let warm_only = warm_only.unwrap_or(false);
 
     let torrent_bytes: Option<Vec<u8>> = match next_torrent_file_b64.as_deref() {
