@@ -2,8 +2,15 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export const APP_DEBUG_WINDOW_LABEL = "app-debug";
 
-/** Module-level reference — cleared via tauri://destroyed so we always know the real state. */
+/** Module-level reference to the live debug window (null when closed/never opened). */
 let _win = null;
+/** Monotonically increasing suffix — guarantees a fresh label even if Tauri's
+ *  backend hasn't freed the old one yet, eliminating tauri://error on recreation. */
+let _seq = 0;
+
+function _makeLabel() {
+  return `${APP_DEBUG_WINDOW_LABEL}-${++_seq}`;
+}
 
 /**
  * Opens or focuses the application debug log in a dedicated Tauri window.
@@ -18,13 +25,15 @@ export async function openAppDebugWindow() {
       await _win.setFocus().catch(() => {});
       return _win;
     }
-    // Window exists but isn't visible — on macOS the red-X hides rather than
-    // destroys; call destroy() explicitly so the label is freed, then recreate.
+    // Not visible — destroy explicitly so macOS-hidden windows are cleaned up.
     await _win.destroy().catch(() => {});
     _win = null;
   }
 
-  const win = new WebviewWindow(APP_DEBUG_WINDOW_LABEL, {
+  // Use a unique label each time: eliminates any label-conflict tauri://error
+  // that would occur if the backend hasn't freed the previous label yet.
+  const label = _makeLabel();
+  const win = new WebviewWindow(label, {
     url: "index.html#/app-debug",
     title: "Журнал отладки",
     width: 920,
@@ -36,7 +45,6 @@ export async function openAppDebugWindow() {
   });
   _win = win;
 
-  // Keep _win in sync: clear it when the window is closed/destroyed
   win.once("tauri://destroyed", () => {
     if (_win === win) _win = null;
   });
@@ -48,4 +56,14 @@ export async function openAppDebugWindow() {
       reject(e);
     });
   });
+}
+
+/**
+ * Closes the debug window if it is open.
+ */
+export async function closeAppDebugWindow() {
+  if (_win) {
+    await _win.close().catch(() => {});
+    _win = null;
+  }
 }

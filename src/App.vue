@@ -1,9 +1,7 @@
 <script setup>
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { appDebugLog, appDebugClickDetail } from "./appDebugLog.js";
-import { APP_DEBUG_WINDOW_LABEL } from "./appDebugWindow.js";
 import {
   isAudio,
   detectAlbums,
@@ -39,7 +37,7 @@ import NavArrows       from "./components/shell/NavArrows.vue";
 import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 import HomeView from "./components/home/HomeView.vue";
-import { openAppDebugWindow } from "./appDebugWindow.js";
+import { openAppDebugWindow, closeAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory } from "./lib/recentHistory.js";
 import { loadSearchHistory, addToSearchHistory } from "./lib/searchHistory.js";
 
@@ -242,8 +240,7 @@ function setupAppDebugInstrumentation() {
           document.removeEventListener("click", onClick, true);
         void openAppDebugWindow().catch(() => {});
       } else {
-        const w = await WebviewWindow.getByLabel(APP_DEBUG_WINDOW_LABEL);
-        if (w) await w.close().catch(() => {});
+        await closeAppDebugWindow();
       }
     },
     { immediate: true },
