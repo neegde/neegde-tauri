@@ -474,8 +474,50 @@ const downloadProgress = ref(null);
 /** false — компактная кнопка «Скачивание» в углу. */
 const downloadOverlayExpanded = ref(true);
 
+let exportDbgLastAt = 0;
+let exportDbgLastPhase = "";
+let exportDbgLastBatch = null;
+
 watch(downloadProgress, (v) => {
-  if (v == null) downloadOverlayExpanded.value = true;
+  if (v == null) {
+    downloadOverlayExpanded.value = true;
+    exportDbgLastPhase = "";
+    exportDbgLastBatch = null;
+    return;
+  }
+  if (appDebugEnabled.value) {
+    const phase = v.phase ?? "";
+    const now = Date.now();
+    const batch = v.batchIndex ?? null;
+    let skip = false;
+    if (phase === "downloading") {
+      const sameSlice =
+        phase === exportDbgLastPhase &&
+        batch === exportDbgLastBatch &&
+        now - exportDbgLastAt < 2000;
+      skip = sameSlice;
+    }
+    exportDbgLastPhase = phase;
+    exportDbgLastBatch = batch;
+    if (!skip) {
+      exportDbgLastAt = now;
+      void appDebugLog(
+        "export",
+        `${phase}: ${String(v.message ?? "").slice(0, 220)}`,
+        {
+          pct: v.pct,
+          progressBytes: v.progressBytes,
+          totalBytes: v.totalBytes,
+          torrentState: v.torrentState,
+          batchIndex: v.batchIndex,
+          batchTotal: v.batchTotal,
+          copyIndex: v.copyIndex,
+          copyTotal: v.copyTotal,
+          queueLen: v.queueLabels?.length,
+        }
+      );
+    }
+  }
 });
 
 // ── Likes (persisted locally) ────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 
 const props = defineProps({
   /** null — скрыто */
@@ -81,6 +82,8 @@ function expand() {
 
 async function requestStop() {
   if (!canStop.value) return;
+  // IPC invoke can queue behind the long `torrent_export_files` call — emit reaches Rust immediately.
+  await emit("torrent-export-cancel-request", {});
   try {
     await invoke("torrent_export_cancel");
   } catch (_) { /* команда всегда Ok; ошибка сети редка */ }

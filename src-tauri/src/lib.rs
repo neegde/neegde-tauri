@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, RunEvent,
+    Listener, Manager, RunEvent,
 };
 
 /// In-process LRU cache for MusicBrainz + Cover Art Archive results.
@@ -114,9 +114,22 @@ pub fn run() {
             )));
             // TorrentStreamState owns the shared debug log; VozduxanStreamState borrows it.
             let ts = torrent_stream::TorrentStreamState::new(app.handle().clone());
+            // Sync: frontend must see correct `get_app_debug_enabled` on first invoke (spawn was too late).
+            apply_app_debug_from_disk(app.handle(), &ts);
             let vozduxan_debug = ts.debug_log();
             app.manage(VozduxanStreamState::new(app.handle(), vozduxan_debug));
             app.manage(ts);
+
+            // Cancel export while `torrent_export_files` is awaiting — a second `invoke` can be
+            // queued behind the long command; `emit` + this listener sets the flag immediately.
+            let export_cancel_app = app.handle().clone();
+            let export_cancel_for_listener = export_cancel_app.clone();
+            export_cancel_app.listen_any("torrent-export-cancel-request", move |_event| {
+                if let Some(ts) = export_cancel_for_listener.try_state::<TorrentStreamState>() {
+                    ts.export_cancel_trigger();
+                }
+            });
+
             app.manage(torrent_image::TorrentImageState::new(app.handle()));
             app.manage(DiscordPresenceState::new());
 
@@ -163,7 +176,6 @@ pub fn run() {
             let startup = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(ts) = startup.try_state::<TorrentStreamState>() {
-                    apply_app_debug_from_disk(&startup, &ts);
                     let _ = ts.load_cache_settings_from_disk().await;
                     ts.reclaim_stream_cache_best_effort().await;
                 }
