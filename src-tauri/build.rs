@@ -170,7 +170,26 @@ fn link_openssl_libs_windows_msvc() {
         candidates.push(v.join("installed/x64-windows/lib"));
         candidates.push(v.join("installed/x64-windows-static/lib"));
     }
-    candidates.push(r"C:\Program Files\OpenSSL-Win64\lib".into());
+    for rel in [
+        "",
+        r"VC\x64\MD",
+        r"VC\x64\MT",
+        r"VC\MD",
+        r"VC\MT",
+    ] {
+        let base = Path::new(r"C:\Program Files\OpenSSL\lib");
+        candidates.push(if rel.is_empty() {
+            base.to_path_buf()
+        } else {
+            base.join(rel)
+        });
+        let base64 = Path::new(r"C:\Program Files\OpenSSL-Win64\lib");
+        candidates.push(if rel.is_empty() {
+            base64.to_path_buf()
+        } else {
+            base64.join(rel)
+        });
+    }
     candidates.push(r"C:\Program Files (x86)\OpenSSL-Win64\lib".into());
 
     fn ssl_lib_dir(dir: &Path) -> bool {
@@ -209,9 +228,9 @@ fn link_openssl_libs_windows_msvc() {
     }
 
     panic!(
-        "[vozduxan] Windows: libssl.lib / libcrypto.lib not found. Install OpenSSL (e.g. Chocolatey: \
-         `choco install openssl -y`) and set OPENSSL_ROOT_DIR to the install root, e.g. \
-         C:\\\\Program Files\\\\OpenSSL-Win64"
+        "[vozduxan] Windows: libssl.lib / libcrypto.lib not found. Install OpenSSL (e.g. `choco install openssl -y`) \
+         and set OPENSSL_LIB_DIR to the folder that contains both libs (often \
+         ..\\\\OpenSSL\\\\lib\\\\VC\\\\x64\\\\MD), or OPENSSL_ROOT_DIR to the install root."
     );
 }
 

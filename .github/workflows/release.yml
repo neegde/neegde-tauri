@@ -71,23 +71,33 @@ jobs:
         shell: pwsh
         run: |
           choco install openssl -y --no-progress
-          $roots = @(
-            'C:\Program Files\OpenSSL-Win64',
+          # SlProWeb / Chocolatey may install to OpenSSL or OpenSSL-Win64; libssl.lib can live in
+          # lib\ or lib\VC\x64\MD\ (etc.), not only lib\libssl.lib.
+          $searchRoots = @(
             'C:\Program Files\OpenSSL',
+            'C:\Program Files\OpenSSL-Win64',
             'C:\OpenSSL-Win64'
           )
-          $found = $false
-          foreach ($r in $roots) {
-            if (Test-Path (Join-Path $r 'lib\libssl.lib')) {
-              "OPENSSL_ROOT_DIR=$r" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-              Write-Host "OPENSSL_ROOT_DIR=$r"
-              $found = $true
+          $libssl = $null
+          foreach ($root in $searchRoots) {
+            if (-not (Test-Path -LiteralPath $root)) { continue }
+            $libssl = Get-ChildItem -LiteralPath $root -Recurse -Filter 'libssl.lib' -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($null -ne $libssl) { break }
+          }
+          if ($null -eq $libssl) {
+            Write-Error 'libssl.lib not found under OpenSSL install directories'
+            exit 1
+          }
+          $libDir = $libssl.DirectoryName
+          "OPENSSL_LIB_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "OPENSSL_LIB_DIR=$libDir"
+          foreach ($root in $searchRoots) {
+            if ($libssl.FullName.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+              "OPENSSL_ROOT_DIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              Write-Host "OPENSSL_ROOT_DIR=$root"
               break
             }
-          }
-          if (-not $found) {
-            Write-Error 'libssl.lib not found after choco install openssl'
-            exit 1
           }
 
       - name: Install npm dependencies
