@@ -99,6 +99,8 @@ jobs:
               break
             }
           }
+          "OPENSSL_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "OPENSSL_STATIC=1"
 
       - name: Install npm dependencies
         run: npm ci
