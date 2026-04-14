@@ -89,6 +89,10 @@ fn link_libtorrent_fallback() {
     #[cfg(target_os = "linux")]
     {
         println!("cargo:rustc-link-lib=dylib=torrent-rasterbar");
+        // libtorrent-rasterbar uses OpenSSL (SSL sockets, SHA-512); link explicitly
+        // so the symbols are available regardless of what TLS backend Rust crates use.
+        println!("cargo:rustc-link-lib=dylib=ssl");
+        println!("cargo:rustc-link-lib=dylib=crypto");
         println!("cargo:rustc-link-lib=dylib=pthread");
     }
 
@@ -192,37 +196,35 @@ fn link_openssl_libs_windows_msvc() {
     }
     candidates.push(r"C:\Program Files (x86)\OpenSSL-Win64\lib".into());
 
-    fn ssl_lib_dir(dir: &Path) -> bool {
-        dir.join("libssl.lib").exists() && dir.join("libcrypto.lib").exists()
+    fn emit_common_windows_libs() {
+        println!("cargo:rustc-link-lib=dylib=crypt32");
+        println!("cargo:rustc-link-lib=dylib=advapi32");
+        println!("cargo:rustc-link-lib=dylib=user32");
+        println!("cargo:rustc-link-lib=dylib=gdi32");
+        println!("cargo:rustc-link-lib=dylib=bcrypt");
     }
 
-    for dir in candidates {
-        if ssl_lib_dir(&dir) {
+    // Prefer true static libs (libssl_static.lib / libcrypto_static.lib).
+    // Shining Light Productions (Chocolatey) installs them in the root lib\ dir.
+    // Static linking embeds OpenSSL into the binary — users need no DLLs.
+    for dir in &candidates {
+        if dir.join("libssl_static.lib").exists() && dir.join("libcrypto_static.lib").exists() {
             println!("cargo:rustc-link-search=native={}", dir.display());
-            // openssl-sys: MSVC uses these names (libssl.lib / libcrypto.lib).
-            let bin_dir = dir.parent().map(|p| p.join("bin"));
-            let use_dll = bin_dir
-                .as_ref()
-                .map(|b| {
-                    b.join("libssl-3-x64.dll").exists()
-                        || b.join("libssl-1_1-x64.dll").exists()
-                        || std::fs::read_dir(b).map_or(false, |rd| {
-                            rd.flatten().any(|e| {
-                                let n = e.file_name();
-                                let n = n.to_string_lossy();
-                                n.starts_with("libssl-") && n.ends_with(".dll")
-                            })
-                        })
-                })
-                .unwrap_or(false);
-            let kind = if use_dll { "dylib" } else { "static" };
-            println!("cargo:rustc-link-lib={kind}=libssl");
-            println!("cargo:rustc-link-lib={kind}=libcrypto");
-            println!("cargo:rustc-link-lib=dylib=crypt32");
-            println!("cargo:rustc-link-lib=dylib=advapi32");
-            println!("cargo:rustc-link-lib=dylib=user32");
-            println!("cargo:rustc-link-lib=dylib=gdi32");
-            println!("cargo:rustc-link-lib=dylib=bcrypt");
+            println!("cargo:rustc-link-lib=static=libssl_static");
+            println!("cargo:rustc-link-lib=static=libcrypto_static");
+            emit_common_windows_libs();
+            return;
+        }
+    }
+
+    // Fallback: import libs (libssl.lib / libcrypto.lib).
+    // These link against the DLL — acceptable in dev builds, not for distribution.
+    for dir in &candidates {
+        if dir.join("libssl.lib").exists() && dir.join("libcrypto.lib").exists() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+            println!("cargo:rustc-link-lib=dylib=libssl");
+            println!("cargo:rustc-link-lib=dylib=libcrypto");
+            emit_common_windows_libs();
             return;
         }
     }
