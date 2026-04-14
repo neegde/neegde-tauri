@@ -3,6 +3,8 @@ name: Desktop release
 on:
   push:
     branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
 
 permissions:
   contents: write
@@ -136,6 +138,7 @@ jobs:
 
   publish:
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
