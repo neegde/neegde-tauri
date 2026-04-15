@@ -54,7 +54,6 @@ const emit = defineEmits([
   "download", "download-all", "download-album",
   "toggle-like",
   "open-album-preview",
-  "hover-track",
   "add-to-playlist",
   "add-to-queue",
 ]);
@@ -82,24 +81,6 @@ function openTrackCtx(e, origIdx) {
  */
 function onCtxAddToQueue() {
   if (ctxOrigIdx.value != null) emit("add-to-queue", ctxOrigIdx.value);
-}
-
-// ── Hover prefetch ────────────────────────────────────────────────────────────
-let _hoverTimer = null;
-let _lastHoveredIdx = null;
-
-function onTrackHover(origIdx) {
-  if (origIdx === props.nowPlayingIdx) return;
-  if (origIdx === _lastHoveredIdx) return;
-  clearTimeout(_hoverTimer);
-  _hoverTimer = setTimeout(() => {
-    _lastHoveredIdx = origIdx;
-    emit("hover-track", origIdx);
-  }, 280);
-}
-
-function onTrackLeave() {
-  clearTimeout(_hoverTimer);
 }
 
 // ── View mode ────────────────────────────────────────────────────────────────
@@ -522,8 +503,6 @@ watch(
           :class="['album-track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
           @contextmenu.prevent="openTrackCtx($event, f.origIdx)"
-          @mouseenter="onTrackHover(f.origIdx)"
-          @mouseleave="onTrackLeave"
         >
           <div class="album-col-n">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />
@@ -726,8 +705,6 @@ watch(
           :class="['track-row', ...playingRowClass(f.origIdx)]"
           @click="emit('play', f.origIdx, f.path)"
           @contextmenu.prevent="openTrackCtx($event, f.origIdx)"
-          @mouseenter="onTrackHover(f.origIdx)"
-          @mouseleave="onTrackLeave"
         >
           <div class="track-num">
             <PlayingIndicator v-if="nowPlayingIdx === f.origIdx" :live="playerPlaying" />

@@ -49,16 +49,15 @@ impl AppDebugLog {
         self.enabled.load(Ordering::Relaxed)
     }
 
-    /// Appends a line when debug mode is on; also emits `app-debug-line` for live UI.
+    /// Appends a line unconditionally; also emits `app-debug-line` for live UI.
+    /// `is_enabled` no longer gates writes — logs are always captured so errors
+    /// are visible even when the debug window was never manually opened.
     pub fn push(
         &self,
         category: impl Into<String>,
         message: impl Into<String>,
         detail: Option<serde_json::Value>,
     ) {
-        if !self.is_enabled() {
-            return;
-        }
         let ts_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)

@@ -7,7 +7,6 @@ import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
-  hoverActivateTorrentStreamUrl,
 } from "../../torrent/torrentSession.js";
 import {
   ensureEqualizer,
@@ -48,9 +47,6 @@ const props = defineProps({
   hasNext: Boolean,
   /** После восстановления сессии: не использовать HTML autoplay при появлении src. */
   suppressAutoplay: Boolean,
-  /** Hover-prefetch URL + ключ, переданные из App.vue (пользователь навёл на трек). */
-  hoverPrefetchUrl: { type: String, default: "" },
-  hoverPrefetchKey: { type: String, default: "" },
   /** Словарь лайков из App.vue — для отображения состояния лайка текущего трека. */
   likes: { type: Object, default: null },
   /** Текущая очередь воспроизведения (копия из App). */
@@ -68,7 +64,6 @@ const emit = defineEmits([
   "ended",
   "playing-change",
   "request-stream",
-  "hover-prefetch-consumed",
   "toggle-like",
   "search-artist",
   "open-torrent",
@@ -406,7 +401,7 @@ function logPlayRejected(context, err) {
 }
 
 async function cancelLoad() {
-  void appDebugLog("player", "cancelLoad", { source: "user" });
+  void appDebugLog("player", `stream prepare: user cancelled — "${props.track?.fileName?.slice?.(0,70)}" fileIdx=${props.track?.fileIdx} phase=${streamPhase.value}`);
   loadCancelledByUser.value = true;
   void torrentPrepareCancel();
   const prevUrl = src.value;
@@ -534,6 +529,25 @@ function onAudioError() {
   streamError.value = err
     ? `Ошибка воспроизведения: ${describeMediaError(err.code)}`
     : "Ошибка загрузки потока";
+
+  // Auto-retry once: vozduxan wait_for_piece timeout drops the HTTP connection
+  // which the browser reports as MEDIA_ERR_SRC_NOT_SUPPORTED (code 4). By then
+  // the torrent has been downloading the first piece for ~28s total, so a
+  // fresh prepare() almost always finds it available immediately.
+  if (prepareAttempt.value === 0) {
+    const trackKeyAtError = queueTrackKey(props.track);
+    setTimeout(() => {
+      if (
+        streamPhase.value === "error" &&
+        !loadCancelledByUser.value &&
+        queueTrackKey(props.track) === trackKeyAtError
+      ) {
+        void appDebugLog("player", `stream prepare: auto-retry after audio error — "${props.track?.fileName?.slice?.(0, 60)}" fileIdx=${props.track?.fileIdx}`);
+        streamError.value = "";
+        prepareAttempt.value++;
+      }
+    }, 1500);
+  }
 }
 
 watch(playing, (v) => {
@@ -543,11 +557,7 @@ watch(playing, (v) => {
 }, { immediate: true });
 
 watch(streamPhase, (phase, prev) => {
-  void appDebugLog("player", "streamPhase", {
-    phase,
-    from: prev,
-    fileIdx: props.track?.fileIdx,
-  });
+  void appDebugLog("player", `streamPhase: ${prev} → ${phase} — "${props.track?.fileName?.slice?.(0,60)}" fileIdx=${props.track?.fileIdx}`);
   if (phase !== "buffering") clearBufferingWatchdog();
 });
 
@@ -743,11 +753,14 @@ function bumpStreamPhaseReady() {
 }
 
 function onAudioCanPlay() {
+  const a = audioRef.value;
+  void appDebugLog("player", `audio: canplay — currentTime=${a?.currentTime?.toFixed(2)} buffered%=${bufferedPercent.value} "${props.track?.fileName?.slice?.(0,60)}"`);
   updateBufferStats();
   bumpStreamPhaseReady();
 }
 
 function onAudioPlaying() {
+  void appDebugLog("player", `audio: playing — currentTime=${audioRef.value?.currentTime?.toFixed(2)} "${props.track?.fileName?.slice?.(0,60)}"`);
   bumpStreamPhaseReady();
 }
 
@@ -758,6 +771,7 @@ function onAudioPlaying() {
 function onAudioWaiting() {
   const a = audioRef.value;
   if (a && !a.paused) {
+    void appDebugLog("player", `audio: waiting (rebuffering) — currentTime=${a.currentTime?.toFixed(2)} buffered%=${bufferedPercent.value} "${props.track?.fileName?.slice?.(0,60)}"`);
     streamPhase.value = "buffering";
     startBufferingWatchdog();
   }
@@ -766,6 +780,7 @@ function onAudioWaiting() {
 function onAudioStalled() {
   const a = audioRef.value;
   if (a && !a.paused) {
+    void appDebugLog("player", `audio: stalled — currentTime=${a.currentTime?.toFixed(2)} buffered%=${bufferedPercent.value} src=${src.value?.slice?.(0,80)}`);
     streamPhase.value = "buffering";
     startBufferingWatchdog();
   }
@@ -773,15 +788,22 @@ function onAudioStalled() {
 
 function startBufferingWatchdog() {
   clearBufferingWatchdog();
+  const watchdogStartTime = audioRef.value?.currentTime ?? 0;
+  void appDebugLog("player", `audio: buffering watchdog started (${BUFFERING_WATCHDOG_MS}ms) — "${props.track?.fileName?.slice?.(0,60)}"`);
   bufferingWatchdogTimer = setTimeout(() => {
     bufferingWatchdogTimer = null;
-    if (streamPhase.value === "buffering") {
-      streamError.value = "Поток прерван: не удалось получить данные от раздачи";
-      streamPhase.value = "error";
-      void appDebugLog("player", "buffering watchdog: stream stall timeout", {
-        currentTime: audioRef.value?.currentTime,
-      });
+    if (streamPhase.value !== "buffering") return;
+    const currentTime = audioRef.value?.currentTime ?? 0;
+    if (currentTime > watchdogStartTime) {
+      // Audio made progress despite the stalled/waiting event — the browser fired
+      // a spurious stall but playback continued normally. Restore ready state.
+      void appDebugLog("player", `audio: buffering watchdog: playback advanced (${watchdogStartTime.toFixed(2)}s → ${currentTime.toFixed(2)}s) — restoring ready`);
+      streamPhase.value = "ready";
+      return;
     }
+    void appDebugLog("player", `audio: buffering watchdog FIRED — stream stalled for ${BUFFERING_WATCHDOG_MS}ms currentTime=${currentTime.toFixed(2)} src=${src.value?.slice?.(0,80)}`);
+    streamError.value = "Поток прерван: не удалось получить данные от раздачи";
+    streamPhase.value = "error";
   }, BUFFERING_WATCHDOG_MS);
 }
 
@@ -838,7 +860,7 @@ async function maybeTriggerPrefetch() {
   if (prefetchInFlight) return;
 
   prefetchInFlight = true;
-  void appDebugLog("player", "prefetch next start", { fpPreview: fp.slice(0, 96) });
+  void appDebugLog("player", `prefetch next: start — "${props.nextTrack?.fileName?.slice?.(0,60)}" fileIdx=${props.nextTrack?.fileIdx} torrentId=${props.nextTrack?.torrentId||"—"}`);
   try {
     const result = await prefetchNextInQueue(props.track, props.nextTrack);
     if (result?.kind === "streamReady" && result.url) {
@@ -846,13 +868,14 @@ async function maybeTriggerPrefetch() {
         url: result.url,
         forKey: queueTrackKey(props.nextTrack),
       };
+      void appDebugLog("player", `prefetch next: OK — stream ready url=${result.url} fileIdx=${props.nextTrack?.fileIdx}`);
+    } else {
+      void appDebugLog("player", `prefetch next: done but no URL — kind=${result?.kind} fileIdx=${props.nextTrack?.fileIdx}`);
     }
     // Mark done only on success so a transient error allows one retry.
     prefetchOkFingerprint.value = fp;
   } catch (e) {
-    void appDebugLog("player", "prefetch next error", {
-      message: e?.message ?? String(e ?? ""),
-    });
+    void appDebugLog("player", `prefetch next: ERROR — "${props.nextTrack?.fileName?.slice?.(0,60)}" fileIdx=${props.nextTrack?.fileIdx} err=${e?.message ?? String(e ?? "")}`);
   } finally {
     prefetchInFlight = false;
   }
@@ -882,9 +905,9 @@ async function maybeTriggerSecondPrefetch() {
       void releaseTorrentStreamUrl(result.url);
     }
     secondPrefetchDoneFingerprint = fp;
-    void appDebugLog("player", "second prefetch (track+2) done", { fpPreview: fp.slice(0, 64) });
-  } catch {
-    // Silently ignore
+    void appDebugLog("player", `prefetch warm (track+2): OK — "${props.secondNextTrack?.fileName?.slice?.(0,60)}" fileIdx=${props.secondNextTrack?.fileIdx}`);
+  } catch (e) {
+    void appDebugLog("player", `prefetch warm (track+2): ERROR — "${props.secondNextTrack?.fileName?.slice?.(0,60)}" err=${e?.message ?? String(e ?? "")}`);
   } finally {
     secondPrefetchInFlight = false;
   }
@@ -981,11 +1004,7 @@ watch(
 
     let cancelled = false;
     onCleanup(() => { cancelled = true; });
-    void appDebugLog("player", "stream prepare started", {
-      fileIdx,
-      magnetLen: typeof magnet === "string" ? magnet.length : 0,
-      suppressAutoplay: props.suppressAutoplay,
-    });
+    void appDebugLog("player", `stream prepare: start — "${t?.fileName?.slice?.(0,70)}" fileIdx=${fileIdx} torrentId=${t?.torrentId||"—"} attempt=${prepareAttempt.value} suppressAutoplay=${props.suppressAutoplay}`);
     try {
       const preparedKey = queueTrackKey(props.track);
       let nextSrc = "";
@@ -993,14 +1012,7 @@ watch(
         // Next-track prefetch hit (pre-fetched while playing the previous track)
         nextSrc = prefetchedStream.value.url;
         prefetchedStream.value = { url: "", forKey: "" };
-        void appDebugLog("player", "stream prepare used prefetched URL", { fileIdx });
-      } else if (props.hoverPrefetchUrl && props.hoverPrefetchKey === preparedKey) {
-        // Hover-prefetch hit (user hovered this track before clicking).
-        // Promote hover_token → current_token BEFORE assigning src to the audio element.
-        await hoverActivateTorrentStreamUrl(props.hoverPrefetchUrl);
-        nextSrc = props.hoverPrefetchUrl;
-        emit("hover-prefetch-consumed");
-        void appDebugLog("player", "stream prepare used hover-prefetch URL", { fileIdx });
+        void appDebugLog("player", `stream prepare: prefetch HIT — using pre-warmed URL fileIdx=${fileIdx} url=${nextSrc}`);
       } else {
         const fileIdxNorm =
           fileIdx != null && fileIdx !== "" && Number.isFinite(Number(fileIdx))
@@ -1011,13 +1023,9 @@ watch(
           torrentId: props.track?.torrentId,
         });
       }
-      void appDebugLog("player", "stream prepare await done", {
-        fileIdx,
-        hasUrl: Boolean(nextSrc),
-        urlPreview: nextSrc ? nextSrc.slice(0, 120) : "",
-        cancelled,
-        loadCancelledByUser: loadCancelledByUser.value,
-      });
+      void appDebugLog("player", nextSrc
+        ? `stream prepare: done — assigning src fileIdx=${fileIdx} url=${nextSrc} cancelled=${cancelled}`
+        : `stream prepare: done with EMPTY URL — fileIdx=${fileIdx} cancelled=${cancelled} loadCancelledByUser=${loadCancelledByUser.value}`);
       if (!cancelled && !loadCancelledByUser.value) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
@@ -1036,13 +1044,7 @@ watch(
       const isUserCancel =
         loadCancelledByUser.value ||
         (typeof msg === "string" && msg.includes("отмен"));
-      void appDebugLog("player", "stream prepare error", {
-        fileIdx,
-        message: msg,
-        cancelled,
-        loadCancelledByUser: loadCancelledByUser.value,
-        isUserCancel,
-      });
+      void appDebugLog("player", `stream prepare: ERROR — "${t?.fileName?.slice?.(0,60)}" fileIdx=${fileIdx} err=${msg} cancelled=${cancelled} isUserCancel=${isUserCancel}`);
       if (!cancelled && !isUserCancel) {
         console.error("[player/stream] torrent_prepare_stream failed", {
           magnetLen: magnet?.length,

@@ -23,8 +23,8 @@ import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
-import { torrentFileB64ForTrack, streamUrl, hoverStreamUrl, magnetListFiles } from "./torrent/api.js";
-import { releaseTorrentStreamUrl, torrentPrepareCancel, hoverReleaseTorrentStreamUrl } from "./torrent/torrentSession.js";
+import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
+import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 
 import SearchBar    from "./components/search/SearchBar.vue";
@@ -128,45 +128,6 @@ const playerHasPrev = computed(() => {
   return repeatMode.value === "all" && len > 1;
 });
 
-// ── Hover-prefetch state ──────────────────────────────────────────────────────
-// Stores a pre-prepared stream URL for the track the user is hovering over.
-const hoverPrefetchUrl = ref("");
-const hoverPrefetchKey = ref("");
-
-async function handleHoverTrack(fileIdx) {
-  if (!selected.value || !torrentMagnet.value) return;
-  const magnet = torrentMagnet.value;
-  const key = `${magnet}\0${fileIdx}`;
-  // Already prefetched or currently playing
-  if (key === hoverPrefetchKey.value) return;
-  if (nowPlaying.value && `${nowPlaying.value.magnet}\0${nowPlaying.value.fileIdx}` === key) return;
-  // Release previous hover prefetch if not used
-  if (hoverPrefetchUrl.value) {
-    void hoverReleaseTorrentStreamUrl(hoverPrefetchUrl.value);
-    hoverPrefetchUrl.value = "";
-    hoverPrefetchKey.value = "";
-  }
-  try {
-    const url = await hoverStreamUrl(magnet, fileIdx, {
-      source: selected.value?.source,
-      torrentId: selected.value?.id,
-    });
-    if (url) {
-      // By the time hover-prepare completes (can take several seconds), nowPlaying may have
-      // changed to a different track from the same torrent. Storing a hover_token for the
-      // same torrent as the active stream can cause vozduxan to disrupt the current stream.
-      const np = nowPlaying.value;
-      if (np && np.magnet === magnet && `${np.magnet}\0${np.fileIdx}` !== key) {
-        void hoverReleaseTorrentStreamUrl(url);
-      } else {
-        hoverPrefetchUrl.value = url;
-        hoverPrefetchKey.value = key;
-      }
-    }
-  } catch {
-    // Silently ignore hover-prefetch errors
-  }
-}
 
 watch(
   [queue, queuePos],
@@ -230,6 +191,11 @@ onMounted(async () => {
     appDebugEnabled.value = await invoke("get_app_debug_enabled");
   } catch (_) { /* нет Tauri API (превью в браузере) */ }
   setupAppDebugInstrumentation();
+  // In development builds (`npm run tauri dev`) always open the debug window so
+  // errors are immediately visible without manually enabling debug mode in settings.
+  if (import.meta.env.DEV) {
+    void openAppDebugWindow().catch(() => {});
+  }
   window.clearTimeout(unblockTimer);
   restoringSession.value = false;
 
@@ -373,14 +339,12 @@ function setupAppDebugInstrumentation() {
   );
 
   watch(view, (v, prev) => {
-    if (!appDebugEnabled.value) return;
-    appDebugLog("ui", "view", { view: v, from: prev });
+    appDebugLog("ui", `nav: ${prev ?? "—"} → ${v}`);
   });
 
   watch(queuePos, (pos) => {
-    if (!appDebugEnabled.value) return;
     const t = nowPlaying.value;
-    appDebugLog("player", "queuePos", {
+    appDebugLog("player", "queue position changed", {
       pos,
       fileIdx: t?.fileIdx,
       fileName: t?.fileName?.slice?.(0, 80),
@@ -388,17 +352,17 @@ function setupAppDebugInstrumentation() {
   });
 
   watch(nowPlaying, (t) => {
-    if (!appDebugEnabled.value) return;
-    appDebugLog("player", "nowPlaying", {
-      fileIdx: t?.fileIdx,
-      fileName: t?.fileName?.slice?.(0, 80),
-      torrentId: t?.torrentId,
-    });
+    if (t == null) {
+      appDebugLog("player", "now playing: cleared (queue empty or stopped)");
+    } else {
+      appDebugLog("player", `now playing: fileIdx=${t.fileIdx} "${t.fileName?.slice?.(0, 80)}"`, {
+        torrentId: t.torrentId,
+      });
+    }
   });
 
   appDebugVisibilityHandler = () => {
-    if (!appDebugEnabled.value) return;
-    appDebugLog("ui", "visibility", { state: document.visibilityState });
+    appDebugLog("ui", `window visibility: ${document.visibilityState}`);
   };
   document.addEventListener("visibilitychange", appDebugVisibilityHandler);
 }
@@ -485,7 +449,7 @@ watch(downloadProgress, (v) => {
     exportDbgLastBatch = null;
     return;
   }
-  if (appDebugEnabled.value) {
+  {
     const phase = v.phase ?? "";
     const now = Date.now();
     const batch = v.batchIndex ?? null;
@@ -612,11 +576,11 @@ async function handleSearch(query) {
   if (cached) {
     results.value = cached;
     if (!results.value.length) error.value = "Ничего не найдено.";
-    if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: true, count: cached.length });
+    appDebugLog("search", `query "${q}": cache hit (${cached.length} results)`);
     return;
   }
 
-  if (appDebugEnabled.value) appDebugLog("search", "query", { q, cached: false });
+  appDebugLog("search", `query "${q}": sending request`);
   const seq = ++searchRequestSeq;
   loading.value = true;
   results.value = [];
@@ -624,10 +588,10 @@ async function handleSearch(query) {
     results.value = await searchMusic(q);
     if (!results.value.length) error.value = "Ничего не найдено.";
     else _searchCacheSet(q.toLowerCase(), results.value);
-    if (appDebugEnabled.value) appDebugLog("search", "results", { q, count: results.value.length });
+    appDebugLog("search", `query "${q}": ${results.value.length} results`);
   } catch (e) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
-    if (appDebugEnabled.value) appDebugLog("search", "error", { q, err: String(e) });
+    appDebugLog("search", `query "${q}": error — ${String(e)}`);
   } finally {
     if (seq === searchRequestSeq) {
       loading.value = false;
@@ -800,10 +764,10 @@ async function handleSelect(torrent) {
     selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
     torrentFilesBeforeAlbumPreview.value = null;
     torrentSelectedBeforeAlbumPreview.value = null;
-    if (appDebugEnabled.value) appDebugLog("search", "deselect", { id: torrent.id, name: torrent.name });
+    appDebugLog("search", `torrent deselected: #${torrent.id} "${torrent.name}"`);
     return;
   }
-  if (appDebugEnabled.value) appDebugLog("search", "open", { id: torrent.id, name: torrent.name, seeders: torrent.seeders });
+  appDebugLog("search", `torrent opened: #${torrent.id} "${torrent.name}" seeders=${torrent.seeders}`);
   if (selected.value) {
     backStack.value.push(snapshotTorrentForBack());
   } else {
@@ -829,7 +793,7 @@ async function handleSelect(torrent) {
       idx:      i,
       origIdx:  i,
     }));
-    if (appDebugEnabled.value) appDebugLog("search", "files", { id: torrent.id, fileCount: files.value.length, hasMagnet: !!details.magnet });
+    appDebugLog("search", `torrent files loaded: #${torrent.id} files=${files.value.length} hasMagnet=${!!details.magnet}`);
     // Warm .torrent file cache while user browses the track list.
     // By the time they click play it'll already be resolved → streamUrl skips the fetch.
     void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
@@ -843,7 +807,7 @@ async function handleSelect(torrent) {
     });
   } catch (e) {
     console.error("handleSelect:", e);
-    if (appDebugEnabled.value) appDebugLog("search", "openError", { id: torrent.id, err: String(e) });
+    appDebugLog("search", `torrent open error: #${torrent.id} — ${String(e)}`);
     // Leave files empty — TorrentView shows "Аудиофайлы не найдены."
   } finally {
     loadingFiles.value = false;
@@ -1187,7 +1151,7 @@ function handleDownloadAlbum(albumFiles, albumName = "") {
 function handleSearchArtist(artist) {
   if (!artist?.trim()) return;
   searchQuery.value = artist.trim();
-  if (appDebugEnabled.value) appDebugLog("search", "artistClick", { artist: artist.trim() });
+  appDebugLog("search", `artist filter: "${artist.trim()}"`);
   void handleSearch(artist.trim());
 }
 
@@ -1877,7 +1841,6 @@ function onMouseSideButtonUp(e) {
             @download-all="handleDownloadAll"
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
-            @hover-track="handleHoverTrack"
             @add-to-playlist="handleShowAddToPlaylist"
             @add-to-queue="handleAddToQueueFromTorrent"
           />
@@ -1896,8 +1859,6 @@ function onMouseSideButtonUp(e) {
       :has-next="playerHasNext"
       :repeat-mode="repeatMode"
       :shuffle-on="shuffleOn"
-      :hover-prefetch-url="hoverPrefetchUrl"
-      :hover-prefetch-key="hoverPrefetchKey"
       :likes="likes"
       :playback-queue="queue"
       :queue-index="queuePos"
@@ -1908,7 +1869,6 @@ function onMouseSideButtonUp(e) {
       @toggle-shuffle="toggleShuffle"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
-      @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
       @toggle-like="handleToggleLike"
       @search-artist="handleSearchArtist"
       @open-torrent="handleOpenTorrentFromPlayer"

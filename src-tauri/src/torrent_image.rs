@@ -15,6 +15,8 @@ use tauri::Manager;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
+use crate::torrent_stream::debug_log::AppDebugLog;
+
 type ManagedTorrentHandle = Arc<ManagedTorrent>;
 
 const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024; // 3 MB hard cap
@@ -160,10 +162,11 @@ pub struct TorrentImageState {
     base_dir: Option<std::path::PathBuf>,
     magnet_states: Arc<Mutex<HashMap<String, Arc<Mutex<MagnetInner>>>>>,
     data_url_cache: Arc<Mutex<HashMap<(String, usize), String>>>,
+    debug_log: Arc<AppDebugLog>,
 }
 
 impl TorrentImageState {
-    pub fn new(app: &tauri::AppHandle) -> Self {
+    pub fn new(app: &tauri::AppHandle, debug_log: Arc<AppDebugLog>) -> Self {
         let base_dir = app.path().app_data_dir().ok().map(|d| {
             let p = d.join(torrent_images_dir_name());
             let _ = std::fs::create_dir_all(&p);
@@ -174,7 +177,12 @@ impl TorrentImageState {
             base_dir,
             magnet_states: Arc::new(Mutex::new(HashMap::new())),
             data_url_cache: Arc::new(Mutex::new(HashMap::new())),
+            debug_log,
         }
+    }
+
+    fn dlog(&self, msg: impl Into<String>) {
+        self.debug_log.push("cover", msg.into(), None);
     }
 
     fn cache_put(
@@ -225,25 +233,49 @@ impl TorrentImageState {
         file_idx: usize,
         torrent_file_bytes: Option<Vec<u8>>,
     ) -> Result<Option<String>, String> {
+        // Short prefix of the magnet for readable log lines (info-hash portion).
+        let magnet_fp = magnet.get(..80).unwrap_or(&magnet);
+
         let key = (magnet.clone(), file_idx);
         {
             let cache = self.data_url_cache.lock().await;
-            if let Some(url) = cache.get(&key) {
-                return Ok(Some(url.clone()));
+            if let Some(_url) = cache.get(&key) {
+                self.dlog(format!(
+                    "torrent cover: cache hit — file_idx={file_idx} magnet={magnet_fp}…"
+                ));
+                return Ok(Some(_url.clone()));
             }
         }
 
+        self.dlog(format!(
+            "torrent cover: start — file_idx={file_idx} has_torrent_data={} magnet={magnet_fp}…",
+            torrent_file_bytes.is_some(),
+        ));
+
         let inner = self.magnet_mutex(&magnet).await;
-        let session = self.ensure_session().await?;
+        let session = self.ensure_session().await.map_err(|e| {
+            self.dlog(format!("torrent cover: librqbit session init failed — {e}"));
+            e
+        })?;
 
         let handle = {
             let mut g = inner.lock().await;
             match g
                 .register_file(&session, &magnet, file_idx, torrent_file_bytes)
-                .await?
-            {
+                .await
+                .map_err(|e| {
+                    self.dlog(format!(
+                        "torrent cover: register_file failed — file_idx={file_idx} err={e}"
+                    ));
+                    e
+                })? {
                 Some(h) => h,
-                None => return Ok(None),
+                None => {
+                    self.dlog(format!(
+                        "torrent cover: got ListOnly response (no download) — file_idx={file_idx}"
+                    ));
+                    return Ok(None);
+                }
             }
         };
 
@@ -255,6 +287,9 @@ impl TorrentImageState {
                 let mut map = self.magnet_states.lock().await;
                 map.remove(&magnet);
             }
+            self.dlog(format!(
+                "torrent cover: wait_until_initialized failed — file_idx={file_idx} err={e}"
+            ));
             return Err(format!("{e}"));
         }
 
@@ -270,9 +305,20 @@ impl TorrentImageState {
             }
         }
 
-        if let Some(ref url) = out {
-            let mut cache = self.data_url_cache.lock().await;
-            Self::cache_put(&mut cache, key, url.clone());
+        match &out {
+            Some(url) => {
+                self.dlog(format!(
+                    "torrent cover: OK — file_idx={file_idx} size={}B",
+                    url.len(),
+                ));
+                let mut cache = self.data_url_cache.lock().await;
+                Self::cache_put(&mut cache, key, url.clone());
+            }
+            None => {
+                self.dlog(format!(
+                    "torrent cover: read returned None — file_idx={file_idx} (see prior log for reason)"
+                ));
+            }
         }
         Ok(out)
     }
@@ -298,10 +344,29 @@ impl TorrentImageState {
             })
             .unwrap_or_else(|_| "image/jpeg".to_string());
 
-        let mut stream = handle.clone().stream(file_idx).ok()?;
+        let stream_result = handle.clone().stream(file_idx);
+        let mut stream = match stream_result {
+            Ok(s) => s,
+            Err(e) => {
+                self.dlog(format!(
+                    "torrent cover: stream() failed for file_idx={file_idx} — {e}"
+                ));
+                return None;
+            }
+        };
 
         let total = stream.len() as usize;
-        if total == 0 || total > MAX_IMAGE_BYTES {
+        if total == 0 {
+            self.dlog(format!(
+                "torrent cover: file_idx={file_idx} is 0 bytes (empty file in torrent)"
+            ));
+            return None;
+        }
+        if total > MAX_IMAGE_BYTES {
+            self.dlog(format!(
+                "torrent cover: file_idx={file_idx} too large ({total}B > {}B limit) — skipping",
+                MAX_IMAGE_BYTES,
+            ));
             return None;
         }
 
@@ -312,20 +377,33 @@ impl TorrentImageState {
                 match stream.read(&mut buf[pos..]).await {
                     Ok(0) => break,
                     Ok(n) => pos += n,
-                    Err(_) => return None,
+                    Err(e) => {
+                        eprintln!("[cover] read error at pos={pos}/{total}: {e}");
+                        return None;
+                    }
                 }
             }
-            if pos == 0 {
-                None
-            } else {
-                Some(buf[..pos].to_vec())
-            }
+            if pos == 0 { None } else { Some(buf[..pos].to_vec()) }
         })
         .await;
 
         let bytes = match result {
             Ok(Some(b)) => b,
-            _ => return None,
+            Ok(None) => {
+                self.dlog(format!(
+                    "torrent cover: read returned 0 bytes for file_idx={file_idx} \
+                     (piece not available or read error — check stderr)"
+                ));
+                return None;
+            }
+            Err(_) => {
+                self.dlog(format!(
+                    "torrent cover: download timed out after {FETCH_TIMEOUT_SECS}s \
+                     for file_idx={file_idx} size={total}B \
+                     (torrent may have no seeders or tracker unreachable)"
+                ));
+                return None;
+            }
         };
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
