@@ -31,7 +31,7 @@ pub async fn fetch_album_cover(client: &Client, artist: &str, album: &str) -> Op
 async fn search_release(client: &Client, artist: &str, album: &str) -> Option<String> {
     let query = build_query(artist, album);
 
-    let resp = client
+    let resp = match client
         .get(format!("{}/release", MB_API))
         .query(&[
             ("query", &query),
@@ -41,13 +41,29 @@ async fn search_release(client: &Client, artist: &str, album: &str) -> Option<St
         .header(header::USER_AGENT, USER_AGENT)
         .send()
         .await
-        .ok()?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[cover/musicbrainz] HTTP request failed: {e}");
+            return None;
+        }
+    };
 
     if !resp.status().is_success() {
+        eprintln!("[cover/musicbrainz] search returned HTTP {}", resp.status());
         return None;
     }
 
-    let data: MbSearchResult = resp.json().await.ok()?;
+    let data: MbSearchResult = match resp.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[cover/musicbrainz] JSON parse failed: {e}");
+            return None;
+        }
+    };
+    if data.releases.is_empty() {
+        eprintln!("[cover/musicbrainz] no releases found for query: {query}");
+    }
     data.releases.into_iter().next().map(|r| r.id)
 }
 
@@ -55,14 +71,21 @@ async fn fetch_caa_front(client: &Client, mbid: &str) -> Option<String> {
     // front-250 is a 250px thumbnail — small enough to not bloat memory.
     let url = format!("{}/{}/front-250", CAA_API, mbid);
 
-    let resp = client
+    let resp = match client
         .get(&url)
         .header(header::USER_AGENT, USER_AGENT)
         .send()
         .await
-        .ok()?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[cover/caa] HTTP request failed for mbid={mbid}: {e}");
+            return None;
+        }
+    };
 
     if !resp.status().is_success() {
+        eprintln!("[cover/caa] returned HTTP {} for mbid={mbid}", resp.status());
         return None;
     }
 
@@ -74,8 +97,19 @@ async fn fetch_caa_front(client: &Client, mbid: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "image/jpeg".to_string());
 
-    let bytes = resp.bytes().await.ok()?;
-    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("[cover/caa] failed to read body for mbid={mbid}: {e}");
+            return None;
+        }
+    };
+    if bytes.is_empty() {
+        eprintln!("[cover/caa] empty response body for mbid={mbid}");
+        return None;
+    }
+    if bytes.len() > MAX_IMAGE_BYTES {
+        eprintln!("[cover/caa] image too large ({}B) for mbid={mbid}", bytes.len());
         return None;
     }
 

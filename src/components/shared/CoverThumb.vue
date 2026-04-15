@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive } from "../../rutracker/search.js";
 import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
+import { appDebugLog } from "../../appDebugLog.js";
 
 const props = defineProps({
   torrentId: [String, Number],
@@ -87,12 +88,14 @@ function setupCover() {
       if (!entry?.isIntersecting) return;
       disconnectObserver();
       if (needTorrentFetch && magnet && idx != null) {
+        void appDebugLog("cover", `CoverThumb visible — starting torrent cover fetch fileIdx=${idx} torrentId=${props.torrentId}`);
         torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
           .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
-          .catch(() => {});
+          .catch((e) => void appDebugLog("cover", `CoverThumb torrent fetch failed — fileIdx=${idx} err=${String(e)}`));
       }
       if (needRutrackerFetch && topicId) {
-        getRutrackerCoverDataUrl(topicId).catch(() => {});
+        void appDebugLog("cover", `CoverThumb visible — starting rutracker cover fetch topicId=${topicId}`);
+        getRutrackerCoverDataUrl(topicId).catch((e) => void appDebugLog("cover", `CoverThumb rutracker fetch failed — topicId=${topicId} err=${String(e)}`));
       }
     },
     { rootMargin: "400px" }
@@ -125,7 +128,7 @@ onUnmounted(disconnectObserver);
       :src="coverUrl"
       :class="fill ? 'album-art-img' : 'cover-thumb-img'"
       alt=""
-      @error="coverErr = true"
+      @error="coverErr = true; appDebugLog('cover', `CoverThumb <img> onerror — cover rendered but browser rejected it torrentId=${props.torrentId} coverFileIdx=${props.coverFileIdx}`)"
     />
     <svg v-else class="cover-thumb-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M9 18V5l12-2v13"/>

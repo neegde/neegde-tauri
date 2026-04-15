@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { reactive } from "vue";
 import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
+import { appDebugLog } from "../appDebugLog.js";
 
 /** @type {Map<string, Promise<string | null>>} */
 const pending = new Map();
@@ -31,6 +32,8 @@ export async function getTorrentImageDataUrl(magnet, fileIdx, torrentFileB64 = n
 
   let p = pending.get(key);
   if (!p) {
+    const magnetFp = magnet.slice(0, 80);
+    void appDebugLog("cover", `torrent cover: invoke start — fileIdx=${fileIdx} hasTorrentData=${!!torrentFileB64} magnet=${magnetFp}…`);
     p = invoke("torrent_fetch_image", {
       magnet: enrichMagnetWithOpenTrackers(magnet),
       fileIdx,
@@ -39,12 +42,19 @@ export async function getTorrentImageDataUrl(magnet, fileIdx, torrentFileB64 = n
       .then((u) => {
         const v = u ?? null;
         if (v) {
+          void appDebugLog("cover", `torrent cover: invoke OK — fileIdx=${fileIdx} dataUrlLen=${v.length}`);
           cache.set(key, v);
           if (cache.size > TORRENT_IMAGE_CACHE_MAX) {
             cache.delete(cache.keys().next().value);
           }
+        } else {
+          void appDebugLog("cover", `torrent cover: invoke returned null — fileIdx=${fileIdx} (Rust returned None, see vozduxan logs for reason)`);
         }
         return v;
+      })
+      .catch((e) => {
+        void appDebugLog("cover", `torrent cover: invoke error — fileIdx=${fileIdx} err=${String(e)}`);
+        return null;
       })
       .finally(() => {
         pending.delete(key);
