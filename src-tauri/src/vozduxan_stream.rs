@@ -224,7 +224,14 @@ impl VozduxanStreamState {
             let dlog = |msg: String| { dlog.push("vozduxan", msg, None); };
             let magnet_c = CString::new(magnet.as_str()).unwrap();
 
-            dlog(format!("prepare start — file_idx={file_idx} has_torrent_data={}", torrent_bytes.is_some()));
+            dlog(format!(
+                "prepare: dispatching to C++ — file_idx={file_idx} \
+                 has_torrent_data={} version={my_version} \
+                 (current={:?} prefetch={:?})",
+                torrent_bytes.is_some(),
+                inner.current_token.lock().unwrap().as_deref().unwrap_or("—"),
+                inner.prefetch_token.lock().unwrap().as_deref().unwrap_or("—"),
+            ));
 
             let ctx = Box::new(ProgressCtx { app: app_clone });
             let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
@@ -248,7 +255,12 @@ impl VozduxanStreamState {
             let _ = unsafe { Box::from_raw(ctx_ptr as *mut ProgressCtx) };
 
             if inner.prepare_version.load(Ordering::Acquire) != my_version {
-                dlog("prepare superseded — discarding result (track changed)".into());
+                // A newer prepare() call was started before this one finished — its result wins.
+                dlog(format!(
+                    "prepare: version mismatch (my={my_version} current={}) — \
+                     track changed mid-prepare, releasing stale result",
+                    inner.prepare_version.load(Ordering::Acquire),
+                ));
                 if info.error == ffi::VozduxanError::Ok {
                     let token = ffi::c_bytes_to_string(&info.token);
                     let token_c = CString::new(token).unwrap();
@@ -257,9 +269,9 @@ impl VozduxanStreamState {
                 return Err("Отменено".into());
             }
 
-            // Handle cancel (prepare finished but caller gave up).
+            // Handle cancel (prepare finished but caller gave up before result was used).
             if inner.prepare_cancelled.load(Ordering::Relaxed) {
-                dlog("prepare cancelled after C++ returned".into());
+                dlog("prepare: cancelled flag was set while C++ was running — releasing result".into());
                 if info.error == ffi::VozduxanError::Ok {
                     let token_c =
                         CString::new(ffi::c_bytes_to_string(&info.token)).unwrap();
@@ -270,22 +282,25 @@ impl VozduxanStreamState {
 
             if info.error != ffi::VozduxanError::Ok {
                 let msg = ffi::c_bytes_to_string(&info.error_msg);
-                dlog(format!("prepare ERROR: {:?} — {msg}", info.error));
+                dlog(format!("prepare: C++ returned error {:?} — {msg}", info.error));
                 return Err(msg);
             }
 
             let url   = ffi::c_bytes_to_string(&info.url);
             let token = ffi::c_bytes_to_string(&info.token);
-            dlog(format!("prepare OK — token={token}"));
 
-            // Release old current stream.
+            // Store new token in current_token, releasing whatever was there before.
             let mut current = inner.current_token.lock().unwrap();
-            if let Some(old) = current.take() {
-                dlog(format!("prepare: releasing old current token={old}"));
-                let old_c = CString::new(old).unwrap();
+            let old_token = current.take();
+            if let Some(ref old) = old_token {
+                let old_c = CString::new(old.as_str()).unwrap();
                 unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
             }
-            *current = Some(token);
+            *current = Some(token.clone());
+            dlog(format!(
+                "prepare: ready — new token={token} replaced={}",
+                old_token.as_deref().unwrap_or("—"),
+            ));
 
             Ok(url)
         })
@@ -302,46 +317,64 @@ impl VozduxanStreamState {
 
     /* ── release_token ─────────────────────────────────────────────────── */
     pub fn release_token(&self, token: &str) {
-        self.dlog(format!("release_token({token})"));
         let token_c = CString::new(token).unwrap();
         let t0 = std::time::Instant::now();
         unsafe { ffi::vozduxan_stream_release(self.inner.ptr, token_c.as_ptr()) };
-        self.dlog(format!("release_token({token}) done in {:?}", t0.elapsed()));
+        let elapsed = t0.elapsed();
+
+        // Determine which bucket(s) held this token so the log is meaningful.
         let mut current = self.inner.current_token.lock().unwrap();
-        if current.as_deref() == Some(token) {
-            *current = None;
-        }
+        let was_current = current.as_deref() == Some(token);
+        if was_current { *current = None; }
         let mut prefetch = self.inner.prefetch_token.lock().unwrap();
-        if prefetch.as_deref() == Some(token) {
-            *prefetch = None;
-        }
+        let was_prefetch = prefetch.as_deref() == Some(token);
+        if was_prefetch { *prefetch = None; }
         let mut warm = self.inner.warm_prefetch_token.lock().unwrap();
-        if warm.as_deref() == Some(token) {
-            *warm = None;
-        }
+        let was_warm = warm.as_deref() == Some(token);
+        if was_warm { *warm = None; }
+
+        let bucket = match (was_current, was_prefetch, was_warm) {
+            (true,  _,     _)     => "current",
+            (_,     true,  _)     => "prefetch",
+            (_,     _,     true)  => "warm",
+            _                     => "unknown/external",
+        };
+        self.dlog(format!("release: token={token} bucket={bucket} took={elapsed:.1?}"));
     }
 
     /* ── dispose (release all) ─────────────────────────────────────────── */
     pub fn dispose(&self) {
+        let mut released = Vec::<String>::new();
+
         let mut current = self.inner.current_token.lock().unwrap();
         if let Some(token) = current.take() {
-            let c = CString::new(token).unwrap();
+            let c = CString::new(token.as_str()).unwrap();
             unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
+            released.push(format!("current={token}"));
         }
         let mut prefetch = self.inner.prefetch_token.lock().unwrap();
         if let Some(token) = prefetch.take() {
-            let c = CString::new(token).unwrap();
+            let c = CString::new(token.as_str()).unwrap();
             unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
+            released.push(format!("prefetch={token}"));
         }
         let mut warm = self.inner.warm_prefetch_token.lock().unwrap();
         if let Some(token) = warm.take() {
-            let c = CString::new(token).unwrap();
+            let c = CString::new(token.as_str()).unwrap();
             unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
+            released.push(format!("warm={token}"));
         }
         let mut hover = self.inner.hover_token.lock().unwrap();
         if let Some(token) = hover.take() {
-            let c = CString::new(token).unwrap();
+            let c = CString::new(token.as_str()).unwrap();
             unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
+            released.push(format!("hover={token}"));
+        }
+
+        if released.is_empty() {
+            self.dlog("dispose: no active tokens — nothing to release");
+        } else {
+            self.dlog(format!("dispose: released {} token(s) — {}", released.len(), released.join(", ")));
         }
     }
 
@@ -363,7 +396,12 @@ impl VozduxanStreamState {
         let url = tokio::task::spawn_blocking(move || -> Result<String, String> {
             let dlog = |msg: String| { dlog_arc.push("vozduxan", msg, None); };
             let magnet_c = CString::new(magnet.as_str()).unwrap();
-            dlog(format!("hover_prepare start — file_idx={file_idx}"));
+            dlog(format!(
+                "hover-prepare: dispatching to C++ — file_idx={file_idx} \
+                 has_torrent_data={} (existing hover={:?})",
+                torrent_bytes.is_some(),
+                inner.hover_token.lock().unwrap().as_deref().unwrap_or("—"),
+            ));
 
             let ctx = Box::new(ProgressCtx { app: app_clone });
             let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
@@ -386,23 +424,26 @@ impl VozduxanStreamState {
 
             if info.error != ffi::VozduxanError::Ok {
                 let msg = ffi::c_bytes_to_string(&info.error_msg);
-                dlog(format!("hover_prepare ERROR: {msg}"));
+                dlog(format!("hover-prepare: C++ error — {msg}"));
                 return Err(msg);
             }
 
             let url   = ffi::c_bytes_to_string(&info.url);
             let token = ffi::c_bytes_to_string(&info.token);
-            dlog(format!("hover_prepare OK — token={token}"));
 
-            // Release old hover token (if any) and park the new one.
-            // NEVER touch current_token.
+            // Park in hover_token; release any previous hover stream.
+            // current_token is intentionally never touched here.
             let mut hover = inner.hover_token.lock().unwrap();
-            if let Some(old) = hover.take() {
-                dlog(format!("hover_prepare releasing old hover token={old}"));
-                let old_c = CString::new(old).unwrap();
+            let old_hover = hover.take();
+            if let Some(ref old) = old_hover {
+                let old_c = CString::new(old.as_str()).unwrap();
                 unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
             }
-            *hover = Some(token);
+            *hover = Some(token.clone());
+            dlog(format!(
+                "hover-prepare: ready — token={token} replaced={}",
+                old_hover.as_deref().unwrap_or("—"),
+            ));
             Ok(url)
         })
         .await
@@ -414,26 +455,25 @@ impl VozduxanStreamState {
     /* ── hover_release ─────────────────────────────────────────────────── */
     /// Release the hover-prefetch token explicitly (user navigated away without clicking).
     pub fn hover_release(&self, token: &str) {
-        self.dlog(format!("hover_release({token})"));
         let token_c = CString::new(token).unwrap();
         unsafe { ffi::vozduxan_stream_release(self.inner.ptr, token_c.as_ptr()) };
         let mut hover = self.inner.hover_token.lock().unwrap();
         if hover.as_deref() == Some(token) {
             *hover = None;
         }
+        self.dlog(format!("hover-release: user left hover without clicking — released token={token}"));
     }
 
     /* ── hover_activate ────────────────────────────────────────────────── */
     /// Called when the player actually starts using the hover-prefetch URL.
     /// Moves the token from hover_token → current_token, releasing old current.
     pub fn hover_activate(&self, token: &str) {
-        self.dlog(format!("hover_activate({token}) — promoting hover→current"));
-        // Release old current.
+        // Release old current stream if it differs.
         let mut current = self.inner.current_token.lock().unwrap();
-        if let Some(old) = current.take() {
+        let old_current = current.take();
+        if let Some(ref old) = old_current {
             if old != token {
-                self.dlog(format!("hover_activate releasing old current={old}"));
-                let old_c = CString::new(old).unwrap();
+                let old_c = CString::new(old.as_str()).unwrap();
                 unsafe { ffi::vozduxan_stream_release(self.inner.ptr, old_c.as_ptr()) };
             }
         }
@@ -443,6 +483,10 @@ impl VozduxanStreamState {
         if hover.as_deref() == Some(token) {
             *hover = None;
         }
+        self.dlog(format!(
+            "hover-activate: hover→current promoted — token={token} evicted={}",
+            old_current.as_deref().unwrap_or("—"),
+        ));
     }
 
     /* ── cancel_prepare ────────────────────────────────────────────────── */
@@ -521,8 +565,17 @@ impl VozduxanStreamState {
         warm_only: bool,
     ) -> Result<String, String> {
         let inner = self.inner.clone();
+        let dlog_arc = self.debug_log.clone();
 
         let url = tokio::task::spawn_blocking(move || {
+            let dlog = |msg: String| { dlog_arc.push("vozduxan", msg, None); };
+            let bucket_name = if warm_only { "warm" } else { "prefetch" };
+            dlog(format!(
+                "prefetch-{bucket_name}: dispatching to C++ — \
+                 file_idx={file_idx} has_torrent_data={}",
+                torrent_bytes.is_some(),
+            ));
+
             let magnet_c = CString::new(magnet.as_str()).unwrap();
 
             let info = unsafe {
@@ -541,7 +594,9 @@ impl VozduxanStreamState {
             };
 
             if info.error != ffi::VozduxanError::Ok {
-                return Err(ffi::c_bytes_to_string(&info.error_msg));
+                let msg = ffi::c_bytes_to_string(&info.error_msg);
+                dlog(format!("prefetch-{bucket_name}: C++ error — {msg}"));
+                return Err(msg);
             }
 
             let url = ffi::c_bytes_to_string(&info.url);
@@ -549,18 +604,28 @@ impl VozduxanStreamState {
 
             if warm_only {
                 let mut warm = inner.warm_prefetch_token.lock().unwrap();
-                if let Some(old) = warm.take() {
-                    let old_c = CString::new(old).unwrap();
+                let old = warm.take();
+                if let Some(ref old_tok) = old {
+                    let old_c = CString::new(old_tok.as_str()).unwrap();
                     unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
                 }
-                *warm = Some(token);
+                *warm = Some(token.clone());
+                dlog(format!(
+                    "prefetch-warm: ready — token={token} replaced={}",
+                    old.as_deref().unwrap_or("—"),
+                ));
             } else {
                 let mut prefetch = inner.prefetch_token.lock().unwrap();
-                if let Some(old) = prefetch.take() {
-                    let old_c = CString::new(old).unwrap();
+                let old = prefetch.take();
+                if let Some(ref old_tok) = old {
+                    let old_c = CString::new(old_tok.as_str()).unwrap();
                     unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
                 }
-                *prefetch = Some(token);
+                *prefetch = Some(token.clone());
+                dlog(format!(
+                    "prefetch-next: ready — token={token} replaced={}",
+                    old.as_deref().unwrap_or("—"),
+                ));
             }
             Ok(url)
         })
