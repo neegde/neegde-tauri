@@ -2,6 +2,7 @@ name: Desktop release
 
 on:
   push:
+    branches: [main, dev]
   pull_request:
 
 permissions:
