@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { reactive } from "vue";
 import { getMirror } from "./config.js";
+import { appDebugLog } from "../appDebugLog.js";
 
 /** Max entries — only covers that were actually loaded (see IntersectionObserver in UI). */
 const MAX_ENTRIES = 64;
@@ -116,10 +117,23 @@ export async function getRutrackerCoverDataUrl(topicId) {
   let p = pending.get(key);
   if (!p) {
     const mirror = getMirror();
+    void appDebugLog("cover", `rutracker cover: fetching — topicId=${topicId} mirror=${mirror}`);
     p = invoke("rutracker_get_cover", { mirror, topicId: String(topicId) })
       .then((u) => {
-        rememberRutrackerCover(topicId, u ?? null);
-        return u ?? null;
+        const v = u ?? null;
+        void appDebugLog(
+          "cover",
+          v
+            ? `rutracker cover: OK — topicId=${topicId} dataUrlLen=${v.length}`
+            : `rutracker cover: not found — topicId=${topicId} (server returned null/empty)`,
+        );
+        rememberRutrackerCover(topicId, v);
+        return v;
+      })
+      .catch((e) => {
+        void appDebugLog("cover", `rutracker cover: error — topicId=${topicId} err=${String(e)}`);
+        rememberRutrackerCover(topicId, null);
+        return null;
       })
       .finally(() => {
         pending.delete(key);

@@ -69,6 +69,7 @@ fn kill_vite_dev_server() {
 async fn fetch_album_cover(
     state: tauri::State<'_, rutracker::RutrackerState>,
     cache: tauri::State<'_, CoverArtCache>,
+    ts: tauri::State<'_, torrent_stream::TorrentStreamState>,
     artist: String,
     album: String,
 ) -> Result<Option<String>, String> {
@@ -82,12 +83,32 @@ async fn fetch_album_cover(
     {
         let mut c = cache.lock().unwrap();
         if let Some(cached) = c.get(&key) {
+            ts.debug_log().push(
+                "cover",
+                format!("musicbrainz cover: cache hit — artist={artist:?} album={album:?} found={}", cached.is_some()),
+                None,
+            );
             return Ok(cached.clone());
         }
     }
 
+    ts.debug_log().push(
+        "cover",
+        format!("musicbrainz cover: fetching — artist={artist:?} album={album:?}"),
+        None,
+    );
+
     let client = state.http_client()?;
     let result = cover_art::fetch_album_cover(&client, &artist, &album).await;
+
+    ts.debug_log().push(
+        "cover",
+        format!(
+            "musicbrainz cover: {} — artist={artist:?} album={album:?}",
+            if result.is_some() { "OK" } else { "not found (no MusicBrainz match or CoverArtArchive returned nothing)" },
+        ),
+        None,
+    );
 
     cache.lock().unwrap().put(key, result.clone());
     Ok(result)
@@ -117,6 +138,7 @@ pub fn run() {
             // Sync: frontend must see correct `get_app_debug_enabled` on first invoke (spawn was too late).
             apply_app_debug_from_disk(app.handle(), &ts);
             let vozduxan_debug = ts.debug_log();
+            let image_debug = ts.debug_log();
             app.manage(VozduxanStreamState::new(app.handle(), vozduxan_debug));
             app.manage(ts);
 
@@ -130,7 +152,7 @@ pub fn run() {
                 }
             });
 
-            app.manage(torrent_image::TorrentImageState::new(app.handle()));
+            app.manage(torrent_image::TorrentImageState::new(app.handle(), image_debug));
             app.manage(DiscordPresenceState::new());
 
             // System tray
@@ -203,9 +225,6 @@ pub fn run() {
             vozduxan_stream::torrent_dispose_preview,
             vozduxan_stream::torrent_release_stream,
             vozduxan_stream::vozduxan_notify_position,
-            vozduxan_stream::torrent_hover_prepare_stream,
-            vozduxan_stream::torrent_hover_release_stream,
-            vozduxan_stream::torrent_hover_activate,
             // ── Export: full-download to user library (librqbit) ─────────
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,

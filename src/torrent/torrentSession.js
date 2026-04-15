@@ -4,6 +4,7 @@
  * background playback.
  */
 import { invoke } from "@tauri-apps/api/core";
+import { appDebugLog } from "../appDebugLog.js";
 
 /** Clears every registered stream (e.g. cache purge). Not for normal navigation. */
 export function disposeTorrentPreview() {
@@ -19,11 +20,15 @@ export function releaseTorrentStreamUrl(url) {
   const rest = url.slice(i + marker.length);
   const token = rest.split(/[/?#]/)[0];
   if (!token) return Promise.resolve();
-  return invoke("torrent_release_stream", { token }).catch(() => {});
+  void appDebugLog("stream", `release: token=${token}`);
+  return invoke("torrent_release_stream", { token }).catch((e) => {
+    void appDebugLog("stream", `release: invoke error — token=${token} err=${String(e)}`);
+  });
 }
 
 /** Просит Tauri прервать долгий `torrent_prepare_stream` (prebuffer). */
 export function torrentPrepareCancel() {
+  void appDebugLog("stream", "prepare: cancel requested by user");
   return invoke("torrent_prepare_cancel").catch(() => {});
 }
 
@@ -35,20 +40,6 @@ function tokenFromUrl(url) {
   if (i < 0) return null;
   const rest = url.slice(i + marker.length);
   return rest.split(/[/?#]/)[0] || null;
-}
-
-/** Release a hover-prefetch stream without activating it (user left without clicking). */
-export function hoverReleaseTorrentStreamUrl(url) {
-  const token = tokenFromUrl(url);
-  if (!token) return Promise.resolve();
-  return invoke("torrent_hover_release_stream", { token }).catch(() => {});
-}
-
-/** Promote the hover-prefetch token → current_token. Call before assigning the hover URL to the audio element. */
-export function hoverActivateTorrentStreamUrl(url) {
-  const token = tokenFromUrl(url);
-  if (!token) return Promise.resolve();
-  return invoke("torrent_hover_activate", { token }).catch(() => {});
 }
 
 /**

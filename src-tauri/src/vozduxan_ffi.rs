@@ -90,6 +90,8 @@ unsafe extern "C" {
         torrent_data: *const u8,
         torrent_len: usize,
         file_idx: c_int,
+        // Non-zero for the active playback track; zero for prefetch/hover.
+        is_main: c_int,
         progress_fn: VozduxanProgressFn,
         userdata: *mut c_void,
     ) -> VozduxanStreamInfo;

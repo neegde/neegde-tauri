@@ -498,23 +498,19 @@ impl TorrentStreamState {
         let session = self.inner.ensure_session().await?;
         let base_dir = self.inner.stream_torrents_base()?;
         let t_reclaim = Instant::now();
-        let reclaim_before_mb = if self.inner.debug_log.is_enabled() {
-            Some(directory_size_bytes(&base_dir) / (1024 * 1024))
-        } else {
-            None
-        };
+        let reclaim_before_mb = directory_size_bytes(&base_dir) / (1024 * 1024);
         self.inner
             .stream_cache
             .maybe_reclaim(&session, &base_dir)
             .await;
-        if let Some(before) = reclaim_before_mb {
+        {
             let after = directory_size_bytes(&base_dir) / (1024 * 1024);
             self.inner.debug_log.push(
                 "prepare",
-                "maybe_reclaim done",
+                "cache reclaim done",
                 Some(json!({
                     "ms": t_reclaim.elapsed().as_millis(),
-                    "dirSizeMiBBefore": before,
+                    "dirSizeMiBBefore": reclaim_before_mb,
                     "dirSizeMiBAfter": after,
                 })),
             );
@@ -572,7 +568,7 @@ impl TorrentStreamState {
                     "fromTorrentBytes": from_bytes,
                 })),
             );
-            if self.inner.debug_log.is_enabled() && !from_bytes {
+            if !from_bytes {
                 let dbg_hb = self.inner.debug_log.clone();
                 let done_flag = Arc::clone(&add_torrent_await_done);
                 let info_hash_str = info_hash.as_string();
@@ -671,17 +667,15 @@ impl TorrentStreamState {
                     let pt = prep_for_task.prebuffer_target.load(Ordering::Relaxed);
                     let payload = build_prepare_progress_payload(&s, pf, pt);
                     let _ = app_handle.emit("torrent-prepare-progress", &payload);
-                    if dbg.is_enabled() {
-                        dbg.push(
-                            "prepare",
-                            "stats (poller)",
-                            Some(json!({
-                                "torrent": torrent_stats_for_debug(&s),
-                                "prebufferFilled": if pt > 0 { Some(pf) } else { None },
-                                "prebufferTarget": if pt > 0 { Some(pt) } else { None },
-                            })),
-                        );
-                    }
+                    dbg.push(
+                        "prepare",
+                        "stats (poller)",
+                        Some(json!({
+                            "torrent": torrent_stats_for_debug(&s),
+                            "prebufferFilled": if pt > 0 { Some(pf) } else { None },
+                            "prebufferTarget": if pt > 0 { Some(pt) } else { None },
+                        })),
+                    );
                 }
             });
         }
