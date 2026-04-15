@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 import { getMirror } from "../rutracker/config.js";
+import { appDebugLog } from "../appDebugLog.js";
 
 /**
  * Resolves torrent file list from a magnet URI (DHT/trackers). Same row shape as Rutracker details.files.
@@ -54,6 +55,7 @@ _loadPersistedTorrentFiles();
 
 function _cachedTorrentFileB64(tid) {
   if (_torrentFileCache.has(tid)) {
+    void appDebugLog("stream", `torrent file b64: cache hit — torrentId=${tid}`);
     // LRU touch: move to end
     const p = _torrentFileCache.get(tid);
     _torrentFileCache.delete(tid);
@@ -63,15 +65,25 @@ function _cachedTorrentFileB64(tid) {
   if (_torrentFileCache.size >= TORRENT_FILE_CACHE_MAX) {
     _torrentFileCache.delete(_torrentFileCache.keys().next().value);
   }
+  void appDebugLog("stream", `torrent file b64: downloading from rutracker — torrentId=${tid} mirror=${getMirror()}`);
+  const t0 = Date.now();
   const p = invoke("rutracker_download_torrent_file_b64", {
     mirror: getMirror(),
     topicId: tid,
   })
     .then((b64) => {
-      if (b64) _persistTorrentFile(tid, b64);
+      if (b64) {
+        _persistTorrentFile(tid, b64);
+        void appDebugLog("stream", `torrent file b64: download OK — torrentId=${tid} size=${b64.length}B took=${Date.now()-t0}ms`);
+      } else {
+        void appDebugLog("stream", `torrent file b64: download returned null — torrentId=${tid} (will fall back to DHT/magnet)`);
+      }
       return b64 ?? null;
     })
-    .catch(() => null);
+    .catch((e) => {
+      void appDebugLog("stream", `torrent file b64: download error — torrentId=${tid} err=${String(e)} (will fall back to DHT/magnet)`);
+      return null;
+    });
   _torrentFileCache.set(tid, p);
   return p;
 }
@@ -95,12 +107,20 @@ export async function streamUrl(magnet, fileIdx, opts = {}) {
   if (src === "rutracker" && tid !== "") {
     torrentFileB64 = await _cachedTorrentFileB64(tid);
   }
-  const ready = await invoke("torrent_prepare_stream", {
-    magnet: m,
-    fileIdx,
-    torrentFileB64,
-  });
-  return ready?.url ?? "";
+  void appDebugLog("stream", `streamUrl: invoking prepare — fileIdx=${fileIdx} torrentId=${tid||"—"} hasTorrentFile=${!!torrentFileB64}`);
+  const t0 = Date.now();
+  let ready;
+  try {
+    ready = await invoke("torrent_prepare_stream", { magnet: m, fileIdx, torrentFileB64 });
+  } catch (e) {
+    void appDebugLog("stream", `streamUrl: prepare FAILED — fileIdx=${fileIdx} torrentId=${tid||"—"} err=${String(e)} took=${Date.now()-t0}ms`);
+    throw e;
+  }
+  const url = ready?.url ?? "";
+  void appDebugLog("stream", url
+    ? `streamUrl: prepare OK — fileIdx=${fileIdx} url=${url} took=${Date.now()-t0}ms`
+    : `streamUrl: prepare returned empty URL — fileIdx=${fileIdx} torrentId=${tid||"—"} (Rust returned no URL)`);
+  return url;
 }
 
 /**
@@ -117,12 +137,20 @@ export async function hoverStreamUrl(magnet, fileIdx, opts = {}) {
   if (src === "rutracker" && tid !== "") {
     torrentFileB64 = await _cachedTorrentFileB64(tid);
   }
-  const ready = await invoke("torrent_hover_prepare_stream", {
-    magnet: m,
-    fileIdx,
-    torrentFileB64,
-  });
-  return ready?.url ?? "";
+  void appDebugLog("stream", `hoverStreamUrl: invoking hover_prepare — fileIdx=${fileIdx} torrentId=${tid||"—"} hasTorrentFile=${!!torrentFileB64}`);
+  const t0 = Date.now();
+  let ready;
+  try {
+    ready = await invoke("torrent_hover_prepare_stream", { magnet: m, fileIdx, torrentFileB64 });
+  } catch (e) {
+    void appDebugLog("stream", `hoverStreamUrl: hover_prepare FAILED — fileIdx=${fileIdx} torrentId=${tid||"—"} err=${String(e)} took=${Date.now()-t0}ms`);
+    throw e;
+  }
+  const url = ready?.url ?? "";
+  void appDebugLog("stream", url
+    ? `hoverStreamUrl: hover_prepare OK — fileIdx=${fileIdx} url=${url} took=${Date.now()-t0}ms`
+    : `hoverStreamUrl: hover_prepare returned empty URL — fileIdx=${fileIdx}`);
+  return url;
 }
 
 /**
@@ -162,12 +190,23 @@ export async function prefetchNextInQueue(current, next, opts = {}) {
   const m0 = enrichMagnetWithOpenTrackers(current.magnet);
   const m1 = enrichMagnetWithOpenTrackers(next.magnet);
   const nextTorrentFileB64 = await torrentFileB64ForTrack(next);
-  return invoke("torrent_prefetch_next_track", {
-    currentMagnet: m0,
-    currentFileIdx: current.fileIdx,
-    nextMagnet: m1,
-    nextFileIdx: next.fileIdx,
-    nextTorrentFileB64,
-    warmOnly: opts.warmOnly === true,
-  });
+  const warmOnly = opts.warmOnly === true;
+  void appDebugLog("stream", `prefetchNextInQueue: start — ${warmOnly ? "warm(track+2)" : "next(track+1)"} nextFileIdx=${next.fileIdx} nextTorrentId=${next.torrentId||"—"} hasTorrentFile=${!!nextTorrentFileB64}`);
+  const t0 = Date.now();
+  let result;
+  try {
+    result = await invoke("torrent_prefetch_next_track", {
+      currentMagnet: m0,
+      currentFileIdx: current.fileIdx,
+      nextMagnet: m1,
+      nextFileIdx: next.fileIdx,
+      nextTorrentFileB64,
+      warmOnly,
+    });
+  } catch (e) {
+    void appDebugLog("stream", `prefetchNextInQueue: FAILED — ${warmOnly?"warm":"next"} nextFileIdx=${next.fileIdx} err=${String(e)} took=${Date.now()-t0}ms`);
+    throw e;
+  }
+  void appDebugLog("stream", `prefetchNextInQueue: OK — ${warmOnly?"warm":"next"} kind=${result?.kind} hasUrl=${!!(result?.url)} took=${Date.now()-t0}ms`);
+  return result;
 }

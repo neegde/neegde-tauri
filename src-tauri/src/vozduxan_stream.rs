@@ -492,6 +492,7 @@ impl VozduxanStreamState {
     /* ── cancel_prepare ────────────────────────────────────────────────── */
     pub fn cancel_prepare(&self) {
         self.inner.prepare_cancelled.store(true, Ordering::Relaxed);
+        self.dlog("prepare: cancel flag set (C++ call still running, will discard result when it returns)");
     }
 
     /* ── notify_position ───────────────────────────────────────────────── */
