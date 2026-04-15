@@ -18,12 +18,19 @@ fn build_vozduxan() {
     // cmake::Config builds the project and installs it to a temp prefix.
     // The built static library lands at <dst>/lib/libvozduxan.a (POSIX) or
     // <dst>/lib/vozduxan.lib (Windows).
-    let dst = cmake::Config::new(&vozduxan_dir)
+    let mut cmake_cfg = cmake::Config::new(&vozduxan_dir);
+    cmake_cfg
         .define("CMAKE_BUILD_TYPE", "Release")
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         // Suppress noisy status output in CI; remove if you want verbose builds.
-        .very_verbose(false)
-        .build();
+        .very_verbose(false);
+
+    // macOS: force static OpenSSL so FetchContent-built libtorrent embeds it.
+    // Prevents "Library not loaded: .../libssl.dylib" on systems without Homebrew.
+    #[cfg(target_os = "macos")]
+    cmake_cfg.define("OPENSSL_USE_STATIC_LIBS", "ON");
+
+    let dst = cmake_cfg.build();
 
     let lib_dir = dst.join("lib");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
@@ -55,7 +62,12 @@ fn build_vozduxan() {
     link_cxx_stdlib();
 
     // ── Link against libtorrent-rasterbar ─────────────────────────────────
-    // Try pkg-config first (works on most Linux and Homebrew macOS setups).
+    // On macOS we always use the FetchContent static build (installed to dst/lib/
+    // by CMakeLists.txt) so the binary carries no dylib path dependencies.
+    // pkg-config is only used on Linux where dynamic linking is acceptable.
+    #[cfg(target_os = "macos")]
+    let found_via_pkg_config = false;
+    #[cfg(not(target_os = "macos"))]
     let found_via_pkg_config = pkg_config::Config::new()
         .atleast_version("2.0")
         .probe("libtorrent-rasterbar")
@@ -70,16 +82,10 @@ fn build_vozduxan() {
 fn link_libtorrent_fallback() {
     #[cfg(target_os = "macos")]
     {
-        // Homebrew installs to /opt/homebrew (ARM) or /usr/local (Intel).
-        for brew_prefix in &["/opt/homebrew", "/usr/local"] {
-            let lib_path = std::path::Path::new(brew_prefix).join("lib");
-            if lib_path.exists() {
-                println!("cargo:rustc-link-search=native={}", lib_path.display());
-                break;
-            }
-        }
-        println!("cargo:rustc-link-lib=dylib=torrent-rasterbar");
-        // FetchContent/static libtorrent links OpenSSL (ssl.cpp); rustc must see ssl/crypto too.
+        // libtorrent-rasterbar.a is installed to dst/lib/ by CMakeLists.txt
+        // (FetchContent path). Static link: no dylib runtime dep on end-user machines.
+        println!("cargo:rustc-link-lib=static=torrent-rasterbar");
+        // libtorrent links OpenSSL; link statically so there's no Homebrew path dep.
         link_homebrew_openssl_libs_macos();
         println!("cargo:rustc-link-lib=framework=SystemConfiguration");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
@@ -115,8 +121,9 @@ fn link_libtorrent_fallback() {
 
 /// Emits Cargo link instructions for Apple Silicon/Intel Homebrew OpenSSL libraries.
 ///
-/// FetchContent-built libtorrent links `libssl` / `libcrypto`; the final Rust link must
-/// include them when `pkg-config` is not used. Searches `opt/openssl@3` kegs then `lib/`.
+/// Prefers static libs (.a) so the distributed binary has no Homebrew path deps
+/// (fixes "Library not loaded: .../libssl.dylib" on macOS Tahoe and other systems
+/// where Homebrew is not installed or uses different paths).
 fn link_homebrew_openssl_libs_macos() {
     let keg_libs = [
         "/opt/homebrew/opt/openssl@3/lib",
@@ -124,19 +131,30 @@ fn link_homebrew_openssl_libs_macos() {
         "/usr/local/opt/openssl@3/lib",
         "/usr/local/opt/openssl/lib",
     ];
+    // Prefer static (.a) — embedded in binary, no runtime path dependency.
     for dir in keg_libs {
         let p = std::path::Path::new(dir);
-        if p.join("libssl.dylib").exists() || p.join("libssl.a").exists() {
+        if p.join("libssl.a").exists() {
             println!("cargo:rustc-link-search=native={}", p.display());
-            println!("cargo:rustc-link-lib=dylib=ssl");
-            println!("cargo:rustc-link-lib=dylib=crypto");
+            println!("cargo:rustc-link-lib=static=ssl");
+            println!("cargo:rustc-link-lib=static=crypto");
             return;
         }
     }
     for brew in &["/opt/homebrew", "/usr/local"] {
         let lib = std::path::Path::new(*brew).join("lib");
-        if lib.join("libssl.dylib").exists() {
+        if lib.join("libssl.a").exists() {
             println!("cargo:rustc-link-search=native={}", lib.display());
+            println!("cargo:rustc-link-lib=static=ssl");
+            println!("cargo:rustc-link-lib=static=crypto");
+            return;
+        }
+    }
+    // Fallback to dynamic if no static lib found.
+    for dir in keg_libs {
+        let p = std::path::Path::new(dir);
+        if p.join("libssl.dylib").exists() {
+            println!("cargo:rustc-link-search=native={}", p.display());
             println!("cargo:rustc-link-lib=dylib=ssl");
             println!("cargo:rustc-link-lib=dylib=crypto");
             return;
