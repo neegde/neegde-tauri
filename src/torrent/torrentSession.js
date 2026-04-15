@@ -42,29 +42,6 @@ function tokenFromUrl(url) {
   return rest.split(/[/?#]/)[0] || null;
 }
 
-/** Release a hover-prefetch stream without activating it (user left without clicking). */
-export function hoverReleaseTorrentStreamUrl(url) {
-  const token = tokenFromUrl(url);
-  if (!token) return Promise.resolve();
-  void appDebugLog("stream", `hover-release: user left without clicking — token=${token}`);
-  return invoke("torrent_hover_release_stream", { token }).catch((e) => {
-    void appDebugLog("stream", `hover-release: invoke error — token=${token} err=${String(e)}`);
-  });
-}
-
-/** Promote the hover-prefetch token → current_token. Call before assigning the hover URL to the audio element. */
-export function hoverActivateTorrentStreamUrl(url) {
-  const token = tokenFromUrl(url);
-  if (!token) {
-    void appDebugLog("stream", `hover-activate: could not extract token from url=${url?.slice(0,80)} — activation skipped`);
-    return Promise.resolve();
-  }
-  void appDebugLog("stream", `hover-activate: promoting hover→current — token=${token}`);
-  return invoke("torrent_hover_activate", { token }).catch((e) => {
-    void appDebugLog("stream", `hover-activate: invoke error — token=${token} err=${String(e)}`);
-  });
-}
-
 /**
  * Уведомляет движок о текущей позиции воспроизведения в байтах.
  * Вызывай при seek-е; движок сдвинет окно приоритета пьес.

@@ -7,7 +7,6 @@ import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
-  hoverActivateTorrentStreamUrl,
 } from "../../torrent/torrentSession.js";
 import {
   ensureEqualizer,
@@ -48,9 +47,6 @@ const props = defineProps({
   hasNext: Boolean,
   /** После восстановления сессии: не использовать HTML autoplay при появлении src. */
   suppressAutoplay: Boolean,
-  /** Hover-prefetch URL + ключ, переданные из App.vue (пользователь навёл на трек). */
-  hoverPrefetchUrl: { type: String, default: "" },
-  hoverPrefetchKey: { type: String, default: "" },
   /** Словарь лайков из App.vue — для отображения состояния лайка текущего трека. */
   likes: { type: Object, default: null },
   /** Текущая очередь воспроизведения (копия из App). */
@@ -68,7 +64,6 @@ const emit = defineEmits([
   "ended",
   "playing-change",
   "request-stream",
-  "hover-prefetch-consumed",
   "toggle-like",
   "search-artist",
   "open-torrent",
@@ -534,6 +529,25 @@ function onAudioError() {
   streamError.value = err
     ? `Ошибка воспроизведения: ${describeMediaError(err.code)}`
     : "Ошибка загрузки потока";
+
+  // Auto-retry once: vozduxan wait_for_piece timeout drops the HTTP connection
+  // which the browser reports as MEDIA_ERR_SRC_NOT_SUPPORTED (code 4). By then
+  // the torrent has been downloading the first piece for ~28s total, so a
+  // fresh prepare() almost always finds it available immediately.
+  if (prepareAttempt.value === 0) {
+    const trackKeyAtError = queueTrackKey(props.track);
+    setTimeout(() => {
+      if (
+        streamPhase.value === "error" &&
+        !loadCancelledByUser.value &&
+        queueTrackKey(props.track) === trackKeyAtError
+      ) {
+        void appDebugLog("player", `stream prepare: auto-retry after audio error — "${props.track?.fileName?.slice?.(0, 60)}" fileIdx=${props.track?.fileIdx}`);
+        streamError.value = "";
+        prepareAttempt.value++;
+      }
+    }, 1500);
+  }
 }
 
 watch(playing, (v) => {
@@ -774,14 +788,22 @@ function onAudioStalled() {
 
 function startBufferingWatchdog() {
   clearBufferingWatchdog();
+  const watchdogStartTime = audioRef.value?.currentTime ?? 0;
   void appDebugLog("player", `audio: buffering watchdog started (${BUFFERING_WATCHDOG_MS}ms) — "${props.track?.fileName?.slice?.(0,60)}"`);
   bufferingWatchdogTimer = setTimeout(() => {
     bufferingWatchdogTimer = null;
-    if (streamPhase.value === "buffering") {
-      void appDebugLog("player", `audio: buffering watchdog FIRED — stream stalled for ${BUFFERING_WATCHDOG_MS}ms currentTime=${audioRef.value?.currentTime?.toFixed(2)} src=${src.value?.slice?.(0,80)}`);
-      streamError.value = "Поток прерван: не удалось получить данные от раздачи";
-      streamPhase.value = "error";
+    if (streamPhase.value !== "buffering") return;
+    const currentTime = audioRef.value?.currentTime ?? 0;
+    if (currentTime > watchdogStartTime) {
+      // Audio made progress despite the stalled/waiting event — the browser fired
+      // a spurious stall but playback continued normally. Restore ready state.
+      void appDebugLog("player", `audio: buffering watchdog: playback advanced (${watchdogStartTime.toFixed(2)}s → ${currentTime.toFixed(2)}s) — restoring ready`);
+      streamPhase.value = "ready";
+      return;
     }
+    void appDebugLog("player", `audio: buffering watchdog FIRED — stream stalled for ${BUFFERING_WATCHDOG_MS}ms currentTime=${currentTime.toFixed(2)} src=${src.value?.slice?.(0,80)}`);
+    streamError.value = "Поток прерван: не удалось получить данные от раздачи";
+    streamPhase.value = "error";
   }, BUFFERING_WATCHDOG_MS);
 }
 
@@ -991,14 +1013,6 @@ watch(
         nextSrc = prefetchedStream.value.url;
         prefetchedStream.value = { url: "", forKey: "" };
         void appDebugLog("player", `stream prepare: prefetch HIT — using pre-warmed URL fileIdx=${fileIdx} url=${nextSrc}`);
-      } else if (props.hoverPrefetchUrl && props.hoverPrefetchKey === preparedKey) {
-        // Hover-prefetch hit (user hovered this track before clicking).
-        // Promote hover_token → current_token BEFORE assigning src to the audio element.
-        void appDebugLog("player", `stream prepare: hover-prefetch HIT — activating token before src assign fileIdx=${fileIdx}`);
-        await hoverActivateTorrentStreamUrl(props.hoverPrefetchUrl);
-        nextSrc = props.hoverPrefetchUrl;
-        emit("hover-prefetch-consumed");
-        void appDebugLog("player", `stream prepare: hover-prefetch activated — fileIdx=${fileIdx} url=${nextSrc}`);
       } else {
         const fileIdxNorm =
           fileIdx != null && fileIdx !== "" && Number.isFinite(Number(fileIdx))

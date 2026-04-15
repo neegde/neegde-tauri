@@ -124,36 +124,6 @@ export async function streamUrl(magnet, fileIdx, opts = {}) {
 }
 
 /**
- * Like `streamUrl` but calls `torrent_hover_prepare_stream` — stores the token in
- * hover_token so it NEVER releases the active playback stream.
- * Use this for hover-prefetch only. Activate with `hoverActivateTorrentStreamUrl` before playback.
- */
-export async function hoverStreamUrl(magnet, fileIdx, opts = {}) {
-  if (!magnet || fileIdx == null || fileIdx < 0) return "";
-  const m = enrichMagnetWithOpenTrackers(magnet);
-  let torrentFileB64 = null;
-  const src = opts.source != null ? String(opts.source) : "";
-  const tid = opts.torrentId != null ? String(opts.torrentId) : "";
-  if (src === "rutracker" && tid !== "") {
-    torrentFileB64 = await _cachedTorrentFileB64(tid);
-  }
-  void appDebugLog("stream", `hoverStreamUrl: invoking hover_prepare — fileIdx=${fileIdx} torrentId=${tid||"—"} hasTorrentFile=${!!torrentFileB64}`);
-  const t0 = Date.now();
-  let ready;
-  try {
-    ready = await invoke("torrent_hover_prepare_stream", { magnet: m, fileIdx, torrentFileB64 });
-  } catch (e) {
-    void appDebugLog("stream", `hoverStreamUrl: hover_prepare FAILED — fileIdx=${fileIdx} torrentId=${tid||"—"} err=${String(e)} took=${Date.now()-t0}ms`);
-    throw e;
-  }
-  const url = ready?.url ?? "";
-  void appDebugLog("stream", url
-    ? `hoverStreamUrl: hover_prepare OK — fileIdx=${fileIdx} url=${url} took=${Date.now()-t0}ms`
-    : `hoverStreamUrl: hover_prepare returned empty URL — fileIdx=${fileIdx}`);
-  return url;
-}
-
-/**
  * Fetches RuTracker .torrent base64 when needed (same rules as `streamUrl`).
  * Uses an in-memory cache so repeated calls for the same track are instant.
  *

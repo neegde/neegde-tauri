@@ -113,8 +113,6 @@ struct VozduxanSessionInner {
     prefetch_token: Mutex<Option<String>>,
     /// Second-ahead warm-up only — must not evict `prefetch_token` (next track).
     warm_prefetch_token: Mutex<Option<String>>,
-    /// Token prepared by hover-prefetch. NEVER releases current_token.
-    hover_token: Mutex<Option<String>>,
     /// Set to true to cancel the next prepare result after it arrives.
     prepare_cancelled: AtomicBool,
     /// Incremented at the start of every `prepare()`; stale completions compare against this.
@@ -186,7 +184,6 @@ impl VozduxanStreamState {
                 current_token: Mutex::new(None),
                 prefetch_token: Mutex::new(None),
                 warm_prefetch_token: Mutex::new(None),
-                hover_token: Mutex::new(None),
                 prepare_cancelled: AtomicBool::new(false),
                 prepare_version: AtomicU64::new(0),
                 _debug_log_arc: debug_log.clone(),
@@ -246,6 +243,7 @@ impl VozduxanStreamState {
                         .unwrap_or(std::ptr::null()),
                     torrent_bytes.as_deref().map(|b| b.len()).unwrap_or(0),
                     file_idx as c_int,
+                    1, // is_main — cancels any in-flight fast-start
                     Some(on_progress),
                     ctx_ptr,
                 )
@@ -334,10 +332,10 @@ impl VozduxanStreamState {
         if was_warm { *warm = None; }
 
         let bucket = match (was_current, was_prefetch, was_warm) {
-            (true,  _,     _)     => "current",
-            (_,     true,  _)     => "prefetch",
-            (_,     _,     true)  => "warm",
-            _                     => "unknown/external",
+            (true, _, _) => "current",
+            (_, true, _) => "prefetch",
+            (_, _, true) => "warm",
+            _            => "unknown/external",
         };
         self.dlog(format!("release: token={token} bucket={bucket} took={elapsed:.1?}"));
     }
@@ -364,129 +362,12 @@ impl VozduxanStreamState {
             unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
             released.push(format!("warm={token}"));
         }
-        let mut hover = self.inner.hover_token.lock().unwrap();
-        if let Some(token) = hover.take() {
-            let c = CString::new(token.as_str()).unwrap();
-            unsafe { ffi::vozduxan_stream_release(self.inner.ptr, c.as_ptr()) };
-            released.push(format!("hover={token}"));
-        }
 
         if released.is_empty() {
             self.dlog("dispose: no active tokens — nothing to release");
         } else {
             self.dlog(format!("dispose: released {} token(s) — {}", released.len(), released.join(", ")));
         }
-    }
-
-    /* ── hover_prepare ─────────────────────────────────────────────────── */
-    /// Prepare a stream speculatively on hover. Never releases current_token —
-    /// stores result in hover_token instead. Safe to call concurrently with
-    /// an active stream.
-    pub async fn hover_prepare(
-        &self,
-        app: AppHandle,
-        magnet: String,
-        file_idx: usize,
-        torrent_bytes: Option<Vec<u8>>,
-    ) -> Result<String, String> {
-        let inner = self.inner.clone();
-        let app_clone = app.clone();
-        let dlog_arc = self.debug_log.clone();
-
-        let url = tokio::task::spawn_blocking(move || -> Result<String, String> {
-            let dlog = |msg: String| { dlog_arc.push("vozduxan", msg, None); };
-            let magnet_c = CString::new(magnet.as_str()).unwrap();
-            dlog(format!(
-                "hover-prepare: dispatching to C++ — file_idx={file_idx} \
-                 has_torrent_data={} (existing hover={:?})",
-                torrent_bytes.is_some(),
-                inner.hover_token.lock().unwrap().as_deref().unwrap_or("—"),
-            ));
-
-            let ctx = Box::new(ProgressCtx { app: app_clone });
-            let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
-
-            let info = unsafe {
-                ffi::vozduxan_stream_prepare(
-                    inner.ptr,
-                    magnet_c.as_ptr(),
-                    torrent_bytes
-                        .as_deref()
-                        .map(|b| b.as_ptr())
-                        .unwrap_or(std::ptr::null()),
-                    torrent_bytes.as_deref().map(|b| b.len()).unwrap_or(0),
-                    file_idx as c_int,
-                    Some(on_progress),
-                    ctx_ptr,
-                )
-            };
-            let _ = unsafe { Box::from_raw(ctx_ptr as *mut ProgressCtx) };
-
-            if info.error != ffi::VozduxanError::Ok {
-                let msg = ffi::c_bytes_to_string(&info.error_msg);
-                dlog(format!("hover-prepare: C++ error — {msg}"));
-                return Err(msg);
-            }
-
-            let url   = ffi::c_bytes_to_string(&info.url);
-            let token = ffi::c_bytes_to_string(&info.token);
-
-            // Park in hover_token; release any previous hover stream.
-            // current_token is intentionally never touched here.
-            let mut hover = inner.hover_token.lock().unwrap();
-            let old_hover = hover.take();
-            if let Some(ref old) = old_hover {
-                let old_c = CString::new(old.as_str()).unwrap();
-                unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
-            }
-            *hover = Some(token.clone());
-            dlog(format!(
-                "hover-prepare: ready — token={token} replaced={}",
-                old_hover.as_deref().unwrap_or("—"),
-            ));
-            Ok(url)
-        })
-        .await
-        .map_err(|e| format!("spawn_blocking: {e}"))??;
-
-        Ok(url)
-    }
-
-    /* ── hover_release ─────────────────────────────────────────────────── */
-    /// Release the hover-prefetch token explicitly (user navigated away without clicking).
-    pub fn hover_release(&self, token: &str) {
-        let token_c = CString::new(token).unwrap();
-        unsafe { ffi::vozduxan_stream_release(self.inner.ptr, token_c.as_ptr()) };
-        let mut hover = self.inner.hover_token.lock().unwrap();
-        if hover.as_deref() == Some(token) {
-            *hover = None;
-        }
-        self.dlog(format!("hover-release: user left hover without clicking — released token={token}"));
-    }
-
-    /* ── hover_activate ────────────────────────────────────────────────── */
-    /// Called when the player actually starts using the hover-prefetch URL.
-    /// Moves the token from hover_token → current_token, releasing old current.
-    pub fn hover_activate(&self, token: &str) {
-        // Release old current stream if it differs.
-        let mut current = self.inner.current_token.lock().unwrap();
-        let old_current = current.take();
-        if let Some(ref old) = old_current {
-            if old != token {
-                let old_c = CString::new(old.as_str()).unwrap();
-                unsafe { ffi::vozduxan_stream_release(self.inner.ptr, old_c.as_ptr()) };
-            }
-        }
-        *current = Some(token.to_owned());
-        // Remove from hover_token.
-        let mut hover = self.inner.hover_token.lock().unwrap();
-        if hover.as_deref() == Some(token) {
-            *hover = None;
-        }
-        self.dlog(format!(
-            "hover-activate: hover→current promoted — token={token} evicted={}",
-            old_current.as_deref().unwrap_or("—"),
-        ));
     }
 
     /* ── cancel_prepare ────────────────────────────────────────────────── */
@@ -589,6 +470,7 @@ impl VozduxanStreamState {
                         .unwrap_or(std::ptr::null()),
                     torrent_bytes.as_deref().map(|b| b.len()).unwrap_or(0),
                     file_idx as c_int,
+                    0, // is_main=0 — background prefetch must not cancel playback
                     None,
                     std::ptr::null_mut(),
                 )
@@ -713,49 +595,6 @@ pub async fn vozduxan_notify_position(
     byte_offset: i64,
 ) -> Result<(), String> {
     state.notify_position(&token, byte_offset);
-    Ok(())
-}
-
-/// Prepare a stream speculatively on hover. Stores in hover_token, NEVER releases
-/// the current stream. Replace the old `streamUrl` call in hover-prefetch code.
-#[tauri::command]
-pub async fn torrent_hover_prepare_stream(
-    app: AppHandle,
-    state: tauri::State<'_, VozduxanStreamState>,
-    magnet: String,
-    file_idx: usize,
-    torrent_file_b64: Option<String>,
-) -> Result<StreamReady, String> {
-    let torrent_bytes: Option<Vec<u8>> = match torrent_file_b64.as_deref() {
-        None | Some("") => None,
-        Some(s) => Some(
-            base64::engine::general_purpose::STANDARD
-                .decode(s.trim())
-                .map_err(|e| format!("base64: {e}"))?,
-        ),
-    };
-    let url = state.hover_prepare(app, magnet, file_idx, torrent_bytes).await?;
-    Ok(StreamReady { url })
-}
-
-/// Release a hover-prefetch stream without activating it (user navigated away).
-#[tauri::command]
-pub async fn torrent_hover_release_stream(
-    state: tauri::State<'_, VozduxanStreamState>,
-    token: String,
-) -> Result<(), String> {
-    state.hover_release(&token);
-    Ok(())
-}
-
-/// Activate the hover-prefetch: promotes token from hover→current and releases old current.
-/// Must be called before assigning the hover URL to the audio element.
-#[tauri::command]
-pub async fn torrent_hover_activate(
-    state: tauri::State<'_, VozduxanStreamState>,
-    token: String,
-) -> Result<(), String> {
-    state.hover_activate(&token);
     Ok(())
 }
 

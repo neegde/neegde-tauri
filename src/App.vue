@@ -23,8 +23,8 @@ import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
-import { torrentFileB64ForTrack, streamUrl, hoverStreamUrl, magnetListFiles } from "./torrent/api.js";
-import { releaseTorrentStreamUrl, torrentPrepareCancel, hoverReleaseTorrentStreamUrl } from "./torrent/torrentSession.js";
+import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
+import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
 
 import SearchBar    from "./components/search/SearchBar.vue";
@@ -128,45 +128,6 @@ const playerHasPrev = computed(() => {
   return repeatMode.value === "all" && len > 1;
 });
 
-// ── Hover-prefetch state ──────────────────────────────────────────────────────
-// Stores a pre-prepared stream URL for the track the user is hovering over.
-const hoverPrefetchUrl = ref("");
-const hoverPrefetchKey = ref("");
-
-async function handleHoverTrack(fileIdx) {
-  if (!selected.value || !torrentMagnet.value) return;
-  const magnet = torrentMagnet.value;
-  const key = `${magnet}\0${fileIdx}`;
-  // Already prefetched or currently playing
-  if (key === hoverPrefetchKey.value) return;
-  if (nowPlaying.value && `${nowPlaying.value.magnet}\0${nowPlaying.value.fileIdx}` === key) return;
-  // Release previous hover prefetch if not used
-  if (hoverPrefetchUrl.value) {
-    void hoverReleaseTorrentStreamUrl(hoverPrefetchUrl.value);
-    hoverPrefetchUrl.value = "";
-    hoverPrefetchKey.value = "";
-  }
-  try {
-    const url = await hoverStreamUrl(magnet, fileIdx, {
-      source: selected.value?.source,
-      torrentId: selected.value?.id,
-    });
-    if (url) {
-      // By the time hover-prepare completes (can take several seconds), nowPlaying may have
-      // changed to a different track from the same torrent. Storing a hover_token for the
-      // same torrent as the active stream can cause vozduxan to disrupt the current stream.
-      const np = nowPlaying.value;
-      if (np && np.magnet === magnet && `${np.magnet}\0${np.fileIdx}` !== key) {
-        void hoverReleaseTorrentStreamUrl(url);
-      } else {
-        hoverPrefetchUrl.value = url;
-        hoverPrefetchKey.value = key;
-      }
-    }
-  } catch {
-    // Silently ignore hover-prefetch errors
-  }
-}
 
 watch(
   [queue, queuePos],
@@ -1880,7 +1841,6 @@ function onMouseSideButtonUp(e) {
             @download-all="handleDownloadAll"
             @toggle-like="handleToggleLike"
             @open-album-preview="handleOpenAlbumPreview"
-            @hover-track="handleHoverTrack"
             @add-to-playlist="handleShowAddToPlaylist"
             @add-to-queue="handleAddToQueueFromTorrent"
           />
@@ -1899,8 +1859,6 @@ function onMouseSideButtonUp(e) {
       :has-next="playerHasNext"
       :repeat-mode="repeatMode"
       :shuffle-on="shuffleOn"
-      :hover-prefetch-url="hoverPrefetchUrl"
-      :hover-prefetch-key="hoverPrefetchKey"
       :likes="likes"
       :playback-queue="queue"
       :queue-index="queuePos"
@@ -1911,7 +1869,6 @@ function onMouseSideButtonUp(e) {
       @toggle-shuffle="toggleShuffle"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
-      @hover-prefetch-consumed="hoverPrefetchUrl = ''; hoverPrefetchKey = ''"
       @toggle-like="handleToggleLike"
       @search-artist="handleSearchArtist"
       @open-torrent="handleOpenTorrentFromPlayer"
