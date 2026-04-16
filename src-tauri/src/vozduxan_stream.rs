@@ -564,8 +564,35 @@ pub async fn torrent_release_stream(
     state: tauri::State<'_, VozduxanStreamState>,
     token: String,
 ) -> Result<(), String> {
-    state.release_token(&token);
-    Ok(())
+    // release_stream() joins the priority_thread (~100ms) — must not block the async executor.
+    let inner = state.inner.clone();
+    let dlog = state.debug_log.clone();
+    tokio::task::spawn_blocking(move || {
+        let token_c = CString::new(token.as_str()).unwrap();
+        let t0 = std::time::Instant::now();
+        unsafe { ffi::vozduxan_stream_release(inner.ptr, token_c.as_ptr()) };
+        let elapsed = t0.elapsed();
+
+        let mut current = inner.current_token.lock().unwrap();
+        let was_current = current.as_deref() == Some(token.as_str());
+        if was_current { *current = None; }
+        let mut prefetch = inner.prefetch_token.lock().unwrap();
+        let was_prefetch = prefetch.as_deref() == Some(token.as_str());
+        if was_prefetch { *prefetch = None; }
+        let mut warm = inner.warm_prefetch_token.lock().unwrap();
+        let was_warm = warm.as_deref() == Some(token.as_str());
+        if was_warm { *warm = None; }
+
+        let bucket = match (was_current, was_prefetch, was_warm) {
+            (true, _, _) => "current",
+            (_, true, _) => "prefetch",
+            (_, _, true) => "warm",
+            _            => "unknown/external",
+        };
+        dlog.push("vozduxan", format!("release: token={token} bucket={bucket} took={elapsed:.1?}"), None);
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking error: {e}"))
 }
 
 /// Dispose the current preview stream (and any prefetch).
@@ -573,8 +600,41 @@ pub async fn torrent_release_stream(
 pub async fn torrent_dispose_preview(
     state: tauri::State<'_, VozduxanStreamState>,
 ) -> Result<(), String> {
-    state.dispose();
-    Ok(())
+    // dispose() calls release_stream() for up to 3 tokens — must not block the async executor.
+    let inner = state.inner.clone();
+    let dlog = state.debug_log.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut released = Vec::<String>::new();
+
+        let mut current = inner.current_token.lock().unwrap();
+        if let Some(token) = current.take() {
+            let c = CString::new(token.as_str()).unwrap();
+            unsafe { ffi::vozduxan_stream_release(inner.ptr, c.as_ptr()) };
+            released.push(format!("current={token}"));
+        }
+        let mut prefetch = inner.prefetch_token.lock().unwrap();
+        if let Some(token) = prefetch.take() {
+            let c = CString::new(token.as_str()).unwrap();
+            unsafe { ffi::vozduxan_stream_release(inner.ptr, c.as_ptr()) };
+            released.push(format!("prefetch={token}"));
+        }
+        let mut warm = inner.warm_prefetch_token.lock().unwrap();
+        if let Some(token) = warm.take() {
+            let c = CString::new(token.as_str()).unwrap();
+            unsafe { ffi::vozduxan_stream_release(inner.ptr, c.as_ptr()) };
+            released.push(format!("warm={token}"));
+        }
+
+        if released.is_empty() {
+            dlog.push("vozduxan", "dispose: no active tokens — nothing to release", None);
+        } else {
+            dlog.push("vozduxan",
+                format!("dispose: released {} token(s) — {}", released.len(), released.join(", ")),
+                None);
+        }
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking error: {e}"))
 }
 
 /// Cancel an in-flight prepare call.
@@ -584,6 +644,27 @@ pub async fn torrent_prepare_cancel(
 ) -> Result<(), String> {
     state.cancel_prepare();
     Ok(())
+}
+
+/// Download stats for a stream token — fast, no blocking disk I/O.
+#[derive(Serialize)]
+pub struct VozduxanStreamStatsResult {
+    pub download_rate: i32, // bytes/sec
+    pub num_peers: i32,
+}
+
+#[tauri::command]
+pub async fn vozduxan_stream_stats(
+    state: tauri::State<'_, VozduxanStreamState>,
+    token: String,
+) -> Result<VozduxanStreamStatsResult, String> {
+    let inner = state.inner.clone();
+    let token_c = CString::new(token).map_err(|e| e.to_string())?;
+    let stats = unsafe { ffi::vozduxan_stream_stats(inner.ptr, token_c.as_ptr()) };
+    Ok(VozduxanStreamStatsResult {
+        download_rate: stats.download_rate_bytes,
+        num_peers: stats.num_peers,
+    })
 }
 
 /// Notify the engine of the current playback byte offset (for seek).

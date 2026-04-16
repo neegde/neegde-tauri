@@ -75,18 +75,55 @@ fn build_vozduxan() {
 
     if !found_via_pkg_config {
         // Fallback: hard-code common installation paths.
-        link_libtorrent_fallback();
+        link_libtorrent_fallback(&lib_dir);
     }
 }
 
-fn link_libtorrent_fallback() {
+fn link_libtorrent_fallback(dst_lib: &std::path::Path) {
     #[cfg(target_os = "macos")]
     {
-        // libtorrent-rasterbar.a is installed to dst/lib/ by CMakeLists.txt
-        // (FetchContent path). Static link: no dylib runtime dep on end-user machines.
-        println!("cargo:rustc-link-lib=static=torrent-rasterbar");
-        // libtorrent links OpenSSL; link statically so there's no Homebrew path dep.
-        link_homebrew_openssl_libs_macos();
+        // Prefer the static lib that CMakeLists.txt installs when using FetchContent.
+        // If it's not there (cmake found a system/Homebrew installation instead and
+        // skipped FetchContent), fall back to whatever Homebrew provides.
+        if dst_lib.join("libtorrent-rasterbar.a").exists() {
+            // FetchContent built a static lib → fully self-contained binary.
+            println!("cargo:rustc-link-lib=static=torrent-rasterbar");
+            link_homebrew_openssl_libs_macos();
+        } else {
+            // System libtorrent (Homebrew). Try static first, then dynamic.
+            let brew_dirs: &[&str] = &[
+                "/opt/homebrew/lib",
+                "/usr/local/lib",
+            ];
+            let mut linked = false;
+            for dir in brew_dirs {
+                let p = std::path::Path::new(dir);
+                if p.join("libtorrent-rasterbar.a").exists() {
+                    println!("cargo:rustc-link-search=native={}", p.display());
+                    println!("cargo:rustc-link-lib=static=torrent-rasterbar");
+                    link_homebrew_openssl_libs_macos();
+                    linked = true;
+                    break;
+                }
+            }
+            if !linked {
+                for dir in brew_dirs {
+                    let p = std::path::Path::new(dir);
+                    if p.join("libtorrent-rasterbar.dylib").exists() {
+                        println!("cargo:rustc-link-search=native={}", p.display());
+                        println!("cargo:rustc-link-lib=dylib=torrent-rasterbar");
+                        // Dynamic libtorrent already carries OpenSSL; no extra flags needed.
+                        linked = true;
+                        break;
+                    }
+                }
+            }
+            if !linked {
+                // Last resort: assume FetchContent .a will be present (may fail to link).
+                println!("cargo:rustc-link-lib=static=torrent-rasterbar");
+                link_homebrew_openssl_libs_macos();
+            }
+        }
         println!("cargo:rustc-link-lib=framework=SystemConfiguration");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
         println!("cargo:rustc-link-lib=framework=IOKit");

@@ -225,6 +225,7 @@ pub fn run() {
             vozduxan_stream::torrent_dispose_preview,
             vozduxan_stream::torrent_release_stream,
             vozduxan_stream::vozduxan_notify_position,
+            vozduxan_stream::vozduxan_stream_stats,
             // ── Export: full-download to user library (librqbit) ─────────
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,

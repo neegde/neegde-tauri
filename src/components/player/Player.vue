@@ -7,6 +7,7 @@ import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
+  vozduxanStreamStats,
 } from "../../torrent/torrentSession.js";
 import {
   ensureEqualizer,
@@ -182,8 +183,11 @@ const bufferedPercent = ref(0);
 const loadCancelledByUser = ref(false);
 /** Watchdog: превращает бесконечный buffering после piece-timeout в явный error. */
 let bufferingWatchdogTimer = null;
-/** Чуть больше vozduxan PIECE_TIMEOUT_MS (20 000 мс). */
-const BUFFERING_WATCHDOG_MS = 25_000;
+/** Чуть больше vozduxan PIECE_TIMEOUT_MS (60 000 мс) — не должен опережать taймаут C++. */
+const BUFFERING_WATCHDOG_MS = 75_000;
+/** Статистика скачивания во время buffering фазы: { download_rate, num_peers } или null. */
+const streamDownloadStats = ref(null);
+let statsPollingTimer = null;
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
 /** Matches the in-flight / active prepare — suppresses duplicate watch runs for the same track. */
@@ -316,11 +320,21 @@ const streamDotClass = computed(() => {
 const streamStatusHeadline = computed(() => {
   switch (streamPhase.value) {
     case "preparing": return "Подготовка потока";
-    case "buffering":  return "Буферизация";
+    case "buffering": {
+      const stats = streamDownloadStats.value;
+      if (stats?.download_rate > 0) return `↓ ${fmtRate(stats.download_rate)}`;
+      return "Буферизация";
+    }
     case "ready":      return "Стрим активен";
     default:           return "";
   }
 });
+
+function fmtRate(bytesPerSec) {
+  if (bytesPerSec >= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} МБ/с`;
+  if (bytesPerSec >= 1024)      return `${Math.round(bytesPerSec / 1024)} КБ/с`;
+  return `${bytesPerSec} Б/с`;
+}
 
 /** Человекочитаемое предложение о том, что сейчас происходит. */
 const streamStatusBody = computed(() => {
@@ -333,6 +347,15 @@ const streamStatusBody = computed(() => {
       ? `Трек воспроизводится через торрент-сеть · ${live} источн.`
       : "Трек воспроизводится через торрент-сеть";
   }
+  if (streamPhase.value === "buffering") {
+    const stats = streamDownloadStats.value;
+    if (!stats) return "Ожидание данных от раздачи…";
+    if (stats.num_peers === 0) return "Поиск источников…";
+    const rate = stats.download_rate;
+    return rate > 0
+      ? `Загрузка · ↓ ${fmtRate(rate)}`
+      : `Подключено · ${stats.num_peers} источн.`;
+  }
   if (msg.includes("metadata") || msg.includes("resolv")) return "Получение информации о файле…";
   if (msg.includes("buffer"))                              return "Загрузка начала трека…";
   if (msg.includes("ready"))                               return "Трек готов к воспроизведению";
@@ -341,6 +364,19 @@ const streamStatusBody = computed(() => {
 
 /** Строки с данными в таблице pop-up. */
 const streamStatusRows = computed(() => {
+  if (streamPhase.value === "buffering") {
+    const stats = streamDownloadStats.value;
+    if (!stats) return [];
+    const rows = [];
+    if (stats.num_peers > 0)
+      rows.push({ label: "Подключено источников", value: String(stats.num_peers) });
+    if (stats.download_rate > 0)
+      rows.push({ label: "Скорость загрузки", value: fmtRate(stats.download_rate) });
+    const seeds = props.track?.seeders;
+    if (seeds != null && Number.isFinite(Number(seeds)))
+      rows.push({ label: "Раздающих", value: String(Number(seeds)) });
+    return rows;
+  }
   const p = lastPrepareProgress.value;
   if (!p) return [];
   const rows = [];
@@ -558,7 +594,10 @@ watch(playing, (v) => {
 
 watch(streamPhase, (phase, prev) => {
   void appDebugLog("player", `streamPhase: ${prev} → ${phase} — "${props.track?.fileName?.slice?.(0,60)}" fileIdx=${props.track?.fileIdx}`);
-  if (phase !== "buffering") clearBufferingWatchdog();
+  if (phase !== "buffering") {
+    clearBufferingWatchdog();
+    stopStatsPolling();
+  }
 });
 
 watchEffect(() => {
@@ -788,6 +827,7 @@ function onAudioStalled() {
 
 function startBufferingWatchdog() {
   clearBufferingWatchdog();
+  startStatsPolling();
   const watchdogStartTime = audioRef.value?.currentTime ?? 0;
   void appDebugLog("player", `audio: buffering watchdog started (${BUFFERING_WATCHDOG_MS}ms) — "${props.track?.fileName?.slice?.(0,60)}"`);
   bufferingWatchdogTimer = setTimeout(() => {
@@ -812,6 +852,25 @@ function clearBufferingWatchdog() {
     clearTimeout(bufferingWatchdogTimer);
     bufferingWatchdogTimer = null;
   }
+}
+
+function startStatsPolling() {
+  stopStatsPolling();
+  async function poll() {
+    if (streamPhase.value !== "buffering") return;
+    const stats = await vozduxanStreamStats(src.value);
+    if (streamPhase.value === "buffering") streamDownloadStats.value = stats;
+    statsPollingTimer = setTimeout(poll, 2000);
+  }
+  statsPollingTimer = setTimeout(poll, 800);
+}
+
+function stopStatsPolling() {
+  if (statsPollingTimer !== null) {
+    clearTimeout(statsPollingTimer);
+    statsPollingTimer = null;
+  }
+  streamDownloadStats.value = null;
 }
 
 let bufferPollRaf = 0;

@@ -49,6 +49,19 @@ function tokenFromUrl(url) {
  * @param {string} url  URL потока вида http://127.0.0.1:PORT/stream/TOKEN
  * @param {number} byteOffset  Текущая позиция в байтах
  */
+/**
+ * Возвращает статистику скачивания для потока: { download_rate (bytes/sec), num_peers }.
+ * Используй во время фазы buffering чтобы показать прогресс пользователю.
+ *
+ * @param {string} url  URL потока вида http://127.0.0.1:PORT/stream/TOKEN
+ * @returns {Promise<{download_rate: number, num_peers: number}|null>}
+ */
+export function vozduxanStreamStats(url) {
+  const token = tokenFromUrl(url);
+  if (!token) return Promise.resolve(null);
+  return invoke("vozduxan_stream_stats", { token }).catch(() => null);
+}
+
 export function vozduxanNotifyPosition(url, byteOffset) {
   if (!url || typeof url !== "string") return Promise.resolve();
   const marker = "/stream/";
