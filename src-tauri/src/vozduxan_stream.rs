@@ -117,6 +117,8 @@ struct VozduxanSessionInner {
     prepare_cancelled: AtomicBool,
     /// Incremented at the start of every `prepare()`; stale completions compare against this.
     prepare_version: AtomicU64,
+    /// Counts releases; evict() is called every N-th release to remove stale idle torrents.
+    evict_counter: AtomicU64,
     /// Keeps the Arc alive so the raw pointer in VozduxanConfig stays valid.
     _debug_log_arc: Arc<AppDebugLog>,
 }
@@ -186,6 +188,7 @@ impl VozduxanStreamState {
                 warm_prefetch_token: Mutex::new(None),
                 prepare_cancelled: AtomicBool::new(false),
                 prepare_version: AtomicU64::new(0),
+                evict_counter: AtomicU64::new(0),
                 _debug_log_arc: debug_log.clone(),
             }),
             debug_log,
@@ -287,14 +290,16 @@ impl VozduxanStreamState {
             let url   = ffi::c_bytes_to_string(&info.url);
             let token = ffi::c_bytes_to_string(&info.token);
 
-            // Store new token in current_token, releasing whatever was there before.
-            let mut current = inner.current_token.lock().unwrap();
-            let old_token = current.take();
+            // Take the old token and drop the mutex BEFORE calling into C++.
+            // vozduxan_stream_release joins the priority thread (~100 ms); holding
+            // current_token locked during that call would stall any concurrent
+            // torrent_release_stream for the full join duration.
+            let old_token = inner.current_token.lock().unwrap().take();
             if let Some(ref old) = old_token {
                 let old_c = CString::new(old.as_str()).unwrap();
                 unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
             }
-            *current = Some(token.clone());
+            *inner.current_token.lock().unwrap() = Some(token.clone());
             dlog(format!(
                 "prepare: ready — new token={token} replaced={}",
                 old_token.as_deref().unwrap_or("—"),
@@ -485,26 +490,25 @@ impl VozduxanStreamState {
             let url = ffi::c_bytes_to_string(&info.url);
             let token = ffi::c_bytes_to_string(&info.token);
 
+            // Same pattern as prepare(): take old token, drop mutex, call C++, re-lock to store new.
             if warm_only {
-                let mut warm = inner.warm_prefetch_token.lock().unwrap();
-                let old = warm.take();
+                let old = inner.warm_prefetch_token.lock().unwrap().take();
                 if let Some(ref old_tok) = old {
                     let old_c = CString::new(old_tok.as_str()).unwrap();
                     unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
                 }
-                *warm = Some(token.clone());
+                *inner.warm_prefetch_token.lock().unwrap() = Some(token.clone());
                 dlog(format!(
                     "prefetch-warm: ready — token={token} replaced={}",
                     old.as_deref().unwrap_or("—"),
                 ));
             } else {
-                let mut prefetch = inner.prefetch_token.lock().unwrap();
-                let old = prefetch.take();
+                let old = inner.prefetch_token.lock().unwrap().take();
                 if let Some(ref old_tok) = old {
                     let old_c = CString::new(old_tok.as_str()).unwrap();
                     unsafe { ffi::vozduxan_stream_release(inner.ptr, old_c.as_ptr()) };
                 }
-                *prefetch = Some(token.clone());
+                *inner.prefetch_token.lock().unwrap() = Some(token.clone());
                 dlog(format!(
                     "prefetch-next: ready — token={token} replaced={}",
                     old.as_deref().unwrap_or("—"),
@@ -573,15 +577,13 @@ pub async fn torrent_release_stream(
         unsafe { ffi::vozduxan_stream_release(inner.ptr, token_c.as_ptr()) };
         let elapsed = t0.elapsed();
 
-        let mut current = inner.current_token.lock().unwrap();
-        let was_current = current.as_deref() == Some(token.as_str());
-        if was_current { *current = None; }
-        let mut prefetch = inner.prefetch_token.lock().unwrap();
-        let was_prefetch = prefetch.as_deref() == Some(token.as_str());
-        if was_prefetch { *prefetch = None; }
-        let mut warm = inner.warm_prefetch_token.lock().unwrap();
-        let was_warm = warm.as_deref() == Some(token.as_str());
-        if was_warm { *warm = None; }
+        // Clear the bucket entry that held this token (no mutex held during C++ call above).
+        let was_current  = { let mut g = inner.current_token.lock().unwrap();
+                               let yes = g.as_deref() == Some(token.as_str()); if yes { *g = None; } yes };
+        let was_prefetch = { let mut g = inner.prefetch_token.lock().unwrap();
+                               let yes = g.as_deref() == Some(token.as_str()); if yes { *g = None; } yes };
+        let was_warm     = { let mut g = inner.warm_prefetch_token.lock().unwrap();
+                               let yes = g.as_deref() == Some(token.as_str()); if yes { *g = None; } yes };
 
         let bucket = match (was_current, was_prefetch, was_warm) {
             (true, _, _) => "current",
@@ -590,6 +592,14 @@ pub async fn torrent_release_stream(
             _            => "unknown/external",
         };
         dlog.push("vozduxan", format!("release: token={token} bucket={bucket} took={elapsed:.1?}"), None);
+
+        // Every 10 releases, evict idle torrents whose TTL has expired so they
+        // don't accumulate indefinitely in the libtorrent session.
+        let n = inner.evict_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % 10 == 0 {
+            unsafe { ffi::vozduxan_session_evict(inner.ptr) };
+            dlog.push("vozduxan", format!("evict: triggered at release #{n}"), None);
+        }
     })
     .await
     .map_err(|e| format!("spawn_blocking error: {e}"))
@@ -604,32 +614,34 @@ pub async fn torrent_dispose_preview(
     let inner = state.inner.clone();
     let dlog = state.debug_log.clone();
     tokio::task::spawn_blocking(move || {
-        let mut released = Vec::<String>::new();
+        // Collect all tokens and drop ALL mutex guards before calling into C++.
+        // vozduxan_stream_release blocks for a priority-thread join (~100 ms per token);
+        // holding any of the three Mutex<Option<String>> locks during those calls would
+        // serialize unrelated Tauri commands for up to 300 ms total.
+        let tokens: Vec<(&'static str, String)> = {
+            let mut v = Vec::new();
+            if let Some(t) = inner.current_token.lock().unwrap().take()      { v.push(("current", t)); }
+            if let Some(t) = inner.prefetch_token.lock().unwrap().take()     { v.push(("prefetch", t)); }
+            if let Some(t) = inner.warm_prefetch_token.lock().unwrap().take(){ v.push(("warm", t)); }
+            v
+        };
 
-        let mut current = inner.current_token.lock().unwrap();
-        if let Some(token) = current.take() {
+        let mut released = Vec::<String>::new();
+        for (bucket, token) in &tokens {
             let c = CString::new(token.as_str()).unwrap();
             unsafe { ffi::vozduxan_stream_release(inner.ptr, c.as_ptr()) };
-            released.push(format!("current={token}"));
+            released.push(format!("{bucket}={token}"));
         }
-        let mut prefetch = inner.prefetch_token.lock().unwrap();
-        if let Some(token) = prefetch.take() {
-            let c = CString::new(token.as_str()).unwrap();
-            unsafe { ffi::vozduxan_stream_release(inner.ptr, c.as_ptr()) };
-            released.push(format!("prefetch={token}"));
-        }
-        let mut warm = inner.warm_prefetch_token.lock().unwrap();
-        if let Some(token) = warm.take() {
-            let c = CString::new(token.as_str()).unwrap();
-            unsafe { ffi::vozduxan_stream_release(inner.ptr, c.as_ptr()) };
-            released.push(format!("warm={token}"));
-        }
+
+        // Evict stale idle torrents on explicit cache purge so they don't
+        // accumulate in memory between dispose calls.
+        unsafe { ffi::vozduxan_session_evict(inner.ptr) };
 
         if released.is_empty() {
-            dlog.push("vozduxan", "dispose: no active tokens — nothing to release", None);
+            dlog.push("vozduxan", "dispose: no active tokens — nothing to release (evict done)", None);
         } else {
             dlog.push("vozduxan",
-                format!("dispose: released {} token(s) — {}", released.len(), released.join(", ")),
+                format!("dispose: released {} token(s) — {}; evict done", released.len(), released.join(", ")),
                 None);
         }
     })

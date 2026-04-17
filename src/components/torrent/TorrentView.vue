@@ -416,6 +416,8 @@ watch(
             :cover-file="singleAlbumWrap.raw.coverFile"
             :label="albumHeroTitle"
             :cover="cover"
+            :torrent-id="torrent?.id"
+            :source="torrent?.source"
           />
         </div>
         <div class="album-hero-text">
@@ -666,6 +668,8 @@ watch(
               :label="wrap.displayName"
               :cover="cover"
               :enlargeable="false"
+              :torrent-id="torrent?.id"
+              :source="torrent?.source"
             />
           </div>
           <div class="album-section-info">
@@ -772,6 +776,8 @@ watch(
               :label="wrap.displayName"
               :cover="cover"
               :enlargeable="false"
+              :torrent-id="torrent?.id"
+              :source="torrent?.source"
             />
             <div class="gallery-card-overlay">
               <button

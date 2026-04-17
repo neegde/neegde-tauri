@@ -183,11 +183,13 @@ const bufferedPercent = ref(0);
 const loadCancelledByUser = ref(false);
 /** Watchdog: превращает бесконечный buffering после piece-timeout в явный error. */
 let bufferingWatchdogTimer = null;
-/** Чуть больше vozduxan PIECE_TIMEOUT_MS (60 000 мс) — не должен опережать taймаут C++. */
-const BUFFERING_WATCHDOG_MS = 75_000;
+/** Чуть больше vozduxan PIECE_TIMEOUT_MS (180 000 мс) — не должен опережать таймаут C++. */
+const BUFFERING_WATCHDOG_MS = 185_000;
 /** Статистика скачивания во время buffering фазы: { download_rate, num_peers } или null. */
 const streamDownloadStats = ref(null);
 let statsPollingTimer = null;
+/** История статистики для sparkline-графика: [{rate, peers}], макс. 40 точек */
+const statsHistory = ref([]);
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
 /** Matches the in-flight / active prepare — suppresses duplicate watch runs for the same track. */
@@ -213,8 +215,15 @@ let prefetchInFlight = false;
 let secondPrefetchInFlight = false;
 let secondPrefetchDoneFingerprint = "";
 
-const PREFETCH_MIN_SEC = 10;
-const PREFETCH_MIN_RATIO = 0.12;
+/** For cross-torrent next track, wait a bit longer to avoid wasted bandwidth on quick skips. */
+const PREFETCH_MIN_SEC = 4;
+const PREFETCH_MIN_RATIO = 0.08;
+/**
+ * Same-torrent next track: start prefetch almost immediately.
+ * Adjusting piece priorities is virtually free since metadata is already loaded.
+ */
+const PREFETCH_MIN_SEC_SAME_TORRENT = 1.5;
+const PREFETCH_MIN_RATIO_SAME_TORRENT = 0.04;
 
 /**
  * Stable key for matching a queue item to a prepared stream URL.
@@ -316,25 +325,59 @@ const streamDotClass = computed(() => {
   return prepareDotClass.value;
 });
 
-/** Одна фраза-заголовок для pop-up. */
-const streamStatusHeadline = computed(() => {
-  switch (streamPhase.value) {
-    case "preparing": return "Подготовка потока";
-    case "buffering": {
-      const stats = streamDownloadStats.value;
-      if (stats?.download_rate > 0) return `↓ ${fmtRate(stats.download_rate)}`;
-      return "Буферизация";
-    }
-    case "ready":      return "Стрим активен";
-    default:           return "";
-  }
-});
-
 function fmtRate(bytesPerSec) {
   if (bytesPerSec >= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} МБ/с`;
   if (bytesPerSec >= 1024)      return `${Math.round(bytesPerSec / 1024)} КБ/с`;
   return `${bytesPerSec} Б/с`;
 }
+
+/** Активный источников сейчас */
+const currentPeers = computed(() => {
+  const stats = streamDownloadStats.value;
+  if (stats) return stats.num_peers ?? 0;
+  const p = lastPrepareProgress.value;
+  return (p?.peersLive ?? 0);
+});
+
+/** Текущая скорость потока в байт/с */
+const currentRate = computed(() => {
+  const stats = streamDownloadStats.value;
+  if (stats?.download_rate > 0) return stats.download_rate;
+  const p = lastPrepareProgress.value;
+  return (p?.downloadMbps ?? 0) > 0 ? Math.round(p.downloadMbps * 1_000_000) : 0;
+});
+
+/** Sparkline: SVG polyline points из истории скорости */
+const sparklineData = computed(() => {
+  const h = statsHistory.value;
+  if (h.length < 2) return { points: "", max: 0 };
+  const W = 180, H = 36;
+  const rates = h.map(x => x.rate);
+  const maxR = Math.max(...rates, 1);
+  const pts = rates.map((r, i) => {
+    const x = (i / (rates.length - 1)) * W;
+    const y = H - (r / maxR) * H;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return { points: pts, max: maxR };
+});
+
+/** Одна фраза-заголовок для pop-up. */
+const streamStatusHeadline = computed(() => {
+  switch (streamPhase.value) {
+    case "preparing": return "Поиск источников";
+    case "buffering": {
+      const r = currentRate.value;
+      if (r > 0) return fmtRate(r);
+      return currentPeers.value > 0 ? "Синхронизация" : "Поиск источников";
+    }
+    case "ready": {
+      const r = currentRate.value;
+      return r > 0 ? fmtRate(r) : "Прямой эфир";
+    }
+    default: return "";
+  }
+});
 
 /** Человекочитаемое предложение о том, что сейчас происходит. */
 const streamStatusBody = computed(() => {
@@ -342,55 +385,24 @@ const streamStatusBody = computed(() => {
   const msg = (p?.message ?? "").toLowerCase();
 
   if (streamPhase.value === "ready") {
-    const live = p?.peersLive ?? 0;
-    return live > 0
-      ? `Трек воспроизводится через торрент-сеть · ${live} источн.`
-      : "Трек воспроизводится через торрент-сеть";
+    const peers = currentPeers.value;
+    return peers > 0
+      ? `Воспроизводится · ${peers} источн. в сети`
+      : "Воспроизводится из торрент-сети";
   }
   if (streamPhase.value === "buffering") {
     const stats = streamDownloadStats.value;
-    if (!stats) return "Ожидание данных от раздачи…";
-    if (stats.num_peers === 0) return "Поиск источников…";
+    if (!stats) return "Ожидание от источников…";
+    if (stats.num_peers === 0) return "Ищем источники в сети…";
     const rate = stats.download_rate;
     return rate > 0
-      ? `Загрузка · ↓ ${fmtRate(rate)}`
-      : `Подключено · ${stats.num_peers} источн.`;
+      ? `${stats.num_peers} источн. · ${fmtRate(rate)}`
+      : `Подключено ${stats.num_peers} источн.`;
   }
-  if (msg.includes("metadata") || msg.includes("resolv")) return "Получение информации о файле…";
-  if (msg.includes("buffer"))                              return "Загрузка начала трека…";
-  if (msg.includes("ready"))                               return "Трек готов к воспроизведению";
-  return "Поиск источников в сети…";
-});
-
-/** Строки с данными в таблице pop-up. */
-const streamStatusRows = computed(() => {
-  if (streamPhase.value === "buffering") {
-    const stats = streamDownloadStats.value;
-    if (!stats) return [];
-    const rows = [];
-    if (stats.num_peers > 0)
-      rows.push({ label: "Подключено источников", value: String(stats.num_peers) });
-    if (stats.download_rate > 0)
-      rows.push({ label: "Скорость загрузки", value: fmtRate(stats.download_rate) });
-    const seeds = props.track?.seeders;
-    if (seeds != null && Number.isFinite(Number(seeds)))
-      rows.push({ label: "Раздающих", value: String(Number(seeds)) });
-    return rows;
-  }
-  const p = lastPrepareProgress.value;
-  if (!p) return [];
-  const rows = [];
-  if ((p.peersLive ?? 0) > 0)
-    rows.push({ label: "Подключено источников", value: String(p.peersLive) });
-  const pending = (p.peersConnecting ?? 0) + (p.peersQueued ?? 0);
-  if (pending > 0)
-    rows.push({ label: "Подключается", value: String(pending) });
-  if ((p.downloadMbps ?? 0) > 0.001)
-    rows.push({ label: "Скорость загрузки", value: `${p.downloadMbps.toFixed(2)} МБ/с` });
-  const seeds = props.track?.seeders;
-  if (seeds != null && Number.isFinite(Number(seeds)))
-    rows.push({ label: "Раздающих", value: String(Number(seeds)) });
-  return rows;
+  if (msg.includes("metadata") || msg.includes("resolv")) return "Получаем информацию о треке…";
+  if (msg.includes("buffer"))  return "Синхронизация с источниками…";
+  if (msg.includes("ready"))   return "Источник готов";
+  return "Ищем источники в сети…";
 });
 
 watch(
@@ -463,6 +475,7 @@ function onPlayButtonClick() {
 function togglePlay() {
   if (!hasTrack.value) return;
   if (props.suppressAutoplay && !src.value) {
+    void appDebugLog("player", `togglePlay: suppressed — emitting request-stream fileIdx=${props.track?.fileIdx}`);
     emit("request-stream");
     return;
   }
@@ -596,7 +609,11 @@ watch(streamPhase, (phase, prev) => {
   void appDebugLog("player", `streamPhase: ${prev} → ${phase} — "${props.track?.fileName?.slice?.(0,60)}" fileIdx=${props.track?.fileIdx}`);
   if (phase !== "buffering") {
     clearBufferingWatchdog();
-    stopStatsPolling();
+    if (phase !== "ready") stopStatsPolling();
+  }
+  if (phase === "ready" && prev === "buffering") {
+    // Continue polling after buffering so the chart stays alive during playback
+    startStatsPolling();
   }
 });
 
@@ -857,12 +874,19 @@ function clearBufferingWatchdog() {
 function startStatsPolling() {
   stopStatsPolling();
   async function poll() {
-    if (streamPhase.value !== "buffering") return;
+    if (streamPhase.value !== "buffering" && streamPhase.value !== "ready") return;
     const stats = await vozduxanStreamStats(src.value);
-    if (streamPhase.value === "buffering") streamDownloadStats.value = stats;
-    statsPollingTimer = setTimeout(poll, 2000);
+    if (streamPhase.value === "buffering" || streamPhase.value === "ready") {
+      streamDownloadStats.value = stats;
+      if (stats) {
+        const h = statsHistory.value;
+        h.push({ rate: stats.download_rate ?? 0, peers: stats.num_peers ?? 0 });
+        if (h.length > 40) h.splice(0, h.length - 40);
+      }
+    }
+    statsPollingTimer = setTimeout(poll, 1000);
   }
-  statsPollingTimer = setTimeout(poll, 800);
+  statsPollingTimer = setTimeout(poll, 600);
 }
 
 function stopStatsPolling() {
@@ -871,6 +895,7 @@ function stopStatsPolling() {
     statsPollingTimer = null;
   }
   streamDownloadStats.value = null;
+  statsHistory.value = [];
 }
 
 let bufferPollRaf = 0;
@@ -907,7 +932,10 @@ async function maybeTriggerPrefetch() {
   const d = duration.value;
   const c = current.value;
   if (!Number.isFinite(d) || d <= 0) return;
-  if (c < PREFETCH_MIN_SEC && c / d < PREFETCH_MIN_RATIO) return;
+  const sameTorrent = props.track?.magnet === props.nextTrack?.magnet;
+  const minSec   = sameTorrent ? PREFETCH_MIN_SEC_SAME_TORRENT   : PREFETCH_MIN_SEC;
+  const minRatio = sameTorrent ? PREFETCH_MIN_RATIO_SAME_TORRENT : PREFETCH_MIN_RATIO;
+  if (c < minSec && c / d < minRatio) return;
 
   // Don't start a new prefetch if there's already a ready URL for the next track.
   // Starting a new prefetch would call torrent_prefetch_next_track, which releases the old
@@ -1005,6 +1033,7 @@ watch(
     const t = props.track;
     const magnet = t?.magnet;
     const fileIdx = t?.fileIdx;
+    void appDebugLog("player", `stream-watch: fired — fileIdx=${fileIdx ?? "—"} hasMagnet=${!!magnet} suppressed=${suppressed} phase=${streamPhase.value} activeSig="${activeStreamPrepareSig.value?.slice(0,30)}"`);
     if (!t || !magnet) {
       activeStreamPrepareSig.value = "";
       stopBufferPoll();
@@ -1045,6 +1074,7 @@ watch(
       streamPhase.value !== "idle" &&
       streamPhase.value !== "error"
     ) {
+      void appDebugLog("player", `stream-watch: skipped (dup) — sig="${prepareSig.slice(0,30)}" phase=${streamPhase.value}`);
       return;
     }
     activeStreamPrepareSig.value = prepareSig;
@@ -1394,13 +1424,56 @@ onUnmounted(() => {
 
             <Transition name="status-menu">
               <div v-if="statusMenuOpen" class="stream-status-panel" role="dialog" aria-label="Статус стрима">
-                <div class="status-headline">{{ streamStatusHeadline }}</div>
-                <div class="status-body">{{ streamStatusBody }}</div>
-                <div v-if="streamStatusRows.length" class="status-rows">
-                  <div v-for="row in streamStatusRows" :key="row.label" class="status-row">
-                    <span class="status-label">{{ row.label }}</span>
-                    <span class="status-val">{{ row.value }}</span>
-                  </div>
+                <!-- Верхняя строка: фаза + скорость -->
+                <div class="sp-top">
+                  <span class="sp-phase-dot" :class="`sp-phase-dot--${streamPhase}`" />
+                  <span class="sp-headline">{{ streamStatusHeadline }}</span>
+                  <span v-if="currentPeers > 0" class="sp-peers-badge">
+                    {{ currentPeers }} <span class="sp-peers-label">источн.</span>
+                  </span>
+                </div>
+
+                <!-- Тело: краткое описание -->
+                <div class="sp-body">{{ streamStatusBody }}</div>
+
+                <!-- Sparkline: история скорости -->
+                <div v-if="sparklineData.points" class="sp-chart">
+                  <svg viewBox="0 0 180 36" preserveAspectRatio="none" class="sp-svg">
+                    <!-- Заливка под линией -->
+                    <defs>
+                      <linearGradient id="sp-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"/>
+                        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+                      </linearGradient>
+                    </defs>
+                    <polygon
+                      :points="`0,36 ${sparklineData.points} 180,36`"
+                      fill="url(#sp-grad)"
+                    />
+                    <polyline
+                      :points="sparklineData.points"
+                      fill="none"
+                      stroke="var(--accent)"
+                      stroke-width="1.5"
+                      stroke-linejoin="round"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  <div class="sp-chart-peak">{{ fmtRate(sparklineData.max) }}</div>
+                </div>
+
+                <!-- Пиры: анимированные точки -->
+                <div v-if="currentPeers > 0 || isLoading" class="sp-peer-row">
+                  <span
+                    v-for="i in Math.min(currentPeers, 12)"
+                    :key="i"
+                    class="sp-peer-dot"
+                    :style="{ animationDelay: `${((i * 137) % 1000) / 1000}s` }"
+                  />
+                  <span v-if="currentPeers > 12" class="sp-peers-more">+{{ currentPeers - 12 }}</span>
+                  <span v-else-if="currentPeers === 0 && isLoading" class="sp-searching-dots">
+                    <span /><span /><span />
+                  </span>
                 </div>
               </div>
             </Transition>
@@ -1987,70 +2060,183 @@ onUnmounted(() => {
   animation: dot-pulse 1.4s ease-in-out infinite;
 }
 
-/* ── Pop-up панель ───────────────────── */
+/* ══════════════════════════════════════════
+   Stream status pop-up — redesigned
+   ══════════════════════════════════════════ */
 .stream-status-panel {
   position: absolute;
   left: 50%;
   bottom: calc(100% + 10px);
   transform: translateX(-50%);
   z-index: 80;
-  min-width: 220px;
-  max-width: min(90vw, 320px);
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: rgba(22, 20, 18, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  width: 220px;
+  padding: 11px 13px 12px;
+  border-radius: 12px;
+  background: rgba(18, 16, 14, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255,255,255,0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   text-align: left;
   pointer-events: auto;
 }
 
-.status-headline {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: rgba(240, 236, 232, 0.5);
+/* Top row: dot + headline + peers badge */
+.sp-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 4px;
 }
-.status-body {
+.sp-phase-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.3);
+}
+.sp-phase-dot--buffering,
+.sp-phase-dot--preparing {
+  background: var(--accent);
+  animation: sp-dot-pulse 1.6s ease-in-out infinite;
+}
+.sp-phase-dot--ready { background: var(--accent); animation: none; }
+@keyframes sp-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+
+.sp-headline {
+  flex: 1;
   font-size: 13px;
-  font-weight: 500;
-  color: #f0ece8;
-  line-height: 1.4;
-  margin-bottom: 8px;
-}
-.status-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 8px;
-  margin-top: 4px;
-}
-.status-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 11.5px;
-  line-height: 1.4;
-}
-.status-label {
-  color: rgba(240, 236, 232, 0.5);
-  white-space: nowrap;
-}
-.status-val {
+  font-weight: 600;
   color: #f0ece8;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-peers-badge {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--accent);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sp-peers-label { color: rgba(255,255,255,0.4); }
+
+/* Body text */
+.sp-body {
+  font-size: 11.5px;
+  color: rgba(240, 236, 232, 0.5);
+  line-height: 1.35;
+  margin-bottom: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sparkline chart */
+.sp-chart {
+  position: relative;
+  margin-bottom: 10px;
+}
+.sp-svg {
+  display: block;
+  width: 100%;
+  height: 36px;
+  overflow: visible;
+}
+.sp-chart-peak {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 9px;
+  color: rgba(255,255,255,0.25);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Peer dots row */
+.sp-peer-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 10px;
+}
+.sp-peer-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
+  animation: sp-peer-blink 2.4s ease-in-out infinite;
+}
+@keyframes sp-peer-blink {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%       { opacity: 0.25; transform: scale(0.6); }
+}
+.sp-peers-more {
+  font-size: 10px;
+  color: rgba(255,255,255,0.35);
+}
+
+/* Searching animation (no peers yet) */
+.sp-searching-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sp-searching-dots span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  animation: sp-search 1.2s ease-in-out infinite;
+}
+.sp-searching-dots span:nth-child(2) { animation-delay: 0.2s; }
+.sp-searching-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes sp-search {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+  40%            { transform: scale(1); opacity: 0.8; }
 }
 
 /* ── Анимация появления pop-up ─────────── */
 .status-menu-enter-active { transition: opacity 0.14s ease, transform 0.14s ease; }
 .status-menu-leave-active { transition: opacity 0.1s ease, transform 0.1s ease; }
-.status-menu-enter-from  { opacity: 0; transform: translateX(-50%) translateY(4px); }
-.status-menu-leave-to    { opacity: 0; transform: translateX(-50%) translateY(4px); }
+.status-menu-enter-from  { opacity: 0; transform: translateX(-50%) translateY(5px); }
+.status-menu-leave-to    { opacity: 0; transform: translateX(-50%) translateY(5px); }
+
+/* ── Light theme overrides ─────────────── */
+[data-theme="light"] .stream-status-panel {
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.15), 0 0 0 0.5px rgba(0,0,0,0.05);
+}
+[data-theme="light"] .sp-headline {
+  color: #1a1814;
+}
+[data-theme="light"] .sp-peers-label {
+  color: rgba(0, 0, 0, 0.4);
+}
+[data-theme="light"] .sp-body {
+  color: rgba(30, 25, 20, 0.5);
+}
+[data-theme="light"] .sp-phase-dot {
+  background: rgba(0, 0, 0, 0.25);
+}
+[data-theme="light"] .sp-chart-peak {
+  color: rgba(0, 0, 0, 0.3);
+}
+[data-theme="light"] .sp-peers-more {
+  color: rgba(0, 0, 0, 0.35);
+}
+[data-theme="light"] .sp-searching-dots span {
+  background: rgba(0, 0, 0, 0.25);
+}
 
 .player-like-btn {
   flex-shrink: 0;
