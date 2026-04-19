@@ -72,7 +72,15 @@ function torrentsLabel(n) {
 
 function isNowPlayingTrack(like) {
   const np = props.nowPlaying;
-  if (!np || !like?.magnet) return false;
+  if (!np || !like) return false;
+  if (like.source === "soulseek" || np.source === "soulseek") {
+    if (like.source !== "soulseek" || np.source !== "soulseek") return false;
+    return (
+      String(like.slskUsername) === String(np.slskUsername) &&
+      String(like.slskFilepath) === String(np.slskFilepath)
+    );
+  }
+  if (!like.magnet) return false;
   return (
     String(like.magnet) === String(np.magnet) &&
     Number(like.fileIdx) === Number(np.fileIdx)

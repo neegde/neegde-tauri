@@ -107,10 +107,19 @@ function _slskPickCover(candidates) {
 }
 
 /**
- * Groups SoulSeek raw track results into:
- *   - albums: multi-track folders, deduplicated across peers (best source wins)
- *   - tracks: lone files, deduplicated by name (best bitrate wins)
- * Returns flat array with slsk_type: "album" | "track" — albums first.
+ * Builds a flat list of playable SoulSeek rows (one per audio file).
+ *
+ * Multi-track folders are deduplicated by normalized folder name (best peer wins),
+ * then expanded into one row per file with that folder's cover image.
+ * Single-file folders are deduplicated by normalized filename (best bitrate wins).
+ *
+ * Args:
+ *     rawTracks: Parsed search rows (audio + image sidecars).
+ *
+ * Returns:
+ *     Array of track-shaped results with slsk_cover_* when an image exists in-folder.
+ *     `seeders` is the number of distinct SoulSeek peers that matched the same dedup key
+ *     (proxy for availability). Results are sorted by that count, then bitrate, then size.
  */
 function groupSlskResults(rawTracks) {
   const images = rawTracks.filter((r) => r.slsk_is_image);
@@ -124,7 +133,6 @@ function groupSlskResults(rawTracks) {
     imagesByKey.get(key).push(img);
   }
 
-  // Step 1: group by user+folder (audio only)
   const byUserFolder = new Map();
   for (const t of audios) {
     const folder = _slskFolderKey(t.slsk_filepath);
@@ -133,7 +141,6 @@ function groupSlskResults(rawTracks) {
     byUserFolder.get(key).tracks.push(t);
   }
 
-  // Step 2: separate albums (≥2 tracks) from singles
   const albumCandidates = [];
   const singleCandidates = [];
   for (const [, g] of byUserFolder) {
@@ -141,7 +148,13 @@ function groupSlskResults(rawTracks) {
     else if (g.tracks.length === 1) singleCandidates.push(g.tracks[0]);
   }
 
-  // Step 3: deduplicate albums by normalized folder name — keep best source
+  /** How many multi-track folders collapsed into each normalized album key (peer availability). */
+  const albumKeyPeers = new Map();
+  for (const g of albumCandidates) {
+    const k = _slskAlbumNormKey(g.folder);
+    albumKeyPeers.set(k, (albumKeyPeers.get(k) ?? 0) + 1);
+  }
+
   const albumsByKey = new Map();
   for (const g of albumCandidates) {
     const key = _slskAlbumNormKey(g.folder);
@@ -152,7 +165,14 @@ function groupSlskResults(rawTracks) {
     }
   }
 
-  // Step 4: deduplicate singles by normalized filename — keep best bitrate
+  /** How many lone files matched each normalized filename (peer availability). */
+  const singleKeyPeers = new Map();
+  for (const t of singleCandidates) {
+    const filename = (t.slsk_filepath ?? t.name ?? "").split(/[\\/]/).pop() ?? "";
+    const k = filename.toLowerCase().replace(/[^a-z0-9]/g, "");
+    singleKeyPeers.set(k, (singleKeyPeers.get(k) ?? 0) + 1);
+  }
+
   const singlesByKey = new Map();
   for (const t of singleCandidates) {
     const filename = (t.slsk_filepath ?? t.name ?? "").split(/[\\/]/).pop() ?? "";
@@ -161,14 +181,9 @@ function groupSlskResults(rawTracks) {
     if (!ex || (t.bitrate ?? 0) > (ex.bitrate ?? 0)) singlesByKey.set(key, t);
   }
 
-  // Build album results
-  const albums = [...albumsByKey.values()].map((g) => {
-    const parts = g.folder.split("/").filter(Boolean);
-    const folderName = parts.length >= 2
-      ? `${parts[parts.length - 2]} — ${parts[parts.length - 1]}`
-      : (parts[parts.length - 1] ?? "Unknown");
-    const bestBitrate = _slskBestBitrate(g.tracks) || null;
-    const category = bestBitrate ? `MP3 ${bestBitrate} kbps` : "SoulSeek";
+  const tracksOut = [];
+
+  for (const g of albumsByKey.values()) {
     g.tracks.sort((a, b) => {
       const na = (a.slsk_filepath ?? "").split(/[\\/]/).pop() ?? "";
       const nb = (b.slsk_filepath ?? "").split(/[\\/]/).pop() ?? "";
@@ -176,37 +191,47 @@ function groupSlskResults(rawTracks) {
     });
     const coverKey = `${g.user}|${g.folder}`;
     const cover = _slskPickCover(imagesByKey.get(coverKey) ?? []);
-    return {
-      id: `slsk_album_${g.user}_${g.folder}`,
-      name: folderName,
-      source: "soulseek",
-      slsk_type: "album",
-      category,
-      size: g.tracks.reduce((s, t) => s + (t.size ?? 0), 0),
-      seeders: 1, leechers: 0, added: "—",
-      slsk_username: g.user,
-      slsk_filepath: null,
-      slsk_folder: g.folder,
-      slsk_tracks: g.tracks,
-      slsk_cover_username: cover?.slsk_username ?? null,
-      slsk_cover_filepath: cover?.slsk_filepath ?? null,
-      slsk_cover_size: cover?.size ?? 0,
-    };
-  });
+    const bestBitrate = _slskBestBitrate(g.tracks) || null;
+    const category = bestBitrate ? `MP3 ${bestBitrate} kbps` : "SoulSeek";
+    const normAlbumKey = _slskAlbumNormKey(g.folder);
+    const peerCount = Math.max(1, albumKeyPeers.get(normAlbumKey) ?? 1);
+    for (const t of g.tracks) {
+      const filename = (t.slsk_filepath ?? t.name ?? "").split(/[\\/]/).pop() ?? "";
+      tracksOut.push({
+        id: t.id ?? `slsk_track_${g.user}_${t.slsk_filepath}`,
+        name: filename,
+        source: "soulseek",
+        slsk_type: "track",
+        category,
+        size: t.size ?? 0,
+        seeders: peerCount, leechers: 0, added: "—",
+        slsk_username: g.user,
+        slsk_filepath: t.slsk_filepath,
+        slsk_folder: g.folder,
+        slsk_tracks: [t],
+        bitrate: t.bitrate ?? null,
+        duration: t.duration ?? null,
+        slsk_cover_username: cover?.slsk_username ?? null,
+        slsk_cover_filepath: cover?.slsk_filepath ?? null,
+        slsk_cover_size: cover?.size ?? 0,
+      });
+    }
+  }
 
-  // Build single-track results
-  const singles = [...singlesByKey.values()].map((t) => {
+  for (const t of singlesByKey.values()) {
     const filename = (t.slsk_filepath ?? t.name ?? "").split(/[\\/]/).pop() ?? "";
     const ck = `${t.slsk_username}|${_slskFolderKey(t.slsk_filepath)}`;
     const cover = _slskPickCover(imagesByKey.get(ck) ?? []);
-    return {
+    const singleNormKey = filename.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const peerCount = Math.max(1, singleKeyPeers.get(singleNormKey) ?? 1);
+    tracksOut.push({
       id: t.id ?? `slsk_track_${t.slsk_username}_${t.slsk_filepath}`,
       name: filename,
       source: "soulseek",
       slsk_type: "track",
       category: t.category ?? "SoulSeek",
       size: t.size ?? 0,
-      seeders: 1, leechers: 0, added: "—",
+      seeders: peerCount, leechers: 0, added: "—",
       slsk_username: t.slsk_username,
       slsk_filepath: t.slsk_filepath,
       slsk_folder: _slskFolderKey(t.slsk_filepath),
@@ -216,13 +241,25 @@ function groupSlskResults(rawTracks) {
       slsk_cover_username: cover?.slsk_username ?? null,
       slsk_cover_filepath: cover?.slsk_filepath ?? null,
       slsk_cover_size: cover?.size ?? 0,
-    };
+    });
+  }
+
+  tracksOut.sort((a, b) => {
+    const pa = Number(a.seeders) || 0;
+    const pb = Number(b.seeders) || 0;
+    if (pb !== pa) return pb - pa;
+    const ba = a.bitrate ?? 0;
+    const bb = b.bitrate ?? 0;
+    if (bb !== ba) return bb - ba;
+    const sa = a.size ?? 0;
+    const sb = b.size ?? 0;
+    if (sa !== sb) return sa - sb;
+    const fa = (a.slsk_folder ?? "").localeCompare(b.slsk_folder ?? "", undefined, { numeric: true });
+    if (fa !== 0) return fa;
+    return (a.name ?? "").localeCompare(b.name ?? "", undefined, { numeric: true });
   });
 
-  albums.sort((a, b) => b.slsk_tracks.length - a.slsk_tracks.length || b.size - a.size);
-  singles.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { numeric: true }));
-
-  return [...albums, ...singles];
+  return tracksOut;
 }
 
 // ── Search result LRU cache ───────────────────────────────────────────────────
@@ -703,6 +740,14 @@ const playerPlaying = ref(true);
 const nowPlayingMatchForLikes = computed(() => {
   const np = nowPlaying.value;
   if (!np) return null;
+  if (np.source === "soulseek") {
+    return {
+      source: "soulseek",
+      fileIdx: np.fileIdx,
+      slskUsername: np.slskUsername,
+      slskFilepath: np.slskFilepath,
+    };
+  }
   return { magnet: np.magnet, fileIdx: np.fileIdx };
 });
 
@@ -1212,6 +1257,12 @@ function handlePlayAlbum(albumFiles) {
  * @returns {boolean}
  */
 function sameQueueItem(a, b) {
+  if (a?.source === "soulseek" && b?.source === "soulseek") {
+    return (
+      String(a.slskUsername) === String(b.slskUsername) &&
+      String(a.slskFilepath) === String(b.slskFilepath)
+    );
+  }
   return String(a.magnet) === String(b.magnet) && Number(a.fileIdx) === Number(b.fileIdx);
 }
 
@@ -1244,8 +1295,8 @@ function handleAddToQueueFromTorrent(fileIdx) {
  * @returns {void}
  */
 function handleAddToQueueFromLike(like) {
-  appendToQueue({
-    magnet: like.magnet,
+  const base = {
+    magnet: like.magnet ?? "",
     fileIdx: like.fileIdx,
     fileName: trackDisplayBasename(like.fileName),
     torrentName: like.torrentName,
@@ -1255,7 +1306,17 @@ function handleAddToQueueFromLike(like) {
     coverFileIdx: trackCoverFileIdxForLike(like, likes.value),
     albumDirPath: like.albumDirPath ?? null,
     seeders: null,
-  });
+  };
+  if (like.source === "soulseek" && like.slskUsername && like.slskFilepath) {
+    appendToQueue({
+      ...base,
+      slskUsername: like.slskUsername,
+      slskFilepath: like.slskFilepath,
+      slskFilesize: like.slskFilesize ?? 0,
+    });
+    return;
+  }
+  appendToQueue(base);
 }
 
 /**
@@ -1391,14 +1452,40 @@ function handlePlayFromLike(like) {
   const likedTracks = Object.values(likes.value)
     .filter((l) => l.type === "track").sort((a, b) => b.addedAt - a.addedAt);
   const startIdx = Math.max(0, likedTracks.findIndex((l) => l.id === like.id));
-  const fullQueue = likedTracks.map((l) => ({
-    magnet: l.magnet, fileIdx: l.fileIdx, fileName: l.fileName,
-    torrentName: l.torrentName, torrentId: l.torrentId, source: l.source,
-    coverFileIdx: trackCoverFileIdxForLike(l, likes.value),
-  }));
-  const existing = queue.value.findIndex(
-    (q) => q.fileIdx === like.fileIdx && q.magnet === like.magnet && q.torrentId === like.torrentId
-  );
+  const fullQueue = likedTracks.map((l) => {
+    const row = {
+      magnet: l.magnet ?? "",
+      fileIdx: l.fileIdx,
+      fileName: l.fileName,
+      torrentName: l.torrentName,
+      torrentId: l.torrentId,
+      source: l.source,
+      coverFileIdx: trackCoverFileIdxForLike(l, likes.value),
+    };
+    if (l.source === "soulseek" && l.slskUsername && l.slskFilepath) {
+      return {
+        ...row,
+        slskUsername: l.slskUsername,
+        slskFilepath: l.slskFilepath,
+        slskFilesize: l.slskFilesize ?? 0,
+      };
+    }
+    return row;
+  });
+  const existing = queue.value.findIndex((q) => {
+    if (like.source === "soulseek") {
+      return (
+        q.source === "soulseek" &&
+        String(q.slskUsername) === String(like.slskUsername) &&
+        String(q.slskFilepath) === String(like.slskFilepath)
+      );
+    }
+    return (
+      q.fileIdx === like.fileIdx &&
+      q.magnet === like.magnet &&
+      q.torrentId === like.torrentId
+    );
+  });
   if (existing !== -1 && queue.value.length === fullQueue.length) {
     queuePos.value = existing;
     return;

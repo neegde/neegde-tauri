@@ -133,18 +133,28 @@ function toggleCurrentLike() {
   const t = props.track;
   const id = currentLikeId.value;
   if (!t || !id) return;
-  emit("toggle-like", {
+  const base = {
     id,
     type: "track",
     torrentId: t.torrentId,
     torrentName: t.torrentName,
     source: t.source,
-    magnet: t.magnet,
+    magnet: t.magnet ?? "",
     fileIdx: t.fileIdx,
     fileName: t.fileName,
     coverFileIdx: t.coverFileIdx ?? null,
     coverFile: null,
-  });
+  };
+  if (t.source === "soulseek" && t.slskUsername && t.slskFilepath) {
+    emit("toggle-like", {
+      ...base,
+      slskUsername: t.slskUsername,
+      slskFilepath: t.slskFilepath,
+      slskFilesize: t.slskFilesize ?? 0,
+    });
+    return;
+  }
+  emit("toggle-like", base);
 }
 
 const audioRef = ref(null);
