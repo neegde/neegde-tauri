@@ -44,18 +44,42 @@ const props = defineProps({
   rtAvatarUrl:      { type: String, default: null },
   restoringSession: { type: Boolean, default: false },
   theme:            { type: String, default: "dark" },
-  /** Полный журнал отладки приложения (UI, плеер, торрент-стриминг). */
-  appDebugEnabled: { type: Boolean, default: false },
+  appDebugEnabled:  { type: Boolean, default: false },
+  // SoulSeek
+  slskConnected:    { type: Boolean, default: false },
+  slskUsername:     { type: String, default: null },
+  slskLoggingIn:    { type: Boolean, default: false },
+  slskLoginError:   { type: String, default: null },
 });
 
 // avatar image error fallback
 const avatarImgFailed = ref(false);
+
+// SoulSeek login form state
+const slskFormUser = ref(localStorage.getItem("neegde.slsk.user") || "");
+const slskFormPass = ref("");
+watch(slskFormUser, (v) => localStorage.setItem("neegde.slsk.user", v));
+
+// Предзаполняем форму сохранёнными credentials
+onMounted(async () => {
+  try {
+    const creds = await invoke("soulseek_load_credentials");
+    if (creds && !slskFormUser.value) {
+      slskFormUser.value = creds[0];
+      slskFormPass.value = creds[1];
+    } else if (creds && !slskFormPass.value) {
+      slskFormPass.value = creds[1];
+    }
+  } catch { /* ignore */ }
+});
 
 const emit = defineEmits([
   "login",
   "logout",
   "theme-change",
   "update:appDebugEnabled",
+  "slsk-login",
+  "slsk-logout",
 ]);
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
@@ -725,6 +749,76 @@ async function confirmClearCoverTorrents() {
               </button>
             </form>
           </template>
+        </div>
+      </div>
+
+      <!-- ── SoulSeek card ── -->
+      <div class="settings-card settings-card--slsk">
+        <!-- Connected -->
+        <div v-if="slskConnected" class="settings-card-header">
+          <div class="slsk-avatar">
+            <span>S</span>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">{{ slskUsername }}</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-on" />
+              Подключено · SoulSeek
+            </div>
+          </div>
+          <button
+            type="button"
+            class="settings-action-btn settings-action-btn--ghost"
+            @click="emit('slsk-logout')"
+          >
+            Выйти
+          </button>
+        </div>
+
+        <!-- Not connected -->
+        <div v-else class="settings-card-header">
+          <div class="settings-card-icon">🎵</div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">SoulSeek</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-off" />
+              Не подключено
+            </div>
+          </div>
+        </div>
+
+        <div v-if="!slskConnected" class="settings-card-body">
+          <p class="settings-card-desc">
+            Войдите в аккаунт SoulSeek для поиска и стриминга музыки от пользователей сети.
+          </p>
+          <form
+            class="settings-login-form"
+            @submit.prevent="emit('slsk-login', slskFormUser, slskFormPass)"
+          >
+            <input
+              class="login-input"
+              type="text"
+              placeholder="Логин SoulSeek"
+              v-model="slskFormUser"
+              autocomplete="username"
+            />
+            <input
+              class="login-input"
+              type="password"
+              placeholder="Пароль"
+              v-model="slskFormPass"
+              autocomplete="current-password"
+            />
+            <p v-if="slskLoginError" class="login-error">{{ slskLoginError }}</p>
+            <button
+              class="login-btn"
+              type="submit"
+              :disabled="slskLoggingIn || !slskFormUser.trim() || !slskFormPass"
+            >
+              <span v-if="slskLoggingIn" class="spinner" />
+              <template v-else>Войти в SoulSeek</template>
+            </button>
+          </form>
         </div>
       </div>
     </div>
@@ -2021,5 +2115,25 @@ async function confirmClearCoverTorrents() {
 }
 .settings-release-retry:hover {
   color: var(--text);
+}
+
+/* ── SoulSeek card ──────────────────────────────────────────────────────────── */
+.settings-card--slsk {
+  margin-top: 12px;
+}
+.slsk-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #336699;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
 }
 </style>

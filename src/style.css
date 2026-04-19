@@ -849,6 +849,53 @@ body {
   background: rgba(var(--accent-rgb), 0.2);
 }
 
+/* ── Source selector (Rutracker / SoulSeek) ────────────────────────── */
+.source-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 4px;
+  flex-shrink: 0;
+}
+.source-selector-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.source-selector-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+.source-selector-btn:hover:not(.active) {
+  color: var(--text);
+}
+.source-selector-warn {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f5a623;
+  flex-shrink: 0;
+}
+[data-theme="light"] .source-selector {
+  background: rgba(0, 0, 0, 0.07);
+}
+[data-theme="light"] .source-selector-btn.active {
+  background: rgba(0, 0, 0, 0.1);
+}
+
 /* ── Cover loading shimmer ────────────────────────────────────────────── */
 @keyframes cover-shimmer {
   0%   { background-position: -200% center; }
@@ -2334,4 +2381,87 @@ body {
 [data-theme="light"] .nerd-btn-danger--ghost:hover:not(:disabled) {
   background: rgba(185, 28, 28, 0.08);
   color: #991b1b;
+}
+
+/* ── SoulSeek search tracklist ──────────────────────────────────────────── */
+.slsk-tracklist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.slsk-track-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.slsk-track-row:hover { background: var(--surface-h); }
+.slsk-track-play {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.slsk-track-row:hover .slsk-track-play { color: var(--text); background: var(--surface); }
+.slsk-track-name {
+  flex: 1;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.slsk-track-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.slsk-track-chip {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.slsk-track-dur {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── SoulSeek view tabs ─────────────────────────────────────────────────── */
+.slsk-view-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.slsk-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.slsk-tab:hover:not(:disabled) { background: var(--surface-h); color: var(--text); }
+.slsk-tab.active { background: var(--accent); color: #000; border-color: transparent; }
+.slsk-tab:disabled { opacity: 0.35; cursor: default; }
+.slsk-tab-count {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
 }

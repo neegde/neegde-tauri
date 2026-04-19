@@ -1,0 +1,293 @@
+//! SoulSeek integration: state management and Tauri commands.
+
+mod proto;
+mod session;
+mod transfer;
+
+use session::{next_token, Session, SlskFileResult};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+// ── Public types (serialised to frontend) ────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SlskLoginResult {
+    pub success: bool,
+    pub error: Option<String>,
+    pub username: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SlskStatus {
+    pub connected: bool,
+    pub username: Option<String>,
+}
+
+/// One search result row — must be compatible with the rutracker SearchResult shape.
+#[derive(Serialize, Clone)]
+pub struct SlskSearchResultRow {
+    // Standard SearchResult fields
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub size: u64,
+    pub seeders: u64,
+    pub leechers: u64,
+    pub added: String,
+    pub source: String,
+    // SoulSeek-specific extras (passed through to the queue item)
+    pub slsk_username: String,
+    pub slsk_filepath: String,
+    pub bitrate: Option<u32>,
+    pub duration: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct SlskStreamReady {
+    pub url: String,
+    pub token: String,
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+struct ActiveStream {
+    temp_path: PathBuf,
+    download_abort: tokio::task::AbortHandle,
+    http_abort: tokio::task::AbortHandle,
+}
+
+pub struct SoulSeekState {
+    session: Mutex<Option<Arc<Session>>>,
+    streams: Mutex<HashMap<String, ActiveStream>>,
+}
+
+impl SoulSeekState {
+    pub fn new() -> Self {
+        Self {
+            session: Mutex::new(None),
+            streams: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn get_session(&self) -> Result<Arc<Session>, String> {
+        self.session
+            .lock()
+            .map_err(|_| "lock error".to_string())?
+            .clone()
+            .ok_or_else(|| "Not connected to SoulSeek".to_string())
+    }
+}
+
+// ── Tauri commands ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn soulseek_login(
+    state: tauri::State<'_, SoulSeekState>,
+    username: String,
+    password: String,
+) -> Result<SlskLoginResult, String> {
+    // If already connected, disconnect first
+    {
+        let mut guard = state.session.lock().map_err(|_| "lock error".to_string())?;
+        *guard = None; // drops Arc, background tasks see Weak upgrade fail and exit
+    }
+
+    match Session::connect(username.clone(), password).await {
+        Ok(sess) => {
+            let mut guard = state.session.lock().map_err(|_| "lock error".to_string())?;
+            *guard = Some(sess);
+            Ok(SlskLoginResult {
+                success: true,
+                error: None,
+                username: Some(username),
+            })
+        }
+        Err(e) => Ok(SlskLoginResult {
+            success: false,
+            error: Some(e),
+            username: None,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn soulseek_logout(state: tauri::State<'_, SoulSeekState>) -> Result<(), String> {
+    let mut guard = state.session.lock().map_err(|_| "lock error".to_string())?;
+    *guard = None;
+
+    // Abort all active streams
+    let mut streams = state.streams.lock().map_err(|_| "lock error".to_string())?;
+    for (_, s) in streams.drain() {
+        s.download_abort.abort();
+        s.http_abort.abort();
+        let _ = std::fs::remove_file(&s.temp_path);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn soulseek_status(state: tauri::State<'_, SoulSeekState>) -> Result<SlskStatus, String> {
+    let guard = state.session.lock().map_err(|_| "lock error".to_string())?;
+    match guard.as_ref() {
+        Some(s) => Ok(SlskStatus {
+            connected: true,
+            username: Some(s.username.clone()),
+        }),
+        None => Ok(SlskStatus { connected: false, username: None }),
+    }
+}
+
+#[tauri::command]
+pub async fn soulseek_search(
+    state: tauri::State<'_, SoulSeekState>,
+    query: String,
+) -> Result<Vec<SlskSearchResultRow>, String> {
+    let session = state.get_session()?;
+
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let results: Vec<SlskFileResult> = session.search(query).await;
+
+    let rows = results
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let filename = r.filepath
+                .rsplit(|c| c == '\\' || c == '/')
+                .next()
+                .unwrap_or(&r.filepath)
+                .to_string();
+            let display_name = filename.clone();
+            let category = bitrate_category(r.bitrate);
+            // Use username + filepath hash as unique id
+            let id = format!("slsk_{}", stable_id(&r.username, &r.filepath, i));
+            SlskSearchResultRow {
+                id,
+                name: display_name,
+                category,
+                size: r.size,
+                seeders: 1, // SoulSeek doesn't have seeders; use 1 to indicate available
+                leechers: 0,
+                added: "—".to_string(),
+                source: "soulseek".to_string(),
+                slsk_username: r.username,
+                slsk_filepath: r.filepath,
+                bitrate: r.bitrate,
+                duration: r.duration,
+            }
+        })
+        .collect();
+
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn soulseek_prepare_stream(
+    state: tauri::State<'_, SoulSeekState>,
+    username: String,
+    filepath: String,
+    filesize: u64,
+) -> Result<SlskStreamReady, String> {
+    let session = state.get_session()?;
+
+    let token = next_token();
+
+    let handle = transfer::download_and_stream(
+        Arc::clone(&session),
+        username,
+        filepath,
+        filesize,
+        token,
+    )
+    .await?;
+
+    let token_str = token.to_string();
+    {
+        let mut streams = state.streams.lock().map_err(|_| "lock error".to_string())?;
+        streams.insert(
+            token_str.clone(),
+            ActiveStream {
+                temp_path: handle.temp_path,
+                download_abort: handle.download_abort,
+                http_abort: handle.http_abort,
+            },
+        );
+    }
+
+    Ok(SlskStreamReady {
+        url: handle.url,
+        token: token_str,
+    })
+}
+
+#[tauri::command]
+pub fn soulseek_release_stream(
+    state: tauri::State<'_, SoulSeekState>,
+    token: String,
+) -> Result<(), String> {
+    let mut streams = state.streams.lock().map_err(|_| "lock error".to_string())?;
+    if let Some(s) = streams.remove(&token) {
+        s.download_abort.abort();
+        s.http_abort.abort();
+        let _ = std::fs::remove_file(&s.temp_path);
+    }
+    Ok(())
+}
+
+// ── Credential persistence ────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize)]
+struct SlskCredentials {
+    username: String,
+    password: String,
+}
+
+#[tauri::command]
+pub fn soulseek_save_credentials(
+    app: tauri::AppHandle,
+    username: String,
+    password: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let path = app.path().app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("slsk_creds.json");
+    let json = serde_json::to_string(&SlskCredentials { username, password })
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn soulseek_load_credentials(app: tauri::AppHandle) -> Option<(String, String)> {
+    use tauri::Manager;
+    let path = app.path().app_data_dir().ok()?.join("slsk_creds.json");
+    let data = std::fs::read_to_string(&path).ok()?;
+    let creds: SlskCredentials = serde_json::from_str(&data).ok()?;
+    Some((creds.username, creds.password))
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn bitrate_category(bitrate: Option<u32>) -> String {
+    match bitrate {
+        Some(b) if b >= 320 => format!("MP3 {b} kbps"),
+        Some(b) if b >= 128 => format!("MP3 {b} kbps"),
+        Some(b) => format!("{b} kbps"),
+        None => "SoulSeek".to_string(),
+    }
+}
+
+fn stable_id(username: &str, filepath: &str, idx: usize) -> String {
+    // Simple non-cryptographic hash for a stable ID
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in username.bytes().chain(filepath.bytes()) {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h ^= idx as u64;
+    format!("{h:016x}")
+}

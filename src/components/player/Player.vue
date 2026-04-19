@@ -926,6 +926,8 @@ function bufferPollTick() {
  */
 async function maybeTriggerPrefetch() {
   if (!props.nextTrack || !props.track) return;
+  // SoulSeek tracks don't use torrent prefetch
+  if (props.track?.source === "soulseek" || props.nextTrack?.source === "soulseek") return;
   if (!playing.value) return;
   if (streamPhase.value !== "ready") return;
   if (isLoading.value) return;
@@ -1110,6 +1112,9 @@ watch(
         nextSrc = await streamUrl(magnet, fileIdxNorm, {
           source: props.track?.source,
           torrentId: props.track?.torrentId,
+          slskUsername: props.track?.slskUsername,
+          slskFilepath: props.track?.slskFilepath,
+          slskFilesize: props.track?.slskFilesize,
         });
       }
       void appDebugLog("player", nextSrc

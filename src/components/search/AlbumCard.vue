@@ -11,10 +11,25 @@ const props = defineProps({
 const emit = defineEmits(["select"]);
 
 const seeds = Number(props.torrent.seeders) || 0;
-const formatLabel = computed(() => dominantFormatFromName(props.torrent?.name));
+const formatLabel = computed(() => {
+  if (props.torrent?.source === "soulseek") {
+    // Extract format from category like "MP3 320 kbps" → "MP3 320"
+    const cat = props.torrent?.category ?? "";
+    const m = cat.match(/^(\w+)\s+(\d+)/);
+    if (m) return `${m[1]} ${m[2]}`;
+    return cat || null;
+  }
+  return dominantFormatFromName(props.torrent?.name);
+});
+const isSoulseek = computed(() => props.torrent?.source === "soulseek");
+const slskTrackCount = computed(() => props.torrent?.slsk_tracks?.length ?? 0);
 
 function seedsLabel(n) {
   return `${n} сид${n === 1 ? "" : n < 5 ? "а" : "ов"}`;
+}
+
+function tracksLabel(n) {
+  return `${n} ${n === 1 ? "трек" : n < 5 ? "трека" : "треков"}`;
 }
 
 const cardRef = ref(null);
@@ -76,7 +91,7 @@ let hoverTimer = null;
 
 function onMouseenter() {
   if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
-  hoverTimer = setTimeout(() => prefetchTorrentDetails(String(props.torrent.id)), 300);
+  hoverTimer = setTimeout(() => prefetchTorrentDetails(String(props.torrent?.id)), 300);
 }
 
 function onMouseleave() {
@@ -126,7 +141,10 @@ watch(
     </div>
     <div class="album-name">{{ torrent.name }}</div>
     <div class="album-meta">
-      <span :class="['album-seeds', seeds > 0 ? 'seeds-ok' : 'seeds-dead']">
+      <span v-if="isSoulseek" class="album-seeds seeds-ok slsk-track-count">
+        {{ slskTrackCount > 1 ? tracksLabel(slskTrackCount) : torrent.category }}
+      </span>
+      <span v-else :class="['album-seeds', seeds > 0 ? 'seeds-ok' : 'seeds-dead']">
         {{ seedsLabel(seeds) }}
       </span>
     </div>

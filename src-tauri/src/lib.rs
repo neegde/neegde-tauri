@@ -6,6 +6,7 @@ mod cover_art;
 mod discord_presence;
 mod nerd_stats;
 mod rutracker;
+mod soulseek;
 mod torrent_image;
 mod torrent_stream;
 
@@ -130,6 +131,7 @@ pub fn run() {
         })
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));
+            app.manage(soulseek::SoulSeekState::new());
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
                 NonZeroUsize::new(200).unwrap(),
             )));
@@ -243,6 +245,15 @@ pub fn run() {
             torrent_stream::debug_api::app_debug_push,
             discord_presence::discord_presence_sync,
             discord_presence::discord_presence_clear,
+            // ── SoulSeek ───────────────────────────────────────────────────────
+            soulseek::soulseek_login,
+            soulseek::soulseek_logout,
+            soulseek::soulseek_status,
+            soulseek::soulseek_search,
+            soulseek::soulseek_prepare_stream,
+            soulseek::soulseek_release_stream,
+            soulseek::soulseek_save_credentials,
+            soulseek::soulseek_load_credentials,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

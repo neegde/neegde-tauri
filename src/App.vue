@@ -22,6 +22,7 @@ import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
+import { soulseekLogin, soulseekLogout, soulseekStatus, soulseekSearch, soulseekSaveCredentials, soulseekLoadCredentials } from "./soulseek/api.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
@@ -45,6 +46,122 @@ import {
   addTrackToPlaylist, removeTrackFromPlaylist,
 } from "./lib/playlistStorage.js";
 import PlaylistView from "./components/playlist/PlaylistView.vue";
+
+// ── SoulSeek result grouping ──────────────────────────────────────────────────
+
+function _slskFolderKey(filepath) {
+  const norm = (filepath ?? "").replace(/\\/g, "/");
+  const last = norm.lastIndexOf("/");
+  return last > 0 ? norm.slice(0, last) : "";
+}
+
+function _slskAlbumNormKey(folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  // Use last 2 segments, strip spaces/punctuation for dedup
+  return parts.slice(-2).join("/").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function _slskBestBitrate(tracks) {
+  return tracks.reduce((b, t) => (t.bitrate ?? 0) > b ? (t.bitrate ?? 0) : b, 0);
+}
+
+/**
+ * Groups SoulSeek raw track results into:
+ *   - albums: multi-track folders, deduplicated across peers (best source wins)
+ *   - tracks: lone files, deduplicated by name (best bitrate wins)
+ * Returns flat array with slsk_type: "album" | "track" — albums first.
+ */
+function groupSlskResults(rawTracks) {
+  // Step 1: group by user+folder
+  const byUserFolder = new Map();
+  for (const t of rawTracks) {
+    const folder = _slskFolderKey(t.slsk_filepath);
+    const key = `${t.slsk_username}|${folder}`;
+    if (!byUserFolder.has(key)) byUserFolder.set(key, { folder, user: t.slsk_username, tracks: [] });
+    byUserFolder.get(key).tracks.push(t);
+  }
+
+  // Step 2: separate albums (≥2 tracks) from singles
+  const albumCandidates = [];
+  const singleCandidates = [];
+  for (const [, g] of byUserFolder) {
+    if (g.tracks.length >= 2) albumCandidates.push(g);
+    else if (g.tracks.length === 1) singleCandidates.push(g.tracks[0]);
+  }
+
+  // Step 3: deduplicate albums by normalized folder name — keep best source
+  const albumsByKey = new Map();
+  for (const g of albumCandidates) {
+    const key = _slskAlbumNormKey(g.folder);
+    const ex = albumsByKey.get(key);
+    if (!ex || g.tracks.length > ex.tracks.length ||
+        (g.tracks.length === ex.tracks.length && _slskBestBitrate(g.tracks) > _slskBestBitrate(ex.tracks))) {
+      albumsByKey.set(key, g);
+    }
+  }
+
+  // Step 4: deduplicate singles by normalized filename — keep best bitrate
+  const singlesByKey = new Map();
+  for (const t of singleCandidates) {
+    const filename = (t.slsk_filepath ?? t.name ?? "").split(/[\\/]/).pop() ?? "";
+    const key = filename.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const ex = singlesByKey.get(key);
+    if (!ex || (t.bitrate ?? 0) > (ex.bitrate ?? 0)) singlesByKey.set(key, t);
+  }
+
+  // Build album results
+  const albums = [...albumsByKey.values()].map((g) => {
+    const parts = g.folder.split("/").filter(Boolean);
+    const folderName = parts.length >= 2
+      ? `${parts[parts.length - 2]} — ${parts[parts.length - 1]}`
+      : (parts[parts.length - 1] ?? "Unknown");
+    const bestBitrate = _slskBestBitrate(g.tracks) || null;
+    const category = bestBitrate ? `MP3 ${bestBitrate} kbps` : "SoulSeek";
+    g.tracks.sort((a, b) => {
+      const na = (a.slsk_filepath ?? "").split(/[\\/]/).pop() ?? "";
+      const nb = (b.slsk_filepath ?? "").split(/[\\/]/).pop() ?? "";
+      return na.localeCompare(nb, undefined, { numeric: true });
+    });
+    return {
+      id: `slsk_album_${g.user}_${g.folder}`,
+      name: folderName,
+      source: "soulseek",
+      slsk_type: "album",
+      category,
+      size: g.tracks.reduce((s, t) => s + (t.size ?? 0), 0),
+      seeders: 1, leechers: 0, added: "—",
+      slsk_username: g.user,
+      slsk_filepath: null,
+      slsk_folder: g.folder,
+      slsk_tracks: g.tracks,
+    };
+  });
+
+  // Build single-track results
+  const singles = [...singlesByKey.values()].map((t) => {
+    const filename = (t.slsk_filepath ?? t.name ?? "").split(/[\\/]/).pop() ?? "";
+    return {
+      id: t.id ?? `slsk_track_${t.slsk_username}_${t.slsk_filepath}`,
+      name: filename,
+      source: "soulseek",
+      slsk_type: "track",
+      category: t.category ?? "SoulSeek",
+      size: t.size ?? 0,
+      seeders: 1, leechers: 0, added: "—",
+      slsk_username: t.slsk_username,
+      slsk_filepath: t.slsk_filepath,
+      slsk_folder: _slskFolderKey(t.slsk_filepath),
+      slsk_tracks: [t],
+      bitrate: t.bitrate ?? null,
+      duration: t.duration ?? null,
+    };
+  });
+
+  albums.sort((a, b) => b.slsk_tracks.length - a.slsk_tracks.length || b.size - a.size);
+  singles.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { numeric: true }));
+
+  return [...albums, ...singles];
+}
 
 // ── Search result LRU cache ───────────────────────────────────────────────────
 const _searchCache = new Map(); // normalized query → results[]
@@ -226,6 +343,36 @@ function handleThemeChange(newTheme) {
 const rtLoggedIn  = ref(false);
 const rtUsername  = ref(null);
 const rtAvatarUrl = ref(null);
+// ── SoulSeek ──────────────────────────────────────────────────────────────────
+const slskConnected = ref(false);
+const slskUsername  = ref(null);
+const slskLoggingIn = ref(false);
+const slskLoginError = ref(null);
+// Restore SoulSeek session on app start (auto-login with saved credentials)
+onMounted(async () => {
+  try {
+    const status = await soulseekStatus();
+    if (status?.connected) {
+      slskConnected.value = true;
+      slskUsername.value = status.username;
+      return;
+    }
+    // Try auto-login with saved credentials
+    const creds = await soulseekLoadCredentials();
+    if (creds) {
+      const [username, password] = creds;
+      const result = await soulseekLogin(username, password);
+      if (result?.success) {
+        slskConnected.value = true;
+        slskUsername.value = result.username;
+      }
+    }
+  } catch { /* no Tauri API */ }
+});
+// ── Search source ─────────────────────────────────────────────────────────────
+/** "rutracker" | "soulseek" */
+const searchSource = ref(localStorage.getItem("neegde.searchSource") || "rutracker");
+watch(searchSource, (v) => localStorage.setItem("neegde.searchSource", v));
 // ── View ──────────────────────────────────────────────────────────────────────
 const view       = ref("home");  // "home" | "search" | "likes" | "settings" | "playlist"
 const returnView = ref("search");
@@ -528,6 +675,35 @@ watch(
   (newId) => { if (newId && mainRef.value) mainRef.value.scrollTo(0, 0); }
 );
 
+// ── SoulSeek login handlers ───────────────────────────────────────────────────
+
+async function handleSoulseekLogin(username, password) {
+  slskLoggingIn.value = true;
+  slskLoginError.value = null;
+  try {
+    const result = await soulseekLogin(username, password);
+    if (result.success) {
+      slskConnected.value = true;
+      slskUsername.value = result.username;
+      soulseekSaveCredentials(username, password).catch(() => {});
+    } else {
+      slskLoginError.value = result.error ?? "Ошибка подключения";
+    }
+  } catch (e) {
+    slskLoginError.value = String(e?.message ?? e ?? "Ошибка");
+  } finally {
+    slskLoggingIn.value = false;
+  }
+}
+
+async function handleSoulseekLogout() {
+  try { await soulseekLogout(); } catch { /* ignore */ }
+  slskConnected.value = false;
+  slskUsername.value = null;
+  // Clear search results if we were on soulseek source
+  if (searchSource.value === "soulseek") results.value = [];
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 function handleLogin(username, avatarUrl) {
   markRutrackerHadAccount();
@@ -572,11 +748,11 @@ async function handleSearch(query) {
 
   searchHistory.value = addToSearchHistory(q);
 
-  const cached = _searchCacheGet(q.toLowerCase());
+  const cached = _searchCacheGet(q.toLowerCase() + "|" + searchSource.value);
   if (cached) {
     results.value = cached;
     if (!results.value.length) error.value = "Ничего не найдено.";
-    appDebugLog("search", `query "${q}": cache hit (${cached.length} results)`);
+    appDebugLog("search", `query "${q}" [${searchSource.value}]: cache hit (${cached.length} results)`);
     return;
   }
 
@@ -585,10 +761,15 @@ async function handleSearch(query) {
   loading.value = true;
   results.value = [];
   try {
-    results.value = await searchMusic(q);
+    if (searchSource.value === "soulseek") {
+      if (!slskConnected.value) throw new Error("Не подключён к SoulSeek (зайдите в Настройки)");
+      results.value = groupSlskResults(await soulseekSearch(q));
+    } else {
+      results.value = await searchMusic(q);
+    }
     if (!results.value.length) error.value = "Ничего не найдено.";
-    else _searchCacheSet(q.toLowerCase(), results.value);
-    appDebugLog("search", `query "${q}": ${results.value.length} results`);
+    else _searchCacheSet(q.toLowerCase() + "|" + searchSource.value, results.value);
+    appDebugLog("search", `query "${q}" [${searchSource.value}]: ${results.value.length} results`);
   } catch (e) {
     error.value = e?.toString?.() ?? "Ошибка поиска";
     appDebugLog("search", `query "${q}": error — ${String(e)}`);
@@ -781,6 +962,31 @@ async function handleSelect(torrent) {
   torrentMagnet.value = "";
   torrentCover.value  = null;
   loadingFiles.value  = true;
+
+  // ── SoulSeek: no torrent details needed, build file list from grouped tracks ──
+  if (torrent.source === "soulseek") {
+    const trackList = torrent.slsk_tracks?.length
+      ? torrent.slsk_tracks
+      : [{ slsk_filepath: torrent.slsk_filepath, slsk_username: torrent.slsk_username, size: torrent.size }];
+
+    files.value = trackList.map((t, i) => {
+      const normalized = (t.slsk_filepath ?? "").replace(/\\/g, "/");
+      const filename = normalized.split("/").pop() || t.name || `track_${i}`;
+      return {
+        name: filename,
+        path: normalized || filename,
+        size: t.size ?? 0,
+        idx: i,
+        origIdx: i,
+        slskUsername: t.slsk_username ?? torrent.slsk_username,
+        slskFilepath: t.slsk_filepath ?? normalized,
+        slskFilesize: t.size ?? 0,
+      };
+    });
+    loadingFiles.value = false;
+    return;
+  }
+
   try {
     const details = await getTorrentDetails(torrent.id);
     torrentMagnet.value = details.magnet ?? "";
@@ -814,6 +1020,31 @@ async function handleSelect(torrent) {
   }
 }
 
+/** Play a SoulSeek single track directly from search results (no TorrentView). */
+function handlePlaySlskTrack(track) {
+  allowPlayerAutoplay();
+  const filepath = (track.slsk_filepath ?? track.slsk_tracks?.[0]?.slsk_filepath ?? "").replace(/\\/g, "/");
+  const username = track.slsk_username ?? track.slsk_tracks?.[0]?.slsk_username ?? "";
+  const filename = filepath.split("/").pop() || track.name || "track";
+  const item = {
+    magnet: "",
+    fileIdx: 0,
+    fileName: filename,
+    torrentName: filename,
+    torrentId: track.id,
+    source: "soulseek",
+    artist: null,
+    coverFileIdx: null,
+    albumDirPath: null,
+    seeders: 1,
+    slskUsername: username,
+    slskFilepath: track.slsk_filepath ?? track.slsk_tracks?.[0]?.slsk_filepath ?? filepath,
+    slskFilesize: track.size ?? 0,
+  };
+  queue.value = [item];
+  queuePos.value = 0;
+}
+
 function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
   let coverFileIdx = explicitCoverFileIdx ?? null;
   let albumDirPath = null;
@@ -832,7 +1063,7 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
     rawSeeds != null && rawSeeds !== "?" && Number.isFinite(Number(rawSeeds))
       ? Number(rawSeeds)
       : null;
-  return {
+  const item = {
     magnet,
     fileIdx:      f.origIdx,
     fileName:     trackDisplayBasename(f.path),
@@ -844,6 +1075,13 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
     albumDirPath,
     seeders,
   };
+  // Carry SoulSeek-specific fields needed for streaming (per-track, from file object)
+  if (torrent?.source === "soulseek") {
+    item.slskUsername = f.slskUsername ?? torrent.slsk_username ?? null;
+    item.slskFilepath = f.slskFilepath ?? f.path ?? null;
+    item.slskFilesize = f.slskFilesize ?? f.size ?? torrent.size ?? 0;
+  }
+  return item;
 }
 
 function handlePlay(fileIdx) {
@@ -1687,6 +1925,24 @@ function onMouseSideButtonUp(e) {
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
         <div v-if="view === 'search'" class="main-toolbar">
+          <!-- Source selector: Rutracker / SoulSeek -->
+          <div class="source-selector">
+            <button
+              :class="['source-selector-btn', searchSource === 'rutracker' ? 'active' : '']"
+              @click="searchSource = 'rutracker'; results = []; error = null"
+            >
+              Rutracker
+            </button>
+            <button
+              :class="['source-selector-btn', searchSource === 'soulseek' ? 'active' : '']"
+              @click="searchSource = 'soulseek'; results = []; error = null"
+              :title="slskConnected ? `Подключён как ${slskUsername}` : 'Нужна авторизация в Настройках'"
+            >
+              SoulSeek
+              <span v-if="!slskConnected" class="source-selector-warn" />
+            </button>
+          </div>
+
           <div class="main-toolbar-row">
             <div class="main-toolbar-search">
               <SearchBar
@@ -1697,6 +1953,7 @@ function onMouseSideButtonUp(e) {
               />
             </div>
             <button
+              v-if="searchSource !== 'soulseek'"
               type="button"
               class="toolbar-magnet-btn"
               title="Открыть раздачу по magnet-ссылке"
@@ -1753,10 +2010,16 @@ function onMouseSideButtonUp(e) {
             :restoring-session="restoringSession"
             :theme="theme"
             :app-debug-enabled="appDebugEnabled"
+            :slsk-connected="slskConnected"
+            :slsk-username="slskUsername"
+            :slsk-logging-in="slskLoggingIn"
+            :slsk-login-error="slskLoginError"
             @login="handleLogin"
             @logout="handleLogout"
             @theme-change="handleThemeChange"
             @update:app-debug-enabled="appDebugEnabled = $event"
+            @slsk-login="handleSoulseekLogin"
+            @slsk-logout="handleSoulseekLogout"
           />
         </KeepAlive>
 
@@ -1821,6 +2084,7 @@ function onMouseSideButtonUp(e) {
             :results="results"
             :selected-id="null"
             @select="handleSelect"
+            @play-slsk-track="handlePlaySlskTrack"
           />
 
           <TorrentView
