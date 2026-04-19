@@ -63,6 +63,8 @@ pub struct SlskFileResult {
     pub size: u64,
     pub bitrate: Option<u32>,
     pub duration: Option<u32>,
+    /// True when this row is an image file from search (cover art), not audio.
+    pub is_image: bool,
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
@@ -871,13 +873,31 @@ pub fn parse_file_search_response(data: &[u8]) -> Option<(u32, Vec<SlskFileResul
             || lower.ends_with(".opus")
             || lower.ends_with(".wma")
             || lower.ends_with(".ape");
-        if is_audio && size > 0 {
+        let is_image = lower.ends_with(".jpg")
+            || lower.ends_with(".jpeg")
+            || lower.ends_with(".png")
+            || lower.ends_with(".webp")
+            || lower.ends_with(".gif");
+        if size == 0 {
+            continue;
+        }
+        if is_audio {
             results.push(SlskFileResult {
                 username: username.clone(),
                 filepath,
                 size,
                 bitrate,
                 duration,
+                is_image: false,
+            });
+        } else if is_image && size >= 256 {
+            results.push(SlskFileResult {
+                username: username.clone(),
+                filepath,
+                size,
+                bitrate: None,
+                duration: None,
+                is_image: true,
             });
         }
     }

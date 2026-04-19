@@ -52,6 +52,22 @@ export function soulseekPrepareStream(username, filepath, filesize) {
 }
 
 /**
+ * Download a prefix of an image file from a peer for cover art (≤512 KiB).
+ *
+ * @param {string} username
+ * @param {string} filepath
+ * @param {number} filesize
+ * @returns {Promise<{ mime: string, base64: string }>}
+ */
+export function soulseekCoverPreview(username, filepath, filesize) {
+  return invoke("soulseek_cover_preview", {
+    username,
+    filepath,
+    filesize: Number(filesize) || 0,
+  });
+}
+
+/**
  * Stop streaming and clean up a file by token.
  * @param {string} token
  */
@@ -73,3 +89,11 @@ export function soulseekSaveCredentials(username, password) {
 export function soulseekLoadCredentials() {
   return invoke("soulseek_load_credentials");
 }
+
+export {
+  clearSlskCoverCache,
+  getSlskCoverDataUrl,
+  peekSlskCover,
+  getSlskCoverReactive,
+  slskCoverKey,
+} from "./coverCache.js";

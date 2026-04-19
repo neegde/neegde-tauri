@@ -28,6 +28,7 @@ import {
   probeHttpProxy,
 } from "../../rutracker/proxyConfig.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
+import { clearSlskCoverCache } from "../../soulseek/api.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
 import {
@@ -612,7 +613,7 @@ async function openAppDebugLogWindow() {
 
 async function confirmClearCoverTorrents() {
   const ok = await ask(
-    "Удалятся обложки, загруженные через BitTorrent из раздач (отдельная папка). Продолжить?",
+    "Удалятся обложки, загруженные через BitTorrent из раздач (отдельная папка). Сбросится и кэш обложек SoulSeek в памяти приложения. Продолжить?",
     { title: "Очистить кэш обложек", kind: "warning" },
   );
   if (!ok) return;
@@ -620,6 +621,7 @@ async function confirmClearCoverTorrents() {
   cacheSettingsError.value = null;
   try {
     await invoke("purge_cover_torrent_cache");
+    clearSlskCoverCache();
     await loadNerdDiagnostics();
   } catch (e) {
     cacheSettingsError.value = e?.toString?.() ?? String(e);

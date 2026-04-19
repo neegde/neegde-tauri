@@ -22,7 +22,15 @@ import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
-import { soulseekLogin, soulseekLogout, soulseekStatus, soulseekSearch, soulseekSaveCredentials, soulseekLoadCredentials } from "./soulseek/api.js";
+import {
+  soulseekLogin,
+  soulseekLogout,
+  soulseekStatus,
+  soulseekSearch,
+  soulseekSaveCredentials,
+  soulseekLoadCredentials,
+  clearSlskCoverCache,
+} from "./soulseek/api.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
@@ -66,6 +74,38 @@ function _slskBestBitrate(tracks) {
   return tracks.reduce((b, t) => (t.bitrate ?? 0) > b ? (t.bitrate ?? 0) : b, 0);
 }
 
+/** Lower is better — matches common release folder art names. */
+function _slskCoverPriority(filename) {
+  const n = (filename ?? "").toLowerCase();
+  const order = [
+    "folder.jpg", "folder.jpeg", "cover.jpg", "cover.jpeg", "front.jpg", "front.jpeg",
+    "album.jpg", "artwork.jpg", "cover.png", "folder.png", "front.png", "album.png",
+  ];
+  for (let i = 0; i < order.length; i++) {
+    if (n.endsWith(order[i])) return i;
+  }
+  return 40;
+}
+
+/**
+ * Picks one image file to use as folder cover (same SoulSeek user + directory as tracks).
+ *
+ * Args:
+ *     candidates: Rows with slsk_is_image from search.
+ *
+ * Returns:
+ *     Best candidate row or null.
+ */
+function _slskPickCover(candidates) {
+  if (!candidates?.length) return null;
+  const scored = candidates.map((c) => {
+    const base = (c.slsk_filepath ?? c.name ?? "").split(/[\\/]/).pop() ?? "";
+    return { c, pr: _slskCoverPriority(base), size: c.size ?? 0 };
+  });
+  scored.sort((a, b) => a.pr - b.pr || b.size - a.size);
+  return scored[0].c;
+}
+
 /**
  * Groups SoulSeek raw track results into:
  *   - albums: multi-track folders, deduplicated across peers (best source wins)
@@ -73,9 +113,20 @@ function _slskBestBitrate(tracks) {
  * Returns flat array with slsk_type: "album" | "track" — albums first.
  */
 function groupSlskResults(rawTracks) {
-  // Step 1: group by user+folder
+  const images = rawTracks.filter((r) => r.slsk_is_image);
+  const audios = rawTracks.filter((r) => !r.slsk_is_image);
+
+  const imagesByKey = new Map();
+  for (const img of images) {
+    const folder = _slskFolderKey(img.slsk_filepath);
+    const key = `${img.slsk_username}|${folder}`;
+    if (!imagesByKey.has(key)) imagesByKey.set(key, []);
+    imagesByKey.get(key).push(img);
+  }
+
+  // Step 1: group by user+folder (audio only)
   const byUserFolder = new Map();
-  for (const t of rawTracks) {
+  for (const t of audios) {
     const folder = _slskFolderKey(t.slsk_filepath);
     const key = `${t.slsk_username}|${folder}`;
     if (!byUserFolder.has(key)) byUserFolder.set(key, { folder, user: t.slsk_username, tracks: [] });
@@ -123,6 +174,8 @@ function groupSlskResults(rawTracks) {
       const nb = (b.slsk_filepath ?? "").split(/[\\/]/).pop() ?? "";
       return na.localeCompare(nb, undefined, { numeric: true });
     });
+    const coverKey = `${g.user}|${g.folder}`;
+    const cover = _slskPickCover(imagesByKey.get(coverKey) ?? []);
     return {
       id: `slsk_album_${g.user}_${g.folder}`,
       name: folderName,
@@ -135,12 +188,17 @@ function groupSlskResults(rawTracks) {
       slsk_filepath: null,
       slsk_folder: g.folder,
       slsk_tracks: g.tracks,
+      slsk_cover_username: cover?.slsk_username ?? null,
+      slsk_cover_filepath: cover?.slsk_filepath ?? null,
+      slsk_cover_size: cover?.size ?? 0,
     };
   });
 
   // Build single-track results
   const singles = [...singlesByKey.values()].map((t) => {
     const filename = (t.slsk_filepath ?? t.name ?? "").split(/[\\/]/).pop() ?? "";
+    const ck = `${t.slsk_username}|${_slskFolderKey(t.slsk_filepath)}`;
+    const cover = _slskPickCover(imagesByKey.get(ck) ?? []);
     return {
       id: t.id ?? `slsk_track_${t.slsk_username}_${t.slsk_filepath}`,
       name: filename,
@@ -155,6 +213,9 @@ function groupSlskResults(rawTracks) {
       slsk_tracks: [t],
       bitrate: t.bitrate ?? null,
       duration: t.duration ?? null,
+      slsk_cover_username: cover?.slsk_username ?? null,
+      slsk_cover_filepath: cover?.slsk_filepath ?? null,
+      slsk_cover_size: cover?.size ?? 0,
     };
   });
 
@@ -701,6 +762,7 @@ async function handleSoulseekLogout() {
   try { await soulseekLogout(); } catch { /* ignore */ }
   slskConnected.value = false;
   slskUsername.value = null;
+  clearSlskCoverCache();
   // Clear search results if we were on soulseek source
   if (searchSource.value === "soulseek") results.value = [];
 }

@@ -251,6 +251,7 @@ pub fn run() {
             soulseek::soulseek_status,
             soulseek::soulseek_search,
             soulseek::soulseek_prepare_stream,
+            soulseek::soulseek_cover_preview,
             soulseek::soulseek_release_stream,
             soulseek::soulseek_save_credentials,
             soulseek::soulseek_load_credentials,

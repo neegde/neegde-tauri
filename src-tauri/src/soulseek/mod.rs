@@ -7,7 +7,7 @@ mod transfer;
 use session::{next_token, Session, SlskFileResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 // ── Public types (serialised to frontend) ────────────────────────────────────
@@ -42,12 +42,22 @@ pub struct SlskSearchResultRow {
     pub slsk_filepath: String,
     pub bitrate: Option<u32>,
     pub duration: Option<u32>,
+    /// True for image files from search (used for folder cover matching).
+    #[serde(default)]
+    pub slsk_is_image: bool,
 }
 
 #[derive(Serialize)]
 pub struct SlskStreamReady {
     pub url: String,
     pub token: String,
+}
+
+/// Cover preview for UI: first bytes of an image file from a peer.
+#[derive(Serialize)]
+pub struct SlskCoverPreview {
+    pub mime: String,
+    pub base64: String,
 }
 
 /// Incremental search: emitted from the backend as peer batches arrive.
@@ -175,7 +185,11 @@ pub(super) fn file_results_to_rows(results: Vec<SlskFileResult>) -> Vec<SlskSear
                 .unwrap_or(&r.filepath)
                 .to_string();
             let display_name = filename.clone();
-            let category = bitrate_category(r.bitrate);
+            let category = if r.is_image {
+                "Image".to_string()
+            } else {
+                bitrate_category(r.bitrate)
+            };
             let id = format!("slsk_{}", stable_id(&r.username, &r.filepath));
             SlskSearchResultRow {
                 id,
@@ -190,6 +204,7 @@ pub(super) fn file_results_to_rows(results: Vec<SlskFileResult>) -> Vec<SlskSear
                 slsk_filepath: r.filepath,
                 bitrate: r.bitrate,
                 duration: r.duration,
+                slsk_is_image: r.is_image,
             }
         })
         .collect()
@@ -248,6 +263,33 @@ pub fn soulseek_release_stream(
     Ok(())
 }
 
+/// Download at most ~512 KiB of an image file for cover display (does not register a long-lived stream).
+///
+/// Args:
+///     username: SoulSeek username hosting the file.
+///     filepath: Full share path to the image (as in search results).
+///     filesize: Declared size in bytes (used for the transfer handshake).
+///
+/// Returns:
+///     MIME type and base64 payload suitable for a `data:` URL in the webview.
+#[tauri::command]
+pub async fn soulseek_cover_preview(
+    state: tauri::State<'_, SoulSeekState>,
+    username: String,
+    filepath: String,
+    filesize: u64,
+) -> Result<SlskCoverPreview, String> {
+    let session = state.get_session()?;
+    const MAX: u64 = 512 * 1024;
+    let mime = cover_mime_from_path(&filepath);
+    let bytes = transfer::download_cover_preview(session, username, filepath, filesize, MAX).await?;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    Ok(SlskCoverPreview {
+        mime,
+        base64: STANDARD.encode(&bytes),
+    })
+}
+
 // ── Credential persistence ────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
@@ -281,6 +323,22 @@ pub fn soulseek_load_credentials(app: tauri::AppHandle) -> Option<(String, Strin
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn cover_mime_from_path(filepath: &str) -> String {
+    let ext = Path::new(filepath)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/jpeg",
+    }
+    .to_string()
+}
 
 fn bitrate_category(bitrate: Option<u32>) -> String {
     match bitrate {

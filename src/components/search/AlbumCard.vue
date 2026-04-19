@@ -1,6 +1,11 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, prefetchTorrentDetails } from "../../rutracker/search.js";
+import {
+  getSlskCoverDataUrl,
+  peekSlskCover,
+  getSlskCoverReactive,
+} from "../../soulseek/coverCache.js";
 import { dominantFormatFromName } from "../../lib/utils.js";
 
 const props = defineProps({
@@ -41,12 +46,23 @@ let observer = null;
  * regardless of which code path stored the cover.
  */
 const coverUrl = computed(() => {
+  if (props.torrent?.source === "soulseek") {
+    const u = props.torrent?.slsk_cover_username;
+    const p = props.torrent?.slsk_cover_filepath;
+    if (!u || !p) return null;
+    return getSlskCoverReactive(u, p);
+  }
   if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return null;
   return getCoverReactive(String(props.torrent.id));
 });
 
 // Reset error state when torrent changes
-watch(() => [props.torrent?.id, props.torrent?.source], () => { coverErr.value = false; });
+watch(
+  () => [props.torrent?.id, props.torrent?.source, props.torrent?.slsk_cover_filepath],
+  () => {
+    coverErr.value = false;
+  },
+);
 
 function disconnectObserver() {
   if (observer) {
@@ -58,6 +74,25 @@ function disconnectObserver() {
 function setupCoverObserver() {
   disconnectObserver();
   coverErr.value = false;
+  if (props.torrent?.source === "soulseek") {
+    if (!props.torrent?.slsk_cover_filepath || !props.torrent?.slsk_cover_username) return;
+    const u = props.torrent.slsk_cover_username;
+    const p = props.torrent.slsk_cover_filepath;
+    const sz = props.torrent.slsk_cover_size ?? 0;
+    if (peekSlskCover(u, p) !== undefined) return;
+    observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        disconnectObserver();
+        void getSlskCoverDataUrl(u, p, sz).catch(() => {});
+      },
+      { rootMargin: "400px" },
+    );
+    const el = cardRef.value;
+    if (el) observer.observe(el);
+    return;
+  }
+
   if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
 
   const topicId = String(props.torrent.id);
@@ -94,13 +129,23 @@ function onMouseenter() {
   hoverTimer = setTimeout(() => prefetchTorrentDetails(String(props.torrent?.id)), 300);
 }
 
+function onMouseenterSlsk() {
+  if (props.torrent?.source !== "soulseek" || !props.torrent?.slsk_cover_filepath) return;
+  const u = props.torrent?.slsk_cover_username;
+  const p = props.torrent?.slsk_cover_filepath;
+  const sz = props.torrent?.slsk_cover_size ?? 0;
+  if (!u || !p) return;
+  if (peekSlskCover(u, p) !== undefined) return;
+  void getSlskCoverDataUrl(u, p, sz).catch(() => {});
+}
+
 function onMouseleave() {
   clearTimeout(hoverTimer);
   hoverTimer = null;
 }
 
 watch(
-  () => [props.torrent?.id, props.torrent?.source],
+  () => [props.torrent?.id, props.torrent?.source, props.torrent?.slsk_cover_filepath],
   () => setupCoverObserver()
 );
 
@@ -112,7 +157,7 @@ watch(
     :class="['album-card', selected ? 'selected' : '']"
     :title="torrent.name"
     @click="emit('select', torrent)"
-    @mouseenter="onMouseenter"
+    @mouseenter="isSoulseek ? onMouseenterSlsk() : onMouseenter()"
     @mouseleave="onMouseleave"
   >
     <div class="album-art">
