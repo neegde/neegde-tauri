@@ -6,6 +6,34 @@
 use tokio::io::AsyncReadExt;
 use tokio::net::tcp::OwnedReadHalf;
 
+/// Max payload for `[u32 len][payload]` peer-init frames (PierceFirewall / PeerInit) on F connections.
+const MAX_PEER_INIT_FRAME_PAYLOAD: usize = 8192;
+
+/// First data after PierceFirewall on an F socket: either a short framed init message, or a raw
+/// 4-byte FileTransferInit token — those bytes look like a megabyte-sized frame if parsed as `recv_msg`.
+pub enum PeerFramedOrRawFti {
+    FramedPayload(Vec<u8>),
+    RawFileTransferInit(u32),
+}
+
+/// Read one peer-init style frame, or detect raw FileTransferInit when the length would be absurd.
+pub async fn recv_peer_init_or_fti_lead(
+    r: &mut OwnedReadHalf,
+) -> std::io::Result<PeerFramedOrRawFti> {
+    let mut len_buf = [0u8; 4];
+    r.read_exact(&mut len_buf).await?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len <= MAX_PEER_INIT_FRAME_PAYLOAD {
+        let mut buf = vec![0u8; len];
+        if len > 0 {
+            r.read_exact(&mut buf).await?;
+        }
+        Ok(PeerFramedOrRawFti::FramedPayload(buf))
+    } else {
+        Ok(PeerFramedOrRawFti::RawFileTransferInit(u32::from_le_bytes(len_buf)))
+    }
+}
+
 /// Read one SLSK-framed message. Returns the raw payload bytes (code + data, without length prefix).
 pub async fn recv_msg(r: &mut OwnedReadHalf) -> std::io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];

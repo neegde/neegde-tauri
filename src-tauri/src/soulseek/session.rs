@@ -1,12 +1,13 @@
 //! SoulSeek server connection, search, and peer coordination.
 
-use super::proto::{recv_msg, Buf, Msg};
+use super::proto::{recv_msg, recv_peer_init_or_fti_lead, Buf, Msg, PeerFramedOrRawFti};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::net::Ipv4Addr;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
-    Arc,
+    Arc, Mutex as StdMutex,
 };
 use std::time::Duration;
 use tokio::io::{AsyncWriteExt};
@@ -20,6 +21,21 @@ const CLIENT_VERSION: u32 = 160;
 const SEARCH_TIMEOUT_SECS: u64 = 12;
 const PEER_ADDR_TIMEOUT_SECS: u64 = 5;
 const MAX_SEARCH_RESULTS: usize = 500;
+const CONNECT_TO_PEER_TCP_ATTEMPTS: u32 = 4;
+const CONNECT_TO_PEER_TCP_TIMEOUT_SECS: u64 = 18;
+
+/// Delivered F socket plus optional state when raw FileTransferInit was consumed early.
+pub(crate) struct FConnReady {
+    pub(crate) stream: TcpStream,
+    /// Set if the 4-byte FileTransferInit was already read from the peer (see `recv_peer_init_or_fti_lead`).
+    pub(crate) file_transfer_init_consumed: Option<u32>,
+}
+
+/// Shared slot so xfer token (TransferRequest) and server ConnectToPeer token can both match.
+pub(crate) struct FConnSlot {
+    tx: StdMutex<Option<oneshot::Sender<FConnReady>>>,
+    pub(crate) peer_username: String,
+}
 
 // ── Token counter ─────────────────────────────────────────────────────────────
 
@@ -58,8 +74,10 @@ pub struct Session {
     pub pending_searches: Arc<DashMap<u32, mpsc::UnboundedSender<Vec<SlskFileResult>>>>,
     /// username → oneshot for (ip, port) from GetPeerAddress response
     pub pending_peer_addr: Arc<DashMap<String, oneshot::Sender<(Ipv4Addr, u16)>>>,
-    /// xfer_token → oneshot for the F-type TcpStream delivered by peer_listener or server
-    pub pending_f_conns: Arc<DashMap<u32, oneshot::Sender<TcpStream>>>,
+    /// xfer / server token → shared slot for the F-type TcpStream
+    pub pending_f_conns: Arc<DashMap<u32, Arc<FConnSlot>>>,
+    /// Lowercase SoulSeek username → FIFO of xfer tokens waiting for `ConnectToPeer` type F.
+    pending_f_peer_order: Arc<DashMap<String, VecDeque<u32>>>,
 }
 
 impl Session {
@@ -116,6 +134,7 @@ impl Session {
         let pending_searches = Arc::new(DashMap::new());
         let pending_peer_addr = Arc::new(DashMap::new());
         let pending_f_conns = Arc::new(DashMap::new());
+        let pending_f_peer_order = Arc::new(DashMap::new());
 
         let session = Arc::new(Session {
             username: username.clone(),
@@ -124,6 +143,7 @@ impl Session {
             pending_searches: Arc::clone(&pending_searches),
             pending_peer_addr: Arc::clone(&pending_peer_addr),
             pending_f_conns: Arc::clone(&pending_f_conns),
+            pending_f_peer_order: Arc::clone(&pending_f_peer_order),
         });
 
         // Post-login housekeeping messages expected by the server
@@ -234,32 +254,135 @@ impl Session {
     }
 
     /// Register a oneshot for an incoming F (file-transfer) TcpStream identified by xfer_token.
-    pub fn register_f_waiter(&self, xfer_token: u32) -> oneshot::Receiver<TcpStream> {
+    pub fn register_f_waiter(&self, xfer_token: u32, peer_username: String) -> oneshot::Receiver<FConnReady> {
         let (tx, rx) = oneshot::channel();
-        self.pending_f_conns.insert(xfer_token, tx);
+        let slot = Arc::new(FConnSlot {
+            tx: StdMutex::new(Some(tx)),
+            peer_username: peer_username.clone(),
+        });
+        self.pending_f_conns.insert(xfer_token, Arc::clone(&slot));
+        let key = peer_username.to_ascii_lowercase();
+        self.pending_f_peer_order.entry(key).or_default().push_back(xfer_token);
         rx
+    }
+
+    /// Map server `ConnectToPeer` F token to the xfer-token waiter for this peer (FIFO per username).
+    pub fn link_server_f_token(&self, server_token: u32, peer_username: &str) {
+        if self.pending_f_conns.contains_key(&server_token) {
+            return;
+        }
+        let key = peer_username.to_ascii_lowercase();
+        let xfer_token = {
+            let mut ent = self.pending_f_peer_order.entry(key).or_default();
+            ent.pop_front()
+        };
+        let Some(xfer_token) = xfer_token else {
+            eprintln!(
+                "[soulseek] link_server_f_token: no pending F queue entry for user {peer_username}"
+            );
+            return;
+        };
+        let Some(slot) = self.pending_f_conns.get(&xfer_token).map(|e| Arc::clone(e.value())) else {
+            eprintln!("[soulseek] link_server_f_token: missing slot for xfer_token={xfer_token}");
+            return;
+        };
+        self.pending_f_conns.insert(server_token, slot);
+        eprintln!(
+            "[soulseek] linked server F token {server_token} to xfer_token={xfer_token} ({peer_username})"
+        );
     }
 
     /// Remove a registered F waiter (cleanup on cancel/timeout).
     pub fn unregister_f_waiter(&self, xfer_token: u32) {
-        self.pending_f_conns.remove(&xfer_token);
+        let Some((_, slot)) = self.pending_f_conns.remove(&xfer_token) else {
+            return;
+        };
+        self.purge_all_keys_for_slot(&slot);
+    }
+
+    /// Drops the F waiter after outbound F failed before a valid PeerInit (see `handle_server_connect_to_peer`).
+    pub fn cancel_pending_f_after_outbound_handshake_failure(
+        &self,
+        server_token: u32,
+        peer_username: &str,
+    ) {
+        if self.pending_f_conns.contains_key(&server_token) {
+            self.unregister_f_waiter(server_token);
+            return;
+        }
+        let key = peer_username.to_ascii_lowercase();
+        if let Some(xfer_tok) = self.pending_f_peer_order.get(&key).and_then(|q| q.front().copied())
+        {
+            if self.pending_f_conns.contains_key(&xfer_tok) {
+                self.unregister_f_waiter(xfer_tok);
+                return;
+            }
+        }
+        if let Some(e) = self.pending_f_conns.iter().next() {
+            self.unregister_f_waiter(*e.key());
+        }
+    }
+
+    fn purge_all_keys_for_slot(&self, slot: &Arc<FConnSlot>) {
+        let p = Arc::as_ptr(slot);
+        let keys: Vec<u32> = self
+            .pending_f_conns
+            .iter()
+            .filter(|e| Arc::as_ptr(e.value()) == p)
+            .map(|e| *e.key())
+            .collect();
+        let uname_lower = slot.peer_username.to_ascii_lowercase();
+        for k in &keys {
+            self.pending_f_conns.remove(k);
+        }
+        if let Some(mut q) = self.pending_f_peer_order.get_mut(&uname_lower) {
+            q.retain(|t| !keys.contains(t));
+        }
+    }
+
+    fn try_deliver_to_slot(slot: &Arc<FConnSlot>, ready: FConnReady) -> bool {
+        if let Ok(mut g) = slot.tx.lock() {
+            if let Some(tx) = g.take() {
+                let _ = tx.send(ready);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// When exactly one logical F transfer is pending (possibly under multiple token keys).
+    fn f_slot_if_unique_transfer(&self) -> Option<Arc<FConnSlot>> {
+        let mut first: Option<Arc<FConnSlot>> = None;
+        for e in self.pending_f_conns.iter() {
+            let s = Arc::clone(e.value());
+            match &first {
+                None => first = Some(s),
+                Some(f) if Arc::as_ptr(f) == Arc::as_ptr(&s) => {}
+                Some(_) => return None,
+            }
+        }
+        first
     }
 
     /// Deliver an F-connection stream to whichever pending_f_conns entry matches token.
-    /// For server-mediated ("F" ConnectToPeer), any single pending entry suffices.
-    fn deliver_f_stream(&self, token: u32, stream: TcpStream) {
-        // Try exact token match first
-        if let Some((_, tx)) = self.pending_f_conns.remove(&token) {
-            let _ = tx.send(stream);
+    fn deliver_f_stream(&self, token: u32, ready: FConnReady) {
+        let slot = self
+            .pending_f_conns
+            .get(&token)
+            .map(|e| Arc::clone(e.value()))
+            .or_else(|| {
+                // Inbound PeerInit may use a token we never mapped; only safe if one transfer.
+                self.f_slot_if_unique_transfer()
+            });
+        let Some(slot) = slot else {
+            eprintln!("[soulseek] deliver_f_stream: no F waiter (token={token}), stream dropped");
+            return;
+        };
+        if Self::try_deliver_to_slot(&slot, ready) {
+            self.purge_all_keys_for_slot(&slot);
             return;
         }
-        // Fall back: deliver to the first pending entry (single-transfer assumption)
-        let key = self.pending_f_conns.iter().next().map(|e| *e.key());
-        if let Some(k) = key {
-            if let Some((_, tx)) = self.pending_f_conns.remove(&k) {
-                let _ = tx.send(stream);
-            }
-        }
+        eprintln!("[soulseek] deliver_f_stream: slot already consumed (token={token})");
     }
 }
 
@@ -307,6 +430,11 @@ async fn server_reader_loop(mut rh: OwnedReadHalf, sess: std::sync::Weak<Session
                 if let Some((username, conn_type, ip, port, token)) = parse_connect_to_peer(&mut b)
                 {
                     eprintln!("[soulseek] server: ConnectToPeer user={} type={} {}:{} token={}", username, conn_type, ip, port, token);
+                    if conn_type == "F" {
+                        if let Some(s) = sess.upgrade() {
+                            s.link_server_f_token(token, &username);
+                        }
+                    }
                     let sess_weak = std::sync::Weak::clone(&sess);
                     tauri::async_runtime::spawn(async move {
                         handle_server_connect_to_peer(
@@ -316,7 +444,7 @@ async fn server_reader_loop(mut rh: OwnedReadHalf, sess: std::sync::Weak<Session
                     });
                 }
             }
-            64 | 69 | 83 | 84 | 89 | 90 | 91 | 92 | 93 | 100 | 104 => {
+            64 | 69 | 83 | 84 | 89 | 90 | 91 | 92 | 93 | 100 | 102 | 104 => {
                 // Server keepalive / housekeeping messages — ignore silently
             }
             _ => {
@@ -400,15 +528,43 @@ async fn handle_server_connect_to_peer(
         return;
     }
 
-    let mut stream = match tokio::time::timeout(
-        Duration::from_secs(8),
-        TcpStream::connect((ip, port)),
-    )
-    .await
-    {
-        Ok(Ok(s)) => { s.set_nodelay(true).ok(); s }
-        Ok(Err(e)) => { eprintln!("[soulseek] ConnectToPeer TCP error {username} {ip}:{port}: {e}"); return; }
-        Err(_) => { eprintln!("[soulseek] ConnectToPeer timeout {username} {ip}:{port}"); return; }
+    let mut stream_opt: Option<TcpStream> = None;
+    for attempt in 0..CONNECT_TO_PEER_TCP_ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(400 + u64::from(attempt) * 500)).await;
+        }
+        match tokio::time::timeout(
+            Duration::from_secs(CONNECT_TO_PEER_TCP_TIMEOUT_SECS),
+            TcpStream::connect((ip, port)),
+        )
+        .await
+        {
+            Ok(Ok(s)) => {
+                s.set_nodelay(true).ok();
+                stream_opt = Some(s);
+                if attempt > 0 {
+                    eprintln!("[soulseek] ConnectToPeer TCP ok {username} {ip}:{port} on attempt {}", attempt + 1);
+                }
+                break;
+            }
+            Ok(Err(e)) => {
+                eprintln!(
+                    "[soulseek] ConnectToPeer TCP error {username} {ip}:{port} attempt {}: {e}",
+                    attempt + 1
+                );
+            }
+            Err(_) => {
+                eprintln!(
+                    "[soulseek] ConnectToPeer timeout {username} {ip}:{port} attempt {}",
+                    attempt + 1
+                );
+            }
+        }
+    }
+
+    let mut stream = match stream_opt {
+        Some(s) => s,
+        None => return,
     };
 
     eprintln!("[soulseek] TCP connected to {username} {ip}:{port} token={server_token}");
@@ -426,7 +582,14 @@ async fn handle_server_connect_to_peer(
         return;
     }
     let _ = stream.flush().await;
-    eprintln!("[soulseek] PierceFirewall sent to {username}, waiting for P-conn response…");
+    eprintln!(
+        "[soulseek] PierceFirewall sent to {username}, waiting for {} response…",
+        if conn_type.as_str() == "F" {
+            "F handshake"
+        } else {
+            "P-conn"
+        }
+    );
 
     match conn_type.as_str() {
         "P" => {
@@ -434,7 +597,81 @@ async fn handle_server_connect_to_peer(
             handle_p_connection(&mut rh, &session).await;
         }
         "F" => {
-            session.deliver_f_stream(server_token, stream);
+            let (mut rh, wh) = stream.into_split();
+            // Framed PierceFirewall / PeerInit, or raw FileTransferInit (must not use recv_msg — token
+            // looks like a multi-byte frame length).
+            let mut fti_consumed: Option<u32> = None;
+            let mut handshake_ok = false;
+            for attempt in 0..16 {
+                let lead = match tokio::time::timeout(
+                    Duration::from_secs(60),
+                    recv_peer_init_or_fti_lead(&mut rh),
+                )
+                .await
+                {
+                    Ok(Ok(l)) => l,
+                    Ok(Err(e)) => {
+                        eprintln!("[soulseek] outbound F: read error before file phase: {e}");
+                        break;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "[soulseek] outbound F: timeout 60s waiting for handshake — aborting"
+                        );
+                        break;
+                    }
+                };
+                match lead {
+                    PeerFramedOrRawFti::FramedPayload(payload) => {
+                        match payload.first() {
+                            Some(0) => {
+                                eprintln!(
+                                    "[soulseek] outbound F: skipped PierceFirewall echo (attempt {})",
+                                    attempt
+                                );
+                                continue;
+                            }
+                            Some(1) => {
+                                eprintln!(
+                                    "[soulseek] outbound F: consumed uploader PeerInit ({} B)",
+                                    payload.len()
+                                );
+                                handshake_ok = true;
+                                break;
+                            }
+                            Some(b) => {
+                                eprintln!(
+                                    "[soulseek] outbound F: unexpected framed handshake first byte {b} — aborting"
+                                );
+                                break;
+                            }
+                            None => continue,
+                        }
+                    }
+                    PeerFramedOrRawFti::RawFileTransferInit(tok) => {
+                        eprintln!(
+                            "[soulseek] outbound F: raw FileTransferInit token={tok} (peer skipped framed PeerInit)"
+                        );
+                        fti_consumed = Some(tok);
+                        handshake_ok = true;
+                        break;
+                    }
+                }
+            }
+            if handshake_ok {
+                if let Ok(s) = rh.reunite(wh) {
+                    session.deliver_f_stream(
+                        server_token,
+                        FConnReady {
+                            stream: s,
+                            file_transfer_init_consumed: fti_consumed,
+                        },
+                    );
+                }
+            } else {
+                session.cancel_pending_f_after_outbound_handshake_failure(server_token, &username);
+                drop(rh.reunite(wh));
+            }
         }
         _ => {}
     }
@@ -478,14 +715,20 @@ async fn handle_inbound_peer(stream: TcpStream, session: Arc<Session>) {
             let token = b.u32().unwrap_or(0);
             eprintln!("[soulseek] inbound: PierceFirewall token={}", token);
             if let Ok(full_stream) = rh.reunite(wh) {
-                session.deliver_f_stream(token, full_stream);
+                session.deliver_f_stream(
+                    token,
+                    FConnReady {
+                        stream: full_stream,
+                        file_transfer_init_consumed: None,
+                    },
+                );
             }
         }
         1 => {
-            // PeerInit format: [u8 code=1][u32 token][str username][str type]
-            let token = b.u32().unwrap_or(0);
+            // PeerInit format: [u8 code=1][str username][str type][u32 token]
             let peer_username = b.str().unwrap_or_default();
             let conn_type = b.str().unwrap_or_default();
+            let token = b.u32().unwrap_or(0);
             eprintln!("[soulseek] inbound: PeerInit user={} type={} token={}", peer_username, conn_type, token);
             match conn_type.as_str() {
                 "P" => {
@@ -493,7 +736,13 @@ async fn handle_inbound_peer(stream: TcpStream, session: Arc<Session>) {
                 }
                 "F" => {
                     if let Ok(full_stream) = rh.reunite(wh) {
-                        session.deliver_f_stream(token, full_stream);
+                        session.deliver_f_stream(
+                            token,
+                            FConnReady {
+                                stream: full_stream,
+                                file_transfer_init_consumed: None,
+                            },
+                        );
                     }
                 }
                 _ => {}

@@ -116,7 +116,7 @@ function loadSavedVolume() {
   }
 }
 
-const hasTrack = computed(() => Boolean(props.track?.magnet));
+const hasTrack = computed(() => trackHasPlaybackIdentity(props.track));
 
 const currentLikeId = computed(() => {
   const t = props.track;
@@ -226,16 +226,41 @@ const PREFETCH_MIN_SEC_SAME_TORRENT = 1.5;
 const PREFETCH_MIN_RATIO_SAME_TORRENT = 0.04;
 
 /**
+ * Returns whether a queue item can be opened for playback (torrent or SoulSeek).
+ *
+ * Args:
+ *     t: Queue item or null.
+ *
+ * Returns:
+ *     True when `streamUrl` can be invoked for this item.
+ */
+function trackHasPlaybackIdentity(t) {
+  if (!t) return false;
+  if (t.source === "soulseek") {
+    return Boolean(t.slskUsername && t.slskFilepath);
+  }
+  return Boolean(t.magnet);
+}
+
+/**
  * Stable key for matching a queue item to a prepared stream URL.
  *
  * Args:
- *     t: Queue item with magnet and fileIdx.
+ *     t: Queue item with magnet and fileIdx (or SoulSeek peer file fields).
  *
  * Returns:
  *     String key or empty when invalid.
  */
 function queueTrackKey(t) {
-  if (!t?.magnet || t.fileIdx == null || t.fileIdx === "") return "";
+  if (!t) return "";
+  if (t.source === "soulseek") {
+    if (!t.slskUsername || !t.slskFilepath) return "";
+    const raw = t.fileIdx;
+    const n =
+      raw != null && raw !== "" && Number.isFinite(Number(raw)) ? Number(raw) : 0;
+    return `slsk\0${t.slskUsername}\0${t.slskFilepath}\0${n}`;
+  }
+  if (!t.magnet || t.fileIdx == null || t.fileIdx === "") return "";
   const n = Number(t.fileIdx);
   if (!Number.isFinite(n)) return "";
   return `${t.magnet}\0${n}`;
@@ -662,7 +687,7 @@ watch(
   () => props.track,
   (t) => {
     enrichedMeta.value = null;
-    if (!t?.magnet) {
+    if (!trackHasPlaybackIdentity(t)) {
       clearMediaSessionPresentation();
       return;
     }
@@ -680,9 +705,9 @@ watch(
 );
 
 watch(
-  () => [playing.value, duration.value, current.value, props.track?.magnet],
+  () => [playing.value, duration.value, current.value, queueTrackKey(props.track)],
   () => {
-    if (!props.track?.magnet || streamPhase.value === "error") return;
+    if (!trackHasPlaybackIdentity(props.track) || streamPhase.value === "error") return;
     const d = duration.value;
     const p = current.value;
     if (!Number.isFinite(d) || d <= 0) return;
@@ -693,7 +718,7 @@ watch(
 
 function discordPresencePayload() {
   const t = props.track;
-  if (!t?.magnet) return null;
+  if (!trackHasPlaybackIdentity(t)) return null;
   return {
     title: trackDisplayBasename(t.fileName) || "Трек",
     subtitle: extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet),
@@ -712,7 +737,7 @@ watch(
   () => [props.track, playing.value, streamPhase.value],
   () => {
     const t = props.track;
-    if (!t?.magnet) {
+    if (!trackHasPlaybackIdentity(t)) {
       void clearDiscordPresence();
       return;
     }
@@ -733,9 +758,9 @@ watch(
 );
 
 watch(
-  () => [current.value, duration.value, playing.value, props.track?.magnet, streamPhase.value],
+  () => [current.value, duration.value, playing.value, queueTrackKey(props.track), streamPhase.value],
   () => {
-    if (!props.track?.magnet || streamPhase.value === "error" || !playing.value) return;
+    if (!trackHasPlaybackIdentity(props.track) || streamPhase.value === "error" || !playing.value) return;
     const now = Date.now();
     if (now - discordPresenceLastSyncMs < DISCORD_PRESENCE_PROGRESS_MIN_MS) return;
     const p = discordPresencePayload();
@@ -1010,7 +1035,7 @@ watch(
     streamPhase.value,
     isLoading.value,
     props.nextTrack,
-    props.track?.magnet,
+    queueTrackKey(props.track),
     props.track?.fileIdx,
   ],
   () => {
@@ -1036,7 +1061,8 @@ watch(
     const magnet = t?.magnet;
     const fileIdx = t?.fileIdx;
     void appDebugLog("player", `stream-watch: fired — fileIdx=${fileIdx ?? "—"} hasMagnet=${!!magnet} suppressed=${suppressed} phase=${streamPhase.value} activeSig="${activeStreamPrepareSig.value?.slice(0,30)}"`);
-    if (!t || !magnet) {
+    const isSoulseek = t?.source === "soulseek";
+    if (!t || (!magnet && !isSoulseek)) {
       activeStreamPrepareSig.value = "";
       stopBufferPoll();
       prepareProgress.value = null;
@@ -1612,7 +1638,7 @@ onUnmounted(() => {
               <ul class="player-queue-list">
                 <li
                   v-for="(q, idx) in playbackQueue"
-                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :key="idx + '-' + queueTrackKey(q)"
                   :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
                 >
                   <button
@@ -1798,7 +1824,7 @@ onUnmounted(() => {
               <ul class="player-queue-list">
                 <li
                   v-for="(q, idx) in playbackQueue"
-                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :key="idx + '-' + queueTrackKey(q)"
                   :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
                 >
                   <button

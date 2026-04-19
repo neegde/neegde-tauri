@@ -1,7 +1,7 @@
 //! SoulSeek peer file transfer and local HTTP streaming.
 
 use super::proto::{recv_msg, Msg};
-use super::session::{next_token, Session};
+use super::session::{FConnReady, Session};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -12,8 +12,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const CONNECT_TIMEOUT_SECS: u64 = 8;
-const TRANSFER_TIMEOUT_SECS: u64 = 30;
+const TRANSFER_TIMEOUT_SECS: u64 = 120;
 const HTTP_CHUNK: usize = 32 * 1024;
+/// Peer message 40: peer uploads to us (we download).
+const PEER_TRANSFER_UPLOAD: u32 = 1;
+/// Peer message 40: legacy download request (we ask peer to send).
+const PEER_TRANSFER_DOWNLOAD: u32 = 0;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -28,126 +32,362 @@ pub struct StreamHandle {
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 /// Connect to a SoulSeek peer, request a file, and start a local HTTP server to serve it.
+///
+/// Uses QueueUpload (43) first (SoulseekQt / Nicotine+). Falls back to legacy TransferRequest
+/// (direction download) on failure.
 pub async fn download_and_stream(
     session: Arc<Session>,
     username: String,
     filepath: String,
     filesize: u64,
-    token: u32,
+    prepare_token: u32,
 ) -> Result<StreamHandle, String> {
-    // ── 1. Resolve peer address ───────────────────────────────────────────────
-    let (peer_ip, peer_port) = session
-        .get_peer_addr(&username)
-        .await
-        .ok_or_else(|| format!("Cannot resolve SoulSeek address for user '{username}'"))?;
-
-    eprintln!("[soulseek] resolved {username} → {peer_ip}:{peer_port}");
-
-    // ── 2. Open P connection (peer protocol) ──────────────────────────────────
-    let mut p_stream = tokio::time::timeout(
-        Duration::from_secs(CONNECT_TIMEOUT_SECS),
-        TcpStream::connect((peer_ip, peer_port)),
+    match download_modern_queue_upload(
+        Arc::clone(&session),
+        &username,
+        &filepath,
+        filesize,
+        prepare_token,
     )
     .await
-    .map_err(|_| format!("Peer connect timed out: {peer_ip}:{peer_port}"))?
-    .map_err(|e| format!("Peer connect failed: {e}"))?;
-    p_stream.set_nodelay(true).ok();
-
-    // PeerInit: [u32 length][u8 code=0x01][u32 token][str username][str "P"]
-    // Handshake messages use 1-byte codes; field order is token, username, type.
-    let our_p_token = next_token();
     {
-        let uname = session.username.as_bytes();
-        let body_len = 1 + 4 + 4 + uname.len() + 4 + 1usize; // code + token + strlen + username + strlen + "P"
-        let mut peer_init = Vec::with_capacity(4 + body_len);
-        peer_init.extend_from_slice(&(body_len as u32).to_le_bytes());
-        peer_init.push(0x01); // code = PeerInit (1 byte)
-        peer_init.extend_from_slice(&our_p_token.to_le_bytes());
-        peer_init.extend_from_slice(&(uname.len() as u32).to_le_bytes());
-        peer_init.extend_from_slice(uname);
-        peer_init.extend_from_slice(&1u32.to_le_bytes()); // "P".len()
-        peer_init.push(b'P');
-        p_stream.write_all(&peer_init).await
-            .map_err(|e| format!("PeerInit send error: {e}"))?;
-        p_stream.flush().await.ok();
+        Ok(h) => Ok(h),
+        Err(e_modern) => {
+            eprintln!("[soulseek] modern handshake failed: {e_modern}");
+            eprintln!("[soulseek] retrying with legacy TransferRequest (direction=download)…");
+            download_legacy_transfer_request(session, &username, &filepath, filesize, prepare_token).await
+        }
     }
+}
 
-    // ── 3. Register F-connection waiter, then send TransferRequest ────────────
-    let xfer_token = token;
-    let f_rx = session.register_f_waiter(xfer_token);
+/// QueueUpload (43): peer sends TransferRequest upload (40); we reply with TransferResponse (41).
+async fn download_modern_queue_upload(
+    session: Arc<Session>,
+    username: &str,
+    filepath: &str,
+    filesize: u64,
+    prepare_token: u32,
+) -> Result<StreamHandle, String> {
+    let mut p_stream = connect_peer_p(&session, username).await?;
+    send_peer_init(&mut p_stream, &session).await?;
 
-    // TransferRequest (peer code 40): direction=0 (we want to download)
+    let (mut p_rh, mut p_wh) = p_stream.into_split();
+
+    let queue_msg = Msg::new(43).str(filepath).build();
+    p_wh.write_all(&queue_msg).await
+        .map_err(|e| format!("QueueUpload send error: {e}"))?;
+    p_wh.flush().await.ok();
+
+    let mut skip_peer_init = 0u8;
+    let (peer_xfer_token, final_size) = loop {
+        let raw = tokio::time::timeout(
+            Duration::from_secs(TRANSFER_TIMEOUT_SECS),
+            recv_msg(&mut p_rh),
+        )
+        .await
+        .map_err(|_| "Timed out waiting for peer after QueueUpload".to_string())?
+        .map_err(|e| format!("P-conn read error after QueueUpload: {e}"))?;
+
+        if raw.get(0) == Some(&1u8) {
+            skip_peer_init += 1;
+            if skip_peer_init > 32 {
+                return Err("Too many PeerInit frames after QueueUpload".to_string());
+            }
+            eprintln!("[soulseek] P-conn: skipped peer PeerInit");
+            continue;
+        }
+        if raw.len() < 4 {
+            return Err(format!("Short P-conn message after QueueUpload (len={})", raw.len()));
+        }
+
+        let msg_code = u32::from_le_bytes(raw[0..4].try_into().unwrap());
+        match msg_code {
+            44 => {
+                let mut b = super::proto::Buf::new(&raw);
+                let _c = b.u32();
+                let fname = b.str().unwrap_or_default();
+                let place = b.u32().unwrap_or(0);
+                eprintln!("[soulseek] P-conn: PlaceInQueueResponse file={fname:?} place={place}");
+                continue;
+            }
+            50 => {
+                let mut b = super::proto::Buf::new(&raw);
+                let _c = b.u32();
+                let f = b.str().unwrap_or_default();
+                let reason = b.str().unwrap_or_else(|| "Upload denied".to_string());
+                return Err(format!("Upload denied: {reason} (file={f})"));
+            }
+            40 => {
+                let mut b = super::proto::Buf::new(&raw);
+                let c = b.u32().unwrap_or(0);
+                if c != 40 {
+                    return Err("TransferRequest parse error".to_string());
+                }
+                let direction = b.u32().unwrap_or(u32::MAX);
+                let tr_token = b.u32().unwrap_or(0);
+                let _remote_file = b.str().unwrap_or_default();
+                if direction != PEER_TRANSFER_UPLOAD {
+                    return Err(format!(
+                        "Expected TransferRequest upload (direction={PEER_TRANSFER_UPLOAD}), got direction={direction}"
+                    ));
+                }
+                let sz = b.u64().unwrap_or(0);
+                let final_sz = if sz > 0 { sz } else { filesize };
+                eprintln!("[soulseek] P-conn: TransferRequest upload token={tr_token} size={final_sz}");
+                break (tr_token, final_sz);
+            }
+            41 => {
+                return Err(
+                    "Unexpected TransferResponse (41) before TransferRequest — trying legacy path"
+                        .to_string(),
+                );
+            }
+            other => {
+                eprintln!(
+                    "[soulseek] P-conn: ignoring peer message code={other} (len={})",
+                    raw.len()
+                );
+                continue;
+            }
+        }
+    };
+
+    let f_rx = session.register_f_waiter(peer_xfer_token, username.to_string());
+
+    let tr_ok = Msg::new(41)
+        .u32(peer_xfer_token)
+        .bool(true)
+        .u64(final_size)
+        .build();
+    p_wh.write_all(&tr_ok).await
+        .map_err(|e| format!("TransferResponse send error: {e}"))?;
+    p_wh.flush().await.ok();
+    drop(p_wh);
+
+    eprintln!("[soulseek] TransferResponse sent, waiting for F connection (token={peer_xfer_token})…");
+
+    run_download_pipeline(
+        session,
+        p_rh,
+        f_rx,
+        filepath,
+        peer_xfer_token,
+        final_size,
+        prepare_token,
+    )
+    .await
+}
+
+/// Legacy: TransferRequest direction 0; peer answers with TransferResponse (41).
+async fn download_legacy_transfer_request(
+    session: Arc<Session>,
+    username: &str,
+    filepath: &str,
+    filesize: u64,
+    prepare_token: u32,
+) -> Result<StreamHandle, String> {
+    let mut p_stream = connect_peer_p(&session, username).await?;
+    send_peer_init(&mut p_stream, &session).await?;
+
+    let f_rx = session.register_f_waiter(prepare_token, username.to_string());
+
     let xfer_req = Msg::new(40)
-        .u32(0)           // direction: download
-        .u32(xfer_token)
-        .str(&filepath)
-        .u64(filesize)    // 0 or actual size; peer fills in actual on response
+        .u32(PEER_TRANSFER_DOWNLOAD)
+        .u32(prepare_token)
+        .str(filepath)
         .build();
     p_stream.write_all(&xfer_req).await
         .map_err(|e| format!("TransferRequest send error: {e}"))?;
     p_stream.flush().await.ok();
 
-    // ── 4. Read TransferResponse (peer code 41) ───────────────────────────────
     let (mut p_rh, p_wh) = p_stream.into_split();
-    let resp = tokio::time::timeout(
-        Duration::from_secs(TRANSFER_TIMEOUT_SECS),
-        recv_msg(&mut p_rh),
-    )
-    .await
-    .map_err(|_| "TransferResponse timed out".to_string())?
-    .map_err(|e| format!("TransferResponse read error: {e}"))?;
     drop(p_wh);
+
+    let mut skip_peer_init = 0u8;
+    let resp = loop {
+        let raw = tokio::time::timeout(
+            Duration::from_secs(TRANSFER_TIMEOUT_SECS),
+            recv_msg(&mut p_rh),
+        )
+        .await
+        .map_err(|_| "TransferResponse timed out (legacy)".to_string())?
+        .map_err(|e| format!("TransferResponse read error: {e}"))?;
+
+        if raw.get(0) == Some(&1u8) {
+            skip_peer_init += 1;
+            if skip_peer_init > 16 {
+                session.unregister_f_waiter(prepare_token);
+                return Err("Too many PeerInit frames before TransferResponse".to_string());
+            }
+            eprintln!("[soulseek] P-conn: skipped peer PeerInit (handshake)");
+            continue;
+        }
+        if raw.len() >= 4 {
+            let msg_code = u32::from_le_bytes(raw[0..4].try_into().unwrap());
+            if msg_code == 41 {
+                break raw;
+            }
+        }
+        session.unregister_f_waiter(prepare_token);
+        return Err(format!(
+            "Unexpected message on P connection before TransferResponse (len={})",
+            raw.len()
+        ));
+    };
 
     let mut rb = super::proto::Buf::new(&resp);
     let resp_code = rb.u32().unwrap_or(0);
     if resp_code != 41 {
-        session.unregister_f_waiter(xfer_token);
+        session.unregister_f_waiter(prepare_token);
         return Err(format!("Expected TransferResponse (41), got code {resp_code}"));
     }
-    let _resp_token = rb.u32().unwrap_or(0); // should match xfer_token
+    let _resp_token = rb.u32().unwrap_or(0);
     let allowed = rb.bool().unwrap_or(false);
     if !allowed {
-        session.unregister_f_waiter(xfer_token);
+        session.unregister_f_waiter(prepare_token);
         let reason = rb.str().unwrap_or_else(|| "Queued or busy".to_string());
         return Err(format!("File transfer denied: {reason}"));
     }
     let actual_size = rb.u64().unwrap_or(filesize);
     let final_size = if actual_size > 0 { actual_size } else { filesize };
 
-    eprintln!("[soulseek] TransferResponse OK, size={final_size}, waiting for F connection…");
+    eprintln!("[soulseek] TransferResponse OK (legacy), size={final_size}, waiting for F connection…");
 
-    // ── 5. Wait for the F (file transfer) TcpStream ───────────────────────────
-    // The peer will connect to our session.listen_port with PeerInit("F", xfer_token).
-    // session.peer_listener_loop will intercept and deliver the TcpStream via f_rx.
-    let f_stream = match tokio::time::timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS), f_rx).await {
-        Ok(Ok(s)) => s,
+    run_download_pipeline(
+        session,
+        p_rh,
+        f_rx,
+        filepath,
+        prepare_token,
+        final_size,
+        prepare_token,
+    )
+    .await
+}
+
+async fn connect_peer_p(session: &Session, username: &str) -> Result<TcpStream, String> {
+    let (peer_ip, peer_port) = session
+        .get_peer_addr(username)
+        .await
+        .ok_or_else(|| format!("Cannot resolve SoulSeek address for user '{username}'"))?;
+
+    eprintln!("[soulseek] resolved {username} → {peer_ip}:{peer_port}");
+
+    let s = tokio::time::timeout(
+        Duration::from_secs(CONNECT_TIMEOUT_SECS),
+        TcpStream::connect((peer_ip, peer_port)),
+    )
+    .await
+    .map_err(|_| format!("Peer connect timed out: {peer_ip}:{peer_port}"))?
+    .map_err(|e| format!("Peer connect failed: {e}"))?;
+    s.set_nodelay(true).ok();
+    Ok(s)
+}
+
+async fn send_peer_init(stream: &mut TcpStream, session: &Session) -> Result<(), String> {
+    let uname = session.username.as_bytes();
+    let mut body = Vec::new();
+    body.push(0x01);
+    body.extend_from_slice(&(uname.len() as u32).to_le_bytes());
+    body.extend_from_slice(uname);
+    body.extend_from_slice(&1u32.to_le_bytes());
+    body.push(b'P');
+    body.extend_from_slice(&0u32.to_le_bytes());
+
+    let mut peer_init = Vec::with_capacity(4 + body.len());
+    peer_init.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    peer_init.extend_from_slice(&body);
+    stream.write_all(&peer_init).await
+        .map_err(|e| format!("PeerInit send error: {e}"))?;
+    stream.flush().await.ok();
+    Ok(())
+}
+
+async fn run_download_pipeline(
+    session: Arc<Session>,
+    p_rh: tokio::net::tcp::OwnedReadHalf,
+    f_rx: tokio::sync::oneshot::Receiver<FConnReady>,
+    filepath: &str,
+    xfer_token: u32,
+    final_size: u64,
+    http_release_token: u32,
+) -> Result<StreamHandle, String> {
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 8192];
+        let mut rh = p_rh;
+        loop {
+            match rh.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+
+    let f_ready = match tokio::time::timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS), f_rx).await {
+        Ok(Ok(r)) => r,
         Ok(Err(_)) => {
             return Err("F connection channel dropped".to_string());
         }
         Err(_) => {
             session.unregister_f_waiter(xfer_token);
-            return Err("Timed out waiting for file transfer connection from peer".to_string());
+            return Err(
+                "Таймаут файлового соединения с пиром (NAT/файрвол или пир не отвечает). Попробуйте другой источник."
+                    .to_string(),
+            );
         }
     };
+    let FConnReady {
+        stream: f_stream,
+        file_transfer_init_consumed,
+    } = f_ready;
     f_stream.set_nodelay(true).ok();
 
     eprintln!("[soulseek] F connection established");
 
-    // Read PeerInit on the F stream (if present — some clients skip it)
-    // We do a short non-blocking read and discard whatever we get before the file data.
-    // Actually the F init was already consumed by peer_listener before passing us the stream.
-    // We just need to send FileOffset.
+    let (mut f_rh, mut f_wh) = f_stream.into_split();
 
-    // ── 6. Send FileOffset = 0 (8 raw bytes, no framing) ─────────────────────
-    let (f_rh, mut f_wh) = f_stream.into_split();
+    match file_transfer_init_consumed {
+        Some(tok) => {
+            eprintln!(
+                "[soulseek] FileTransferInit already read from peer (token={tok}, xfer={xfer_token})"
+            );
+        }
+        None => {
+            let mut ft = [0u8; 4];
+            let mut got = 0usize;
+            while got < 4 {
+                let n = match tokio::time::timeout(Duration::from_secs(30), f_rh.read(&mut ft[got..])).await {
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => {
+                        return Err(format!("FileTransferInit read error: {e}"));
+                    }
+                    Err(_) => {
+                        return Err("Таймаут FileTransferInit от пира".to_string());
+                    }
+                };
+                if n == 0 {
+                    return Err("Соединение закрыто до FileTransferInit".to_string());
+                }
+                got += n;
+            }
+            let ft_tok = u32::from_le_bytes(ft);
+            if ft_tok != xfer_token {
+                eprintln!(
+                    "[soulseek] FileTransferInit token {ft_tok} != xfer {xfer_token} (continuing)"
+                );
+            } else {
+                eprintln!("[soulseek] FileTransferInit ok token={ft_tok}");
+            }
+        }
+    }
+
     let offset = 0u64.to_le_bytes();
     f_wh.write_all(&offset).await
         .map_err(|e| format!("FileOffset send error: {e}"))?;
     f_wh.flush().await.ok();
-    drop(f_wh);
 
-    // ── 7. Create temp file, start download task ──────────────────────────────
-    let temp_path = std::env::temp_dir().join(format!("neegde_slsk_{token}.tmp"));
+    let temp_path = std::env::temp_dir().join(format!("neegde_slsk_{xfer_token}.tmp"));
     let downloaded = Arc::new(AtomicU64::new(0));
     let complete = Arc::new(AtomicBool::new(false));
 
@@ -155,7 +395,7 @@ pub async fn download_and_stream(
     let dl_bytes = Arc::clone(&downloaded);
     let dl_done = Arc::clone(&complete);
     let dl_jh = tokio::task::spawn(async move {
-        download_loop(f_rh, tp_dl, dl_bytes, dl_done).await;
+        download_loop(f_rh, f_wh, tp_dl, dl_bytes, dl_done).await;
     });
     let download_abort = dl_jh.abort_handle();
 
@@ -180,16 +420,35 @@ pub async fn download_and_stream(
     });
     let http_abort = http_jh.abort_handle();
 
-    let url = format!("http://127.0.0.1:{http_port}/stream");
+    let url = format!("http://127.0.0.1:{http_port}/slsk/{http_release_token}");
     eprintln!("[soulseek] ready: {url}  (file: {filepath})");
 
-    Ok(StreamHandle { url, token, temp_path, download_abort, http_abort })
+    Ok(StreamHandle {
+        url,
+        token: http_release_token,
+        temp_path,
+        download_abort,
+        http_abort,
+    })
 }
 
 // ── Download loop ─────────────────────────────────────────────────────────────
 
+/// Reads file bytes from the peer into a temp file for HTTP serving.
+///
+/// The write half must stay alive for the whole download: dropping it after
+/// `FileOffset` shuts down our TCP send side (FIN), and many peers then stop
+/// uploading or close the connection, yielding zero payload bytes.
+///
+/// Args:
+///     rh: Read half of the file (F) connection.
+///     _wh: Write half; held until this function returns so the socket stays open.
+///     temp_path: Destination path for the downloaded bytes.
+///     downloaded: Running byte count for progress.
+///     complete: Set when the read side is done (EOF or error).
 async fn download_loop(
     mut rh: tokio::net::tcp::OwnedReadHalf,
+    _wh: tokio::net::tcp::OwnedWriteHalf,
     temp_path: PathBuf,
     downloaded: Arc<AtomicU64>,
     complete: Arc<AtomicBool>,
@@ -248,6 +507,9 @@ async fn http_server_loop(
     }
 }
 
+// CORS: dev UI is localhost, stream is 127.0.0.1 — cross-origin; matches torrent_stream/http.rs.
+const SL_HTTP_CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Range\r\n";
+
 async fn serve_request(
     mut socket: TcpStream,
     temp_path: PathBuf,
@@ -269,6 +531,21 @@ async fn serve_request(
     };
     let req = String::from_utf8_lossy(&req_buf[..n]);
 
+    let first = req.lines().next().unwrap_or("").trim();
+    let first_up = first.to_ascii_uppercase();
+    if first_up.starts_with("OPTIONS ") {
+        let resp = format!(
+            "HTTP/1.1 204 No Content\r\n\
+             {SL_HTTP_CORS}\
+             Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n\
+             Access-Control-Max-Age: 86400\r\n\
+             Content-Length: 0\r\n\
+             \r\n"
+        );
+        let _ = socket.write_all(resp.as_bytes()).await;
+        return;
+    }
+
     let max_end = file_size.saturating_sub(1);
     let (range_start, range_end) = parse_range(&req, max_end);
     let content_len = range_end - range_start + 1;
@@ -281,7 +558,10 @@ async fn serve_request(
         let dl = downloaded.load(Ordering::Acquire);
         if dl > range_start || complete.load(Ordering::Acquire) { break; }
         if tokio::time::Instant::now() >= wait_dl {
-            let _ = socket.write_all(b"HTTP/1.1 503 Service Unavailable\r\n\r\n").await;
+            let resp = format!(
+                "HTTP/1.1 503 Service Unavailable\r\n{SL_HTTP_CORS}\r\n"
+            );
+            let _ = socket.write_all(resp.as_bytes()).await;
             return;
         }
         tokio::time::sleep(Duration::from_millis(80)).await;
@@ -291,12 +571,14 @@ async fn serve_request(
         format!(
             "HTTP/1.1 206 Partial Content\r\nContent-Type: {ct}\r\n\
              Content-Range: bytes {range_start}-{range_end}/{file_size}\r\n\
-             Content-Length: {content_len}\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\n\r\n"
+             Content-Length: {content_len}\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\n\
+             {SL_HTTP_CORS}\r\n"
         )
     } else {
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: {ct}\r\n\
-             Content-Length: {file_size}\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\n\r\n"
+             Content-Length: {file_size}\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\n\
+             {SL_HTTP_CORS}\r\n"
         )
     };
     if socket.write_all(headers.as_bytes()).await.is_err() {
