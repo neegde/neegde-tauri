@@ -14,6 +14,7 @@ use tokio::io::{AsyncWriteExt};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tauri::{AppHandle, Emitter};
 
 const SERVER_HOST: &str = "server.slsknet.org";
 const SERVER_PORT: u16 = 2242;
@@ -187,7 +188,23 @@ impl Session {
     }
 
     /// Network-wide file search. Blocks up to SEARCH_TIMEOUT_SECS collecting results.
-    pub async fn search(&self, query: String) -> Vec<SlskFileResult> {
+    ///
+    /// When `app` is set, each non-empty peer batch is emitted as `soulseek-search-batch`
+    /// with `{ requestId, rows }` so the UI can update incrementally.
+    ///
+    /// Args:
+    ///     query: Search string sent to the SoulSeek server.
+    ///     app: When `Some`, emits `soulseek-search-batch` after each batch; use `None` to skip.
+    ///     request_id: Correlates events with the frontend `invoke` call (ignore stale searches).
+    ///
+    /// Returns:
+    ///     Deduped, size-sorted file hits (same as the final command payload).
+    pub async fn search(
+        &self,
+        query: String,
+        app: Option<AppHandle>,
+        request_id: u64,
+    ) -> Vec<SlskFileResult> {
         let token = next_token();
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<SlskFileResult>>();
         self.pending_searches.insert(token, tx);
@@ -208,6 +225,13 @@ impl Session {
         loop {
             match tokio::time::timeout_at(deadline, rx.recv()).await {
                 Ok(Some(batch)) => {
+                    if !batch.is_empty() {
+                        if let Some(ref app) = app {
+                            let rows = super::file_results_to_rows(batch.clone());
+                            let payload = super::SlskSearchBatchEvent { request_id, rows };
+                            let _ = app.emit("soulseek-search-batch", &payload);
+                        }
+                    }
                     results.extend(batch);
                     if results.len() >= MAX_SEARCH_RESULTS {
                         break;

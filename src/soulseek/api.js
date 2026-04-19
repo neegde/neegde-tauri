@@ -27,12 +27,13 @@ export function soulseekStatus() {
 
 /**
  * Search the SoulSeek network for audio files.
- * Blocks for ~8 seconds collecting results from peers.
+ * Blocks up to ~12s while collecting results; batches arrive earlier as `soulseek-search-batch` events.
  * @param {string} query
+ * @param {number} [requestId] - Match `payload.requestId` on incremental events (use same id as in `listen`).
  * @returns {Promise<Array>}
  */
-export function soulseekSearch(query) {
-  return invoke("soulseek_search", { query });
+export function soulseekSearch(query, requestId = 0) {
+  return invoke("soulseek_search", { query, requestId });
 }
 
 /**

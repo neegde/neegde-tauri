@@ -27,6 +27,7 @@ import { exportTorrentFiles } from "./torrent/torrentExport.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
+import { listen } from "@tauri-apps/api/event";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -763,7 +764,22 @@ async function handleSearch(query) {
   try {
     if (searchSource.value === "soulseek") {
       if (!slskConnected.value) throw new Error("Не подключён к SoulSeek (зайдите в Настройки)");
-      results.value = groupSlskResults(await soulseekSearch(q));
+      let slskAccum = [];
+      const unlistenSlsk = await listen("soulseek-search-batch", (e) => {
+        const p = e.payload;
+        if (p.requestId !== seq) return;
+        slskAccum = slskAccum.concat(p.rows);
+        if (seq !== searchRequestSeq) return;
+        results.value = groupSlskResults(slskAccum);
+        loading.value = false;
+      });
+      try {
+        const finalRows = await soulseekSearch(q, seq);
+        if (seq !== searchRequestSeq) return;
+        results.value = groupSlskResults(finalRows);
+      } finally {
+        unlistenSlsk();
+      }
     } else {
       results.value = await searchMusic(q);
     }

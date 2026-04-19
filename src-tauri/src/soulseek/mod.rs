@@ -50,6 +50,14 @@ pub struct SlskStreamReady {
     pub token: String,
 }
 
+/// Incremental search: emitted from the backend as peer batches arrive.
+#[derive(Serialize, Clone)]
+pub(super) struct SlskSearchBatchEvent {
+    #[serde(rename = "requestId")]
+    pub request_id: u64,
+    pub rows: Vec<SlskSearchResultRow>,
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 struct ActiveStream {
@@ -141,8 +149,10 @@ pub fn soulseek_status(state: tauri::State<'_, SoulSeekState>) -> Result<SlskSta
 
 #[tauri::command]
 pub async fn soulseek_search(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SoulSeekState>,
     query: String,
+    request_id: u64,
 ) -> Result<Vec<SlskSearchResultRow>, String> {
     let session = state.get_session()?;
 
@@ -150,27 +160,29 @@ pub async fn soulseek_search(
         return Ok(vec![]);
     }
 
-    let results: Vec<SlskFileResult> = session.search(query).await;
+    let results: Vec<SlskFileResult> = session.search(query, Some(app), request_id).await;
+    Ok(file_results_to_rows(results))
+}
 
-    let rows = results
+pub(super) fn file_results_to_rows(results: Vec<SlskFileResult>) -> Vec<SlskSearchResultRow> {
+    results
         .into_iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let filename = r.filepath
+        .map(|r| {
+            let filename = r
+                .filepath
                 .rsplit(|c| c == '\\' || c == '/')
                 .next()
                 .unwrap_or(&r.filepath)
                 .to_string();
             let display_name = filename.clone();
             let category = bitrate_category(r.bitrate);
-            // Use username + filepath hash as unique id
-            let id = format!("slsk_{}", stable_id(&r.username, &r.filepath, i));
+            let id = format!("slsk_{}", stable_id(&r.username, &r.filepath));
             SlskSearchResultRow {
                 id,
                 name: display_name,
                 category,
                 size: r.size,
-                seeders: 1, // SoulSeek doesn't have seeders; use 1 to indicate available
+                seeders: 1,
                 leechers: 0,
                 added: "—".to_string(),
                 source: "soulseek".to_string(),
@@ -180,9 +192,7 @@ pub async fn soulseek_search(
                 duration: r.duration,
             }
         })
-        .collect();
-
-    Ok(rows)
+        .collect()
 }
 
 #[tauri::command]
@@ -281,13 +291,11 @@ fn bitrate_category(bitrate: Option<u32>) -> String {
     }
 }
 
-fn stable_id(username: &str, filepath: &str, idx: usize) -> String {
-    // Simple non-cryptographic hash for a stable ID
+fn stable_id(username: &str, filepath: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in username.bytes().chain(filepath.bytes()) {
         h ^= b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
-    h ^= idx as u64;
     format!("{h:016x}")
 }
