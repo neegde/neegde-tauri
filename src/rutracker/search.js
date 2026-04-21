@@ -15,6 +15,63 @@ export async function searchMusic(query) {
   return invoke("rutracker_search", { mirror, query });
 }
 
+const TOPIC_AUDIO_CHECK_WORKERS = 8;
+
+/**
+ * Runs async mapper over items with at most `limit` concurrent operations.
+ *
+ * Args:
+ *     items: Input array.
+ *     limit: Max parallel tasks (minimum 1).
+ *     mapper: `(item, index) => Promise<result>`.
+ *
+ * Returns:
+ *     Promise resolving to an array of mapper results in original order.
+ */
+async function mapPool(items, limit, mapper) {
+  if (!items.length) return [];
+  const n = items.length;
+  const out = new Array(n);
+  let slot = 0;
+  const cap = Math.max(1, Math.min(limit, n));
+
+  const worker = async () => {
+    for (;;) {
+      const idx = slot;
+      slot += 1;
+      if (idx >= n) return;
+      out[idx] = await mapper(items[idx], idx);
+    }
+  };
+
+  await Promise.all(Array.from({ length: cap }, () => worker()));
+  return out;
+}
+
+/**
+ * Drops Rutracker search rows whose `.torrent` does not list any playable audio file.
+ * Uses one lightweight `dl.php` fetch per row; on RPC error the row is kept.
+ *
+ * Args:
+ *     rows: Results from `searchMusic` (Rutracker-only rows).
+ *
+ * Returns:
+ *     Filtered rows.
+ */
+export async function filterRutrackerRowsWithPlayableAudio(rows) {
+  if (!rows?.length) return [];
+  const mirror = getMirror();
+  const flags = await mapPool(rows, TOPIC_AUDIO_CHECK_WORKERS, (row) =>
+    invoke("rutracker_topic_has_playable_audio", {
+      mirror,
+      topicId: String(row.id),
+    })
+      .then((v) => Boolean(v))
+      .catch(() => true),
+  );
+  return rows.filter((_, j) => flags[j]);
+}
+
 // ── Torrent details LRU cache ─────────────────────────────────────────────────
 // Keyed by topicId. Stores resolved details or an in-flight Promise (dedup).
 const _detailsCache = new Map();

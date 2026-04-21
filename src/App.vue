@@ -21,7 +21,7 @@ import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/a
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
-import { searchMusic, getTorrentDetails } from "./rutracker/search.js";
+import { searchMusic, getTorrentDetails, filterRutrackerRowsWithPlayableAudio } from "./rutracker/search.js";
 import {
   soulseekLogin,
   soulseekLogout,
@@ -468,10 +468,6 @@ onMounted(async () => {
     }
   } catch { /* no Tauri API */ }
 });
-// ── Search source ─────────────────────────────────────────────────────────────
-/** "rutracker" | "soulseek" */
-const searchSource = ref(localStorage.getItem("neegde.searchSource") || "rutracker");
-watch(searchSource, (v) => localStorage.setItem("neegde.searchSource", v));
 // ── View ──────────────────────────────────────────────────────────────────────
 const view       = ref("home");  // "home" | "search" | "likes" | "settings" | "playlist"
 const returnView = ref("search");
@@ -615,11 +611,23 @@ function setupAppDebugInstrumentation() {
 
 // ── Search ────────────────────────────────────────────────────────────────────
 const searchQuery = ref("");
-const results = shallowRef([]);
-const loading = ref(false);
+/** Rutracker rows (albums / torrents). */
+const searchAlbumResults = shallowRef([]);
+/** SoulSeek grouped track rows. */
+const searchTrackResults = shallowRef([]);
+const searchLoadingRt = ref(false);
+const searchLoadingSlsk = ref(false);
+const searchRtError = ref(null);
+const searchSlskError = ref(null);
+const loading = computed(() => searchLoadingRt.value || searchLoadingSlsk.value);
+const hasSearchResults = computed(
+  () => searchAlbumResults.value.length > 0 || searchTrackResults.value.length > 0,
+);
 const error   = ref(null);
 /** Счётчик запросов: старый поиск не сбрасывает спиннер, если уже запущен новый. */
 let searchRequestSeq = 0;
+/** Увеличивается при каждом новом поиске; вкладки в Results сбрасываются только по нему, не при батчах SoulSeek. */
+const searchResultsEpoch = ref(0);
 
 // ── Torrent ───────────────────────────────────────────────────────────────────
 const selected      = ref(null);
@@ -641,7 +649,8 @@ function snapshotSearchForBack() {
   return {
     type: "search",
     searchQuery: searchQuery.value,
-    results: [...results.value],
+    resultsAlbums: [...searchAlbumResults.value],
+    resultsTracks: [...searchTrackResults.value],
     error: error.value,
   };
 }
@@ -808,8 +817,7 @@ async function handleSoulseekLogout() {
   slskConnected.value = false;
   slskUsername.value = null;
   clearSlskCoverCache();
-  // Clear search results if we were on soulseek source
-  if (searchSource.value === "soulseek") results.value = [];
+  searchTrackResults.value = [];
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -827,7 +835,8 @@ function handleLogout(evt) {
   rtLoggedIn.value   = false;
   rtUsername.value   = null;
   rtAvatarUrl.value  = null;
-  results.value      = [];
+  searchAlbumResults.value = [];
+  searchTrackResults.value = [];
   selected.value     = null;
   files.value        = [];
   torrentMagnet.value = "";
@@ -837,69 +846,138 @@ function handleLogout(evt) {
   backStack.value    = [];
 }
 
+/**
+ * After Rutracker and SoulSeek requests finish, sets the empty-state message and caches hits.
+ *
+ * Args:
+ *     seqActive: Active search id; stale calls are ignored.
+ *     queryNorm: Lowercase trimmed query used in the LRU cache key.
+ */
+function finalizeCombinedSearch(seqActive, queryNorm) {
+  if (seqActive !== searchRequestSeq) return;
+  if (searchLoadingRt.value || searchLoadingSlsk.value) return;
+  const na = searchAlbumResults.value.length;
+  const nt = searchTrackResults.value.length;
+  if (na === 0 && nt === 0) {
+    if (!rtLoggedIn.value && !slskConnected.value) {
+      error.value = null;
+    } else if (searchRtError.value || searchSlskError.value) {
+      error.value = searchRtError.value ?? searchSlskError.value;
+    } else {
+      error.value = "Ничего не найдено.";
+    }
+  } else {
+    error.value = null;
+    _searchCacheSet(queryNorm + "|mixed", {
+      albums: [...searchAlbumResults.value],
+      tracks: [...searchTrackResults.value],
+    });
+  }
+  appDebugLog("search", `query "${queryNorm}" [combined]: rt=${na} slsk=${nt}`);
+}
+
 async function handleSearch(query) {
   if (!query?.trim()) {
-    results.value = [];
+    searchAlbumResults.value = [];
+    searchTrackResults.value = [];
+    searchRtError.value = null;
+    searchSlskError.value = null;
     error.value = null;
     selected.value = null;
     files.value = [];
     return;
   }
   const q = query.trim();
+  const qn = q.toLowerCase();
   forwardStack.value = [];
   backStack.value    = [];
   error.value        = null;
+  searchRtError.value = null;
+  searchSlskError.value = null;
   selected.value     = null;
   files.value        = [];
   torrentCover.value = null;
   view.value         = "search";
 
   searchHistory.value = addToSearchHistory(q);
+  searchResultsEpoch.value += 1;
 
-  const cached = _searchCacheGet(q.toLowerCase() + "|" + searchSource.value);
+  const cached = _searchCacheGet(qn + "|mixed");
   if (cached) {
-    results.value = cached;
-    if (!results.value.length) error.value = "Ничего не найдено.";
-    appDebugLog("search", `query "${q}" [${searchSource.value}]: cache hit (${cached.length} results)`);
+    searchAlbumResults.value = cached.albums ?? [];
+    searchTrackResults.value = cached.tracks ?? [];
+    const empty = !searchAlbumResults.value.length && !searchTrackResults.value.length;
+    if (empty) error.value = "Ничего не найдено.";
+    appDebugLog(
+      "search",
+      `query "${q}" [combined]: cache hit (rt=${searchAlbumResults.value.length} slsk=${searchTrackResults.value.length})`,
+    );
     return;
   }
 
-  appDebugLog("search", `query "${q}": sending request`);
+  appDebugLog("search", `query "${q}": sending request (combined)`);
   const seq = ++searchRequestSeq;
-  loading.value = true;
-  results.value = [];
-  try {
-    if (searchSource.value === "soulseek") {
-      if (!slskConnected.value) throw new Error("Не подключён к SoulSeek (зайдите в Настройки)");
-      let slskAccum = [];
-      const unlistenSlsk = await listen("soulseek-search-batch", (e) => {
-        const p = e.payload;
-        if (p.requestId !== seq) return;
-        slskAccum = slskAccum.concat(p.rows);
+  searchAlbumResults.value = [];
+  searchTrackResults.value = [];
+  searchLoadingRt.value = rtLoggedIn.value;
+  searchLoadingSlsk.value = slskConnected.value;
+
+  if (!rtLoggedIn.value) {
+    searchLoadingRt.value = false;
+    finalizeCombinedSearch(seq, qn);
+  } else {
+    searchMusic(q)
+      .then((rows) => filterRutrackerRowsWithPlayableAudio(rows))
+      .then((rows) => {
         if (seq !== searchRequestSeq) return;
-        results.value = groupSlskResults(slskAccum);
-        loading.value = false;
+        searchAlbumResults.value = rows;
+      })
+      .catch((e) => {
+        if (seq !== searchRequestSeq) return;
+        searchRtError.value = e?.toString?.() ?? "Ошибка Rutracker";
+        searchAlbumResults.value = [];
+      })
+      .finally(() => {
+        if (seq === searchRequestSeq) searchLoadingRt.value = false;
+        finalizeCombinedSearch(seq, qn);
       });
-      try {
-        const finalRows = await soulseekSearch(q, seq);
+  }
+
+  if (!slskConnected.value) {
+    searchLoadingSlsk.value = false;
+    finalizeCombinedSearch(seq, qn);
+  } else {
+    let slskAccum = [];
+    listen("soulseek-search-batch", (e) => {
+      const p = e.payload;
+      if (p.requestId !== seq) return;
+      slskAccum = slskAccum.concat(p.rows);
+      if (seq !== searchRequestSeq) return;
+      searchTrackResults.value = groupSlskResults(slskAccum);
+    })
+      .then((unlistenSlsk) => {
+        soulseekSearch(q, seq)
+          .then((finalRows) => {
+            if (seq !== searchRequestSeq) return;
+            searchTrackResults.value = groupSlskResults(finalRows);
+          })
+          .catch((e) => {
+            if (seq !== searchRequestSeq) return;
+            searchSlskError.value = e?.toString?.() ?? "Ошибка SoulSeek";
+            searchTrackResults.value = [];
+          })
+          .finally(() => {
+            unlistenSlsk();
+            if (seq === searchRequestSeq) searchLoadingSlsk.value = false;
+            finalizeCombinedSearch(seq, qn);
+          });
+      })
+      .catch(() => {
         if (seq !== searchRequestSeq) return;
-        results.value = groupSlskResults(finalRows);
-      } finally {
-        unlistenSlsk();
-      }
-    } else {
-      results.value = await searchMusic(q);
-    }
-    if (!results.value.length) error.value = "Ничего не найдено.";
-    else _searchCacheSet(q.toLowerCase() + "|" + searchSource.value, results.value);
-    appDebugLog("search", `query "${q}" [${searchSource.value}]: ${results.value.length} results`);
-  } catch (e) {
-    error.value = e?.toString?.() ?? "Ошибка поиска";
-    appDebugLog("search", `query "${q}": error — ${String(e)}`);
-  } finally {
-    if (seq === searchRequestSeq) {
-      loading.value = false;
-    }
+        searchSlskError.value = "Не удалось подписаться на результаты SoulSeek";
+        searchLoadingSlsk.value = false;
+        finalizeCombinedSearch(seq, qn);
+      });
   }
 }
 
@@ -1835,7 +1913,8 @@ function handleOpenRecent(item) {
   selected.value = null;
   files.value = [];
   searchQuery.value = "";
-  results.value = [];
+  searchAlbumResults.value = [];
+  searchTrackResults.value = [];
   view.value = "search";
   void handleSelect({
     id: item.id,
@@ -1883,7 +1962,14 @@ function handleBack() {
     const entry = backStack.value.pop();
     if (entry.type === "search") {
       searchQuery.value = entry.searchQuery;
-      results.value = [...entry.results];
+      let albums = [...(entry.resultsAlbums ?? [])];
+      let tracks = [...(entry.resultsTracks ?? [])];
+      if (!albums.length && !tracks.length && entry.results?.length) {
+        if (entry.results[0]?.source === "soulseek") tracks = [...entry.results];
+        else albums = [...entry.results];
+      }
+      searchAlbumResults.value = albums;
+      searchTrackResults.value = tracks;
       error.value = entry.error;
       selected.value = null;
       files.value = [];
@@ -2139,24 +2225,6 @@ function onMouseSideButtonUp(e) {
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
         <div v-if="view === 'search'" class="main-toolbar">
-          <!-- Source selector: Rutracker / SoulSeek -->
-          <div class="source-selector">
-            <button
-              :class="['source-selector-btn', searchSource === 'rutracker' ? 'active' : '']"
-              @click="searchSource = 'rutracker'; results = []; error = null"
-            >
-              Rutracker
-            </button>
-            <button
-              :class="['source-selector-btn', searchSource === 'soulseek' ? 'active' : '']"
-              @click="searchSource = 'soulseek'; results = []; error = null"
-              :title="slskConnected ? `Подключён как ${slskUsername}` : 'Нужна авторизация в Настройках'"
-            >
-              SoulSeek
-              <span v-if="!slskConnected" class="source-selector-warn" />
-            </button>
-          </div>
-
           <div class="main-toolbar-row">
             <div class="main-toolbar-search">
               <SearchBar
@@ -2167,7 +2235,6 @@ function onMouseSideButtonUp(e) {
               />
             </div>
             <button
-              v-if="searchSource !== 'soulseek'"
               type="button"
               class="toolbar-magnet-btn"
               title="Открыть раздачу по magnet-ссылке"
@@ -2255,13 +2322,18 @@ function onMouseSideButtonUp(e) {
           <p v-if="error && !loading" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->
-          <div v-if="!restoringSession && !rtLoggedIn && !results.length && !selected && !loading" class="onboarding">
+          <div
+            v-if="!restoringSession && !rtLoggedIn && !slskConnected && !hasSearchResults && !selected && !loading"
+            class="onboarding"
+          >
             <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
               <div class="onboarding-icon">🔗</div>
               <div class="onboarding-body">
-                <div class="onboarding-title">Подключите Rutracker</div>
+                <div class="onboarding-title">Подключите источники поиска</div>
                 <div class="onboarding-desc">
-                  Зайдите в <strong style="color:var(--text)">Настройки</strong> и введите логин — поиск заработает сразу.
+                  <strong style="color:var(--text)">Rutracker</strong> — альбомы и раздачи.
+                  <strong style="color:var(--text)">SoulSeek</strong> — отдельные треки.
+                  Настройки открываются здесь или в боковой панели.
                 </div>
               </div>
             </div>
@@ -2269,7 +2341,7 @@ function onMouseSideButtonUp(e) {
 
           <!-- Recent search queries -->
           <div
-            v-if="!selected && !results.length && !loading && searchHistory.length"
+            v-if="!selected && !hasSearchResults && !loading && searchHistory.length"
             class="search-history-wrap"
           >
             <div class="search-history-label">Недавние запросы</div>
@@ -2294,8 +2366,16 @@ function onMouseSideButtonUp(e) {
           </div>
 
           <Results
-            v-if="!selected && results.length > 0"
-            :results="results"
+            v-if="!selected && hasSearchResults"
+            :search-epoch="searchResultsEpoch"
+            :album-results="searchAlbumResults"
+            :track-results="searchTrackResults"
+            :loading-albums="searchLoadingRt"
+            :loading-tracks="searchLoadingSlsk"
+            :rt-logged-in="rtLoggedIn"
+            :slsk-connected="slskConnected"
+            :rt-error="searchRtError"
+            :slsk-error="searchSlskError"
             :selected-id="null"
             @select="handleSelect"
             @play-slsk-track="handlePlaySlskTrack"

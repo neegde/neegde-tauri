@@ -423,6 +423,35 @@ fn parse_dict(data: &[u8], pos: usize) -> Result<(BVal, usize), String> {
     Ok((BVal::Dict(items), cur + 1))
 }
 
+/// Same extensions as `AUDIO_EXTS` in `src/lib/utils.js` (lowercase, no leading dot).
+pub fn torrent_files_have_playable_audio(files: &[TorrentFile]) -> bool {
+    const AUDIO_EXT: &[&str] = &[
+        "mp3", "flac", "ape", "wav", "m4a", "ogg", "wv", "aac", "opus",
+    ];
+    for f in files {
+        let last = f.path.last().map(|s| s.as_str()).unwrap_or("");
+        let ext = last
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_lowercase())
+            .unwrap_or_default();
+        if AUDIO_EXT.iter().any(|&e| e == ext.as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Download `.torrent` from `dl.php` and report whether it lists any playable audio extension.
+pub async fn topic_has_playable_audio(
+    client: &Client,
+    base: &str,
+    topic_id: &str,
+) -> Result<bool, String> {
+    let torrent_bytes = download_torrent_file_bytes(client, base, topic_id).await?;
+    let files = parse_torrent_bytes(&torrent_bytes)?;
+    Ok(torrent_files_have_playable_audio(&files))
+}
+
 /// Parse a standard .torrent file and return its file list.
 pub fn parse_torrent_bytes(data: &[u8]) -> Result<Vec<TorrentFile>, String> {
     if data.is_empty() {

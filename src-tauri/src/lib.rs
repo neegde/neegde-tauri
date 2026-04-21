@@ -208,6 +208,7 @@ pub fn run() {
             rutracker::rutracker_search,
             rutracker::rutracker_get_cover,
             rutracker::rutracker_get_torrent_details,
+            rutracker::rutracker_topic_has_playable_audio,
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
             rutracker::rutracker_get_http_proxy,

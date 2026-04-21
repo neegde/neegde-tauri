@@ -780,6 +780,24 @@ pub async fn rutracker_get_torrent_details(
     Ok(details)
 }
 
+/// True if the topic’s `.torrent` lists at least one file with an extension the player supports.
+#[tauri::command]
+pub async fn rutracker_topic_has_playable_audio(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+    topic_id: String,
+) -> Result<bool, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Err("Необходимо войти в Rutracker".into());
+        }
+    }
+    let base = mirror.trim_end_matches('/').to_string();
+    let client = state.http_client()?;
+    topic::topic_has_playable_audio(&client, &base, &topic_id).await
+}
+
 /// Download `.torrent` for a topic (for streaming without magnet metadata resolution).
 #[tauri::command]
 pub async fn rutracker_download_torrent_file_b64(

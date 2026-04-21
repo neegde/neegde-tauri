@@ -11,7 +11,16 @@ import {
 } from "../../soulseek/slskMetaStore.js";
 
 const props = defineProps({
-  results: Array,
+  /** Incremented in App only when the user starts a new search (not on SoulSeek batches). */
+  searchEpoch: { type: Number, default: 0 },
+  albumResults: { type: Array, default: () => [] },
+  trackResults: { type: Array, default: () => [] },
+  loadingAlbums: { type: Boolean, default: false },
+  loadingTracks: { type: Boolean, default: false },
+  rtLoggedIn: { type: Boolean, default: false },
+  slskConnected: { type: Boolean, default: false },
+  rtError: { type: String, default: null },
+  slskError: { type: String, default: null },
   selectedId: { default: null },
 });
 
@@ -20,49 +29,113 @@ const emit = defineEmits(["select", "play-slsk-track", "download-slsk-track", "l
 const INITIAL_BATCH = 40;
 const BATCH_INCREMENT = 30;
 
-const isSoulseek = computed(() => props.results[0]?.source === "soulseek");
-
-const playableResults = computed(() =>
-  isSoulseek.value
-    ? props.results
-    : props.results.filter((r) => isLikelyPlayable(r.name, r.category))
+const albumPlayable = computed(() =>
+  (props.albumResults ?? []).filter((r) => isLikelyPlayable(r.name, r.category)),
 );
-const hiddenCount = computed(() => props.results.length - playableResults.value.length);
+const hiddenAlbumCount = computed(
+  () => (props.albumResults?.length ?? 0) - albumPlayable.value.length,
+);
 
-const visibleCount = ref(INITIAL_BATCH);
-const visibleResults = computed(() => playableResults.value.slice(0, visibleCount.value));
+const trackPlayable = computed(() => props.trackResults ?? []);
 
-watch(() => props.results, () => { visibleCount.value = INITIAL_BATCH; });
-watch(playableResults, () => { visibleCount.value = INITIAL_BATCH; });
+const visibleAlbumCount = ref(INITIAL_BATCH);
+const visibleTrackCount = ref(INITIAL_BATCH);
 
-const sentinel = ref(null);
-let observer = null;
+const visibleAlbums = computed(() => albumPlayable.value.slice(0, visibleAlbumCount.value));
+const visibleTracks = computed(() => trackPlayable.value.slice(0, visibleTrackCount.value));
 
-function setupObserver() {
-  if (!sentinel.value) return;
-  observer?.disconnect();
-  observer = new IntersectionObserver(
-    (entries) => {
-      if (entries[0].isIntersecting && visibleCount.value < playableResults.value.length) {
-        visibleCount.value = Math.min(visibleCount.value + BATCH_INCREMENT, playableResults.value.length);
-      }
-    },
-    { rootMargin: "200px" },
-  );
-  observer.observe(sentinel.value);
+watch(() => props.albumResults, () => { visibleAlbumCount.value = INITIAL_BATCH; });
+watch(albumPlayable, () => { visibleAlbumCount.value = INITIAL_BATCH; });
+watch(() => props.trackResults, () => { visibleTrackCount.value = INITIAL_BATCH; });
+watch(trackPlayable, () => { visibleTrackCount.value = INITIAL_BATCH; });
+
+const sentinelAlbum = ref(null);
+const sentinelTrack = ref(null);
+let observerAlbum = null;
+let observerTrack = null;
+
+/**
+ * Attaches infinite-scroll observers for album and track lists.
+ *
+ * Returns:
+ *     void
+ */
+function setupObservers() {
+  if (sentinelAlbum.value) {
+    observerAlbum?.disconnect();
+    observerAlbum = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && visibleAlbumCount.value < albumPlayable.value.length) {
+          visibleAlbumCount.value = Math.min(
+            visibleAlbumCount.value + BATCH_INCREMENT,
+            albumPlayable.value.length,
+          );
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observerAlbum.observe(sentinelAlbum.value);
+  }
+  if (sentinelTrack.value) {
+    observerTrack?.disconnect();
+    observerTrack = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && visibleTrackCount.value < trackPlayable.value.length) {
+          visibleTrackCount.value = Math.min(
+            visibleTrackCount.value + BATCH_INCREMENT,
+            trackPlayable.value.length,
+          );
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observerTrack.observe(sentinelTrack.value);
+  }
 }
 
 onMounted(() => {
-  nextTick(setupObserver);
+  nextTick(setupObservers);
 });
 onUnmounted(() => {
-  observer?.disconnect();
+  observerAlbum?.disconnect();
+  observerTrack?.disconnect();
 });
 
 watch(
-  () => [props.results?.length, isSoulseek.value],
-  () => nextTick(setupObserver),
+  () => [
+    props.albumResults?.length,
+    albumPlayable.value.length,
+    props.trackResults?.length,
+    trackPlayable.value.length,
+  ],
+  () => nextTick(setupObservers),
 );
+
+/** `"tracks"` | `"albums"` — only one panel visible to avoid long vertical scroll. */
+const activeTab = ref("tracks");
+
+/**
+ * Picks a sensible default tab after new search data (prefer tracks when both exist).
+ *
+ * Returns:
+ *     void
+ */
+function syncDefaultSearchTab() {
+  const na = albumPlayable.value.length;
+  const nt = trackPlayable.value.length;
+  if (nt > 0 && na === 0) activeTab.value = "tracks";
+  else if (na > 0 && nt === 0) activeTab.value = "albums";
+  else if (na > 0 && nt > 0) activeTab.value = "tracks";
+  else activeTab.value = "albums";
+}
+
+watch(
+  () => props.searchEpoch,
+  () => nextTick(syncDefaultSearchTab),
+  { immediate: true },
+);
+
+watch(activeTab, () => nextTick(setupObservers));
 
 // ── SoulSeek metadata enrichment ─────────────────────────────────────────────
 // slskMeta / coverGeneration / coverTimer live in slskMetaStore.js (module-level)
@@ -198,12 +271,12 @@ function albumFromFolder(folder) {
 }
 
 function runCoverFetches() {
-  if (!isSoulseek.value) return;
+  if (!props.trackResults?.length) return;
   const gen = bumpCoverGeneration();
 
   // One iTunes request per unique folder (= album), not per track.
   const folderMap = new Map();
-  for (const track of playableResults.value) {
+  for (const track of trackPlayable.value) {
     if (track.slsk_cover_filepath) continue;   // already has folder art
     const meta = slskMeta.get(track.id);
     if (!meta || meta.coverUrl) continue;
@@ -234,9 +307,9 @@ function runCoverFetches() {
 }
 
 watch(
-  () => props.results,
+  () => props.trackResults,
   (newResults) => {
-    if (!newResults?.length || newResults[0]?.source !== "soulseek") {
+    if (!newResults?.length) {
       slskMeta.clear();
       bumpCoverGeneration();
       clearCoverTimer();
@@ -249,17 +322,55 @@ watch(
 </script>
 
 <template>
-  <div v-if="results.length">
+  <div class="search-results-combined">
+    <div class="likes-tabs search-results-tabs" role="tablist" aria-label="Тип результатов">
+      <button
+        type="button"
+        role="tab"
+        class="likes-tab"
+        :class="{ active: activeTab === 'tracks' }"
+        :aria-selected="activeTab === 'tracks'"
+        @click="activeTab = 'tracks'"
+      >
+        Треки
+        <span v-if="trackPlayable.length" class="search-tab-badge">{{ trackPlayable.length }}</span>
+        <span v-else-if="loadingTracks" class="search-tab-badge search-tab-badge--muted">…</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="likes-tab"
+        :class="{ active: activeTab === 'albums' }"
+        :aria-selected="activeTab === 'albums'"
+        @click="activeTab = 'albums'"
+      >
+        Альбомы
+        <span v-if="albumPlayable.length" class="search-tab-badge">{{ albumPlayable.length }}</span>
+        <span v-else-if="loadingAlbums" class="search-tab-badge search-tab-badge--muted">…</span>
+      </button>
+    </div>
 
-    <!-- ── SoulSeek: flat track list + covers ─────────────────────────────── -->
-    <template v-if="isSoulseek">
-      <div class="section-header">
-        <h2 class="section-title">Результаты</h2>
-        <span class="section-count">{{ playableResults.length }} треков</span>
-      </div>
-      <div class="slsk-tracklist">
+    <!-- ── SoulSeek (tracks) ──────────────────────────────────────────────── -->
+    <section
+      v-show="activeTab === 'tracks'"
+      class="search-section"
+      role="tabpanel"
+      aria-label="Треки SoulSeek"
+    >
+      <p v-if="!slskConnected" class="search-section-hint">
+        Подключите <strong>SoulSeek</strong> в настройках — здесь появятся отдельные файлы с сети.
+      </p>
+      <p v-else-if="slskError" class="search-section-error">{{ slskError }}</p>
+      <p
+        v-else-if="slskConnected && !loadingTracks && !trackPlayable.length"
+        class="search-section-hint"
+      >
+        По SoulSeek ничего не найдено.
+      </p>
+
+      <div v-if="trackPlayable.length" class="slsk-tracklist">
         <SlskTrackRow
-          v-for="t in visibleResults"
+          v-for="t in visibleTracks"
           :key="t.id"
           :track="t"
           :enriched="slskMeta.get(t.id) ?? null"
@@ -268,29 +379,88 @@ watch(
           @like="emit('like-slsk-track', $event)"
         />
       </div>
-      <div ref="sentinel" />
-    </template>
+      <div ref="sentinelTrack" />
+    </section>
 
-    <!-- ── Rutracker ─────────────────────────────────────────────────────── -->
-    <template v-else>
-      <div class="section-header">
-        <h2 class="section-title">Результаты</h2>
-        <span class="section-count">
-          {{ playableResults.length }} раздач
-          <span v-if="hiddenCount > 0" class="section-count-hidden">(скрыто {{ hiddenCount }} видео)</span>
-        </span>
-      </div>
-      <div class="results-grid">
+    <!-- ── Rutracker (albums) ─────────────────────────────────────────────── -->
+    <section
+      v-show="activeTab === 'albums'"
+      class="search-section"
+      role="tabpanel"
+      aria-label="Альбомы Rutracker"
+    >
+      <p v-if="!rtLoggedIn" class="search-section-hint">
+        Войдите в <strong>Rutracker</strong> в настройках — здесь появятся альбомы и полные раздачи.
+      </p>
+      <p v-else-if="rtError" class="search-section-error">{{ rtError }}</p>
+      <p
+        v-else-if="rtLoggedIn && !loadingAlbums && !albumPlayable.length"
+        class="search-section-hint"
+      >
+        По Rutracker ничего не найдено.
+      </p>
+      <p
+        v-if="hiddenAlbumCount > 0 && albumPlayable.length"
+        class="search-section-meta"
+      >
+        Скрыто раздач с видео: {{ hiddenAlbumCount }}
+      </p>
+
+      <div v-if="albumPlayable.length" class="results-grid">
         <AlbumCard
-          v-for="(r, i) in visibleResults"
+          v-for="(r, i) in visibleAlbums"
           :key="r.id ?? i"
           :torrent="r"
           :selected="selectedId === r.id"
           @select="emit('select', $event)"
         />
       </div>
-      <div ref="sentinel" />
-    </template>
-
+      <div ref="sentinelAlbum" />
+    </section>
   </div>
 </template>
+
+<style scoped>
+.search-results-combined {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.search-results-tabs {
+  padding-top: 0;
+  padding-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.search-tab-badge {
+  margin-left: 6px;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-tab-badge--muted {
+  opacity: 0.55;
+  letter-spacing: 0;
+}
+
+.search-section-hint {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.search-section-error {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: var(--accent);
+  line-height: 1.45;
+}
+
+.search-section-meta {
+  margin: -0.25rem 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted2);
+}
+</style>
