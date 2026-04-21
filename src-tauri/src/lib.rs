@@ -113,7 +113,18 @@ async fn fetch_album_cover(
 pub fn run() {
     raise_nofile_limit();
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    #[cfg(not(mobile))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }));
+    }
+
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
