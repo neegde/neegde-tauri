@@ -628,6 +628,8 @@ const error   = ref(null);
 let searchRequestSeq = 0;
 /** Увеличивается при каждом новом поиске; вкладки в Results сбрасываются только по нему, не при батчах SoulSeek. */
 const searchResultsEpoch = ref(0);
+/** Narrow SoulSeek track list to this username (search results unchanged). */
+const slskPeerBrowseUser = ref(null);
 
 // ── Torrent ───────────────────────────────────────────────────────────────────
 const selected      = ref(null);
@@ -652,6 +654,7 @@ function snapshotSearchForBack() {
     resultsAlbums: [...searchAlbumResults.value],
     resultsTracks: [...searchTrackResults.value],
     error: error.value,
+    slskPeerBrowseUser: slskPeerBrowseUser.value,
   };
 }
 
@@ -878,6 +881,7 @@ function finalizeCombinedSearch(seqActive, queryNorm) {
 
 async function handleSearch(query) {
   if (!query?.trim()) {
+    slskPeerBrowseUser.value = null;
     searchAlbumResults.value = [];
     searchTrackResults.value = [];
     searchRtError.value = null;
@@ -889,6 +893,10 @@ async function handleSearch(query) {
   }
   const q = query.trim();
   const qn = q.toLowerCase();
+  if (slskPeerBrowseUser.value) {
+    const pu = String(slskPeerBrowseUser.value).trim().toLowerCase();
+    if (qn !== pu) slskPeerBrowseUser.value = null;
+  }
   forwardStack.value = [];
   backStack.value    = [];
   error.value        = null;
@@ -1525,9 +1533,23 @@ function handleOpenAlbumPreview({ album, displayName }) {
 }
 
 async function handleOpenTorrentFromLike(like) {
+  if (like?.source === "soulseek" && like.slskUsername) {
+    const prevView = view.value;
+    const prevPlId = currentPlaylistId.value;
+    returnView.value = prevView;
+    forwardStack.value = [];
+    await handleNavigateSoulseekPeer(like.slskUsername);
+    if (prevView === "likes") backStack.value.push({ type: "likes" });
+    else if (prevView === "playlist" && prevPlId) {
+      backStack.value.push({ type: "playlist", playlistId: prevPlId });
+    }
+    return;
+  }
   forwardStack.value = [];
   if (selected.value) {
     backStack.value.push(snapshotTorrentForBack());
+  } else if (view.value === "playlist" && currentPlaylistId.value) {
+    backStack.value.push({ type: "playlist", playlistId: currentPlaylistId.value });
   } else {
     backStack.value.push({ type: "likes" });
   }
@@ -1540,7 +1562,7 @@ async function handleOpenTorrentFromLike(like) {
     source: like.source, seeders: "?", size: 0, category: "—", added: "—",
     fromLikes: true, artist: m ? m[1].trim() : "",
   };
-  returnView.value    = "likes";
+  returnView.value    = view.value === "playlist" ? "playlist" : "likes";
   view.value          = "search";
   selected.value      = torrent;
   torrentCover.value  = null;
@@ -1572,6 +1594,128 @@ async function handleOpenTorrentFromLike(like) {
   } finally {
     loadingFiles.value = false;
   }
+}
+
+/**
+ * Clears SoulSeek peer-only filter on search results.
+ */
+function clearSlskPeerBrowseUser() {
+  slskPeerBrowseUser.value = null;
+}
+
+/**
+ * Opens «источник» exactly like clicking the track title in the player: same payload as
+ * `handleOpenTorrentFromPlayer`, using the current раздача + optional track `origIdx`.
+ *
+ * Args:
+ *     origIdx: File `origIdx` from the track row context menu, or null.
+ */
+function handleOpenTorrentSourceFromView(origIdx) {
+  const t = selected.value;
+  if (!t) return;
+  const list = files.value ?? [];
+  const f =
+    origIdx != null ? list.find((x) => x.origIdx === origIdx) : null;
+  let albumDirPath = null;
+  if (list.length && f) {
+    const albs = detectAlbums(list);
+    const album = albs.find((a) => a.audioFiles.some((af) => af.origIdx === f.origIdx));
+    albumDirPath = album?.dirPath ?? null;
+  }
+  const payload = {
+    torrentId: t.id,
+    torrentName: t.name ?? "",
+    source: t.source,
+    magnet: torrentMagnet.value ?? "",
+    artist: t.artist ?? null,
+    seeders: t.seeders ?? null,
+    fileIdx: f?.origIdx ?? origIdx ?? 0,
+    albumDirPath,
+  };
+  if (t.source === "soulseek") {
+    payload.slskUsername = f?.slskUsername ?? t.slsk_username ?? list[0]?.slskUsername ?? null;
+    payload.slskFilepath = f?.slskFilepath ?? null;
+  }
+  handleOpenTorrentFromPlayer(payload);
+}
+
+/**
+ * Builds the same payload as the player emits for `open-torrent` (library / playlist rows).
+ *
+ * Args:
+ *     row: Liked track or playlist track entry.
+ *
+ * Returns:
+ *     Object for `handleOpenTorrentFromPlayer`, or null if not openable.
+ */
+function libraryRowToPlayerOpenPayload(row) {
+  if (!row || (!row.torrentId && !row.magnet)) return null;
+  const o = {
+    torrentId: row.torrentId,
+    torrentName: row.torrentName ?? "",
+    source: row.source ?? "rutracker",
+    magnet: row.magnet ?? "",
+    artist: row.artist ?? null,
+    seeders: row.seeders ?? null,
+    fileIdx: row.fileIdx ?? 0,
+    albumDirPath: row.albumDirPath ?? null,
+  };
+  if (row.source === "soulseek" && row.slskUsername) {
+    o.slskUsername = row.slskUsername;
+    o.slskFilepath = row.slskFilepath ?? null;
+  }
+  return o;
+}
+
+/**
+ * SoulSeek search row: same as player «open album» for that result.
+ *
+ * Args:
+ *     track: Grouped SoulSeek row with `id` and `slsk_username`.
+ */
+function handleOpenSoulseekSourceFromResults(track) {
+  const u = track?.slsk_username;
+  if (!u || !track?.id) return;
+  handleOpenTorrentFromPlayer({
+    torrentId: track.id,
+    torrentName: track.name ?? "",
+    source: "soulseek",
+    magnet: "",
+    fileIdx: 0,
+    albumDirPath: null,
+    slskUsername: u,
+    slskFilepath: track.slsk_filepath ?? null,
+  });
+}
+
+/**
+ * SoulSeek: jump to search filtered to this user (full search by username).
+ *
+ * Args:
+ *     username: Peer login.
+ */
+async function handleNavigateSoulseekPeer(username) {
+  const u = String(username ?? "").trim();
+  if (!u) return;
+  slskPeerBrowseUser.value = u;
+  searchQuery.value = u;
+  view.value = "search";
+  selected.value = null;
+  files.value = [];
+  torrentMagnet.value = "";
+  torrentCover.value = null;
+  await handleSearch(u);
+}
+
+/**
+ * Opens source for a liked or playlist track — same navigation as the player title click.
+ *
+ * Args:
+ *     row: Like object or playlist track row.
+ */
+function handleOpenTrackSource(row) {
+  const p = libraryRowToPlayerOpenPayload(row);
+  if (p) handleOpenTorrentFromPlayer(p);
 }
 
 function handlePlayFromLike(like) {
@@ -1723,6 +1867,10 @@ function _applyAlbumScopeForTrack(fileIdx, albumDirPath) {
 
 function handleOpenTorrentFromPlayer(track) {
   if (!track?.torrentId && !track?.magnet) return;
+  if (track.source === "soulseek" && track.slskUsername) {
+    void handleNavigateSoulseekPeer(track.slskUsername);
+    return;
+  }
   if (selected.value?.id === track.torrentId) {
     view.value = "search";
     if (!torrentFilesBeforeAlbumPreview.value) {
@@ -1970,6 +2118,7 @@ function handleBack() {
       }
       searchAlbumResults.value = albums;
       searchTrackResults.value = tracks;
+      slskPeerBrowseUser.value = entry.slskPeerBrowseUser ?? null;
       error.value = entry.error;
       selected.value = null;
       files.value = [];
@@ -1987,6 +2136,16 @@ function handleBack() {
       view.value = "search";
     } else if (entry.type === "likes") {
       view.value = "likes";
+      returnView.value = "search";
+      selected.value = null;
+      files.value = [];
+      torrentMagnet.value = "";
+      torrentCover.value = null;
+      torrentFilesBeforeAlbumPreview.value = null;
+      torrentSelectedBeforeAlbumPreview.value = null;
+    } else if (entry.type === "playlist" && entry.playlistId) {
+      currentPlaylistId.value = entry.playlistId;
+      view.value = "playlist";
       returnView.value = "search";
       selected.value = null;
       files.value = [];
@@ -2023,6 +2182,9 @@ function handleBack() {
   torrentSelectedBeforeAlbumPreview.value = null;
   if (returnView.value === "likes") {
     view.value = "likes";
+    returnView.value = "search";
+  } else if (returnView.value === "playlist") {
+    view.value = "playlist";
     returnView.value = "search";
   }
 }
@@ -2276,6 +2438,7 @@ function onMouseSideButtonUp(e) {
             @play="handlePlayFromLike"
             @play-album="handlePlayAlbumFromLike"
             @open-torrent="handleOpenTorrentFromLike"
+            @open-track-source="handleOpenTrackSource"
             @download="handleDownloadTrackFromLike"
             @add-to-queue="handleAddToQueueFromLike"
           />
@@ -2311,6 +2474,7 @@ function onMouseSideButtonUp(e) {
           :now-playing="nowPlayingMatchForLikes"
           :player-playing="playerPlaying"
           @play="handlePlayPlaylist"
+          @open-track-source="handleOpenTrackSource"
           @remove-track="handleRemoveTrackFromPlaylist(currentPlaylistId, $event)"
           @delete="handleDeletePlaylist(currentPlaylistId)"
           @rename="handleRenamePlaylist(currentPlaylistId, $event)"
@@ -2370,6 +2534,7 @@ function onMouseSideButtonUp(e) {
             :search-epoch="searchResultsEpoch"
             :album-results="searchAlbumResults"
             :track-results="searchTrackResults"
+            :slsk-peer-filter="slskPeerBrowseUser"
             :loading-albums="searchLoadingRt"
             :loading-tracks="searchLoadingSlsk"
             :rt-logged-in="rtLoggedIn"
@@ -2380,6 +2545,8 @@ function onMouseSideButtonUp(e) {
             @select="handleSelect"
             @play-slsk-track="handlePlaySlskTrack"
             @like-slsk-track="handleLikeSlskTrack"
+            @open-slsk-source="handleOpenSoulseekSourceFromResults"
+            @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
           />
 
           <TorrentView
@@ -2402,6 +2569,7 @@ function onMouseSideButtonUp(e) {
             @open-album-preview="handleOpenAlbumPreview"
             @add-to-playlist="handleShowAddToPlaylist"
             @add-to-queue="handleAddToQueueFromTorrent"
+            @open-torrent-source="handleOpenTorrentSourceFromView"
           />
         </template>
 

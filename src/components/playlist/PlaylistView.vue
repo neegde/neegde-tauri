@@ -17,6 +17,7 @@ const emit = defineEmits([
   "delete",
   "rename",         // newName
   "add-to-queue",
+  "open-track-source",
 ]);
 
 // ── Rename ────────────────────────────────────────────────────────────────────
@@ -63,11 +64,26 @@ function openTrackCtx(e, track) {
   ctxOpen.value = true;
 }
 
+const playlistCtxActions = computed(() => {
+  if (!ctxTrack.value) return [];
+  const t = ctxTrack.value;
+  const srcLabel =
+    t.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
+  return [
+    { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "divider" },
+    { id: "source", label: srcLabel, icon: "source" },
+  ];
+});
+
 /**
  * @returns {void}
  */
-function onCtxAddToQueue() {
-  if (ctxTrack.value) emit("add-to-queue", ctxTrack.value);
+function onCtxAction(id) {
+  const t = ctxTrack.value;
+  if (!t) return;
+  if (id === "queue") emit("add-to-queue", t);
+  if (id === "source") emit("open-track-source", t);
 }
 </script>
 
@@ -216,7 +232,8 @@ function onCtxAddToQueue() {
       v-model:open="ctxOpen"
       :x="ctxX"
       :y="ctxY"
-      @action="onCtxAddToQueue"
+      :actions="playlistCtxActions"
+      @action="onCtxAction"
     />
   </div>
 </template>

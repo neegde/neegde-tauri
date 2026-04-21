@@ -8,7 +8,7 @@ import { computed, watch, onUnmounted } from "vue";
  *   open    — v-model boolean
  *   x, y    — screen coordinates (clientX / clientY)
  *   actions — array of { id, label, icon?, disabled? }
- *             icon: 'play' | 'download' | 'heart' | 'queue' | 'copy'
+ *             icon: 'play' | 'download' | 'heart' | 'queue' | 'copy' | 'playlist' | 'source'
  *
  * Emits:
  *   update:open — to close (v-model)
@@ -96,6 +96,8 @@ onUnmounted(() => {
           <svg v-else-if="action.icon === 'copy'" class="track-ctx-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           <!-- playlist -->
           <svg v-else-if="action.icon === 'playlist'" class="track-ctx-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <!-- source / open in app -->
+          <svg v-else-if="action.icon === 'source'" class="track-ctx-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           {{ action.label }}
         </button>
       </template>

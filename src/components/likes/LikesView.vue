@@ -19,7 +19,15 @@ const props = defineProps({
   playerPlaying: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(["toggle-like", "play", "play-album", "open-torrent", "download", "add-to-queue"]);
+const emit = defineEmits([
+  "toggle-like",
+  "play",
+  "play-album",
+  "open-torrent",
+  "open-track-source",
+  "download",
+  "add-to-queue",
+]);
 
 const ctxOpen = ref(false);
 const ctxX = ref(0);
@@ -43,9 +51,24 @@ function openTrackCtx(e, like) {
 /**
  * @returns {void}
  */
-function onCtxAddToQueue() {
-  if (ctxLike.value) emit("add-to-queue", ctxLike.value);
+function onCtxAction(id) {
+  const like = ctxLike.value;
+  if (!like) return;
+  if (id === "queue") emit("add-to-queue", like);
+  if (id === "source") emit("open-track-source", like);
 }
+
+const likesCtxActions = computed(() => {
+  const like = ctxLike.value;
+  if (!like) return [];
+  const srcLabel =
+    like.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
+  return [
+    { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "divider" },
+    { id: "source", label: srcLabel, icon: "source" },
+  ];
+});
 
 const tab = ref("tracks");
 
@@ -346,7 +369,8 @@ function likeTrackTooltip(like) {
       v-model:open="ctxOpen"
       :x="ctxX"
       :y="ctxY"
-      @action="onCtxAddToQueue"
+      :actions="likesCtxActions"
+      @action="onCtxAction"
     />
   </div>
 </template>

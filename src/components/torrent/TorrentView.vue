@@ -56,6 +56,7 @@ const emit = defineEmits([
   "open-album-preview",
   "add-to-playlist",
   "add-to-queue",
+  "open-torrent-source",
 ]);
 
 const ctxOpen = ref(false);
@@ -79,16 +80,28 @@ function openTrackCtx(e, origIdx) {
 /**
  * @returns {void}
  */
-const TORRENT_CTX_ACTIONS = [
-  { id: "play",     label: "Слушать",    icon: "play"     },
-  { id: "download", label: "Скачать",    icon: "download" },
-  { id: "divider" },
-  { id: "like",     label: "В избранное", icon: "heart"   },
-  { id: "queue",    label: "В очередь",  icon: "queue"    },
-  { id: "playlist", label: "В плейлист", icon: "playlist" },
-];
+const torrentCtxActions = computed(() => {
+  const srcLabel =
+    props.torrent?.source === "soulseek"
+      ? "Источник (SoulSeek)"
+      : "Источник (Torrent)";
+  return [
+    { id: "source", label: srcLabel, icon: "source" },
+    { id: "divider" },
+    { id: "play", label: "Слушать", icon: "play" },
+    { id: "download", label: "Скачать", icon: "download" },
+    { id: "divider" },
+    { id: "like", label: "В избранное", icon: "heart" },
+    { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
+  ];
+});
 
 function onCtxAction(id) {
+  if (id === "source") {
+    emit("open-torrent-source", ctxOrigIdx.value);
+    return;
+  }
   const origIdx = ctxOrigIdx.value;
   if (origIdx == null) return;
   if (id === "play")     emit("play", origIdx);
@@ -253,7 +266,7 @@ function makePlaylistTrack(torrent, magnet, f) {
       break;
     }
   }
-  return {
+  const row = {
     magnet,
     fileIdx: f.origIdx,
     fileName: f.path,
@@ -263,6 +276,12 @@ function makePlaylistTrack(torrent, magnet, f) {
     artist: torrent?.artist ?? null,
     coverFileIdx,
   };
+  if (torrent?.source === "soulseek") {
+    row.slskUsername = f.slskUsername ?? torrent.slsk_username ?? null;
+    row.slskFilepath = f.slskFilepath ?? f.path ?? null;
+    row.slskFilesize = f.slskFilesize ?? f.size ?? 0;
+  }
+  return row;
 }
 
 function makeAlbumLike(torrent, magnet, album, displayName) {
@@ -818,7 +837,7 @@ watch(
       v-model:open="ctxOpen"
       :x="ctxX"
       :y="ctxY"
-      :actions="TORRENT_CTX_ACTIONS"
+      :actions="torrentCtxActions"
       @action="onCtxAction"
     />
   </div>

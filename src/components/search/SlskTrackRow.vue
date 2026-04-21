@@ -12,7 +12,7 @@ const props = defineProps({
   enriched: { type: Object, default: null }, // { artist, title, coverUrl? }
 });
 
-const emit = defineEmits(["play", "download", "like"]);
+const emit = defineEmits(["play", "download", "like", "open-source"]);
 
 // ── Context menu ─────────────────────────────────────────────────────────────
 const ctxOpen = ref(false);
@@ -20,6 +20,8 @@ const ctxX    = ref(0);
 const ctxY    = ref(0);
 
 const SLSK_CTX_ACTIONS = [
+  { id: "source",   label: "Источник (SoulSeek)", icon: "source" },
+  { id: "divider" },
   { id: "play",     label: "Слушать",     icon: "play"     },
   { id: "download", label: "Скачать",     icon: "download", disabled: true },
   { id: "divider" },
@@ -33,6 +35,7 @@ function onContextMenu(e) {
 }
 
 function onCtxAction(id) {
+  if (id === "source")   emit("open-source", props.track);
   if (id === "play")     emit("play",     props.track);
   if (id === "download") emit("download", props.track);
   if (id === "like")     emit("like",     props.track);

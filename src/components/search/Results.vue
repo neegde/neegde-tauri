@@ -21,10 +21,19 @@ const props = defineProps({
   slskConnected: { type: Boolean, default: false },
   rtError: { type: String, default: null },
   slskError: { type: String, default: null },
+  /** When set, only tracks from this SoulSeek username are listed (search still network-wide). */
+  slskPeerFilter: { type: String, default: null },
   selectedId: { default: null },
 });
 
-const emit = defineEmits(["select", "play-slsk-track", "download-slsk-track", "like-slsk-track"]);
+const emit = defineEmits([
+  "select",
+  "play-slsk-track",
+  "download-slsk-track",
+  "like-slsk-track",
+  "open-slsk-source",
+  "clear-slsk-peer-filter",
+]);
 
 const INITIAL_BATCH = 40;
 const BATCH_INCREMENT = 30;
@@ -36,7 +45,28 @@ const hiddenAlbumCount = computed(
   () => (props.albumResults?.length ?? 0) - albumPlayable.value.length,
 );
 
-const trackPlayable = computed(() => props.trackResults ?? []);
+const trackResultsRaw = computed(() => props.trackResults ?? []);
+
+ /**
+  * SoulSeek rows for the tracks tab; optionally narrowed to one username.
+  *
+  * Returns:
+  *     Filtered track rows.
+  */
+const trackPlayable = computed(() => {
+  const raw = trackResultsRaw.value;
+  const f = props.slskPeerFilter?.trim();
+  if (!f) return raw;
+  const fl = f.toLowerCase();
+  return raw.filter((t) => String(t.slsk_username ?? "").toLowerCase() === fl);
+});
+
+const slskFilterEmptyHint = computed(
+  () =>
+    Boolean(props.slskPeerFilter?.trim()) &&
+    !trackPlayable.value.length &&
+    trackResultsRaw.value.length > 0,
+);
 
 const visibleAlbumCount = ref(INITIAL_BATCH);
 const visibleTrackCount = ref(INITIAL_BATCH);
@@ -136,6 +166,13 @@ watch(
 );
 
 watch(activeTab, () => nextTick(setupObservers));
+
+watch(
+  () => props.slskPeerFilter,
+  (v) => {
+    if (v?.trim()) activeTab.value = "tracks";
+  },
+);
 
 // ── SoulSeek metadata enrichment ─────────────────────────────────────────────
 // slskMeta / coverGeneration / coverTimer live in slskMetaStore.js (module-level)
@@ -362,11 +399,27 @@ watch(
       </p>
       <p v-else-if="slskError" class="search-section-error">{{ slskError }}</p>
       <p
-        v-else-if="slskConnected && !loadingTracks && !trackPlayable.length"
+        v-else-if="slskConnected && !loadingTracks && !trackPlayable.length && !slskFilterEmptyHint"
         class="search-section-hint"
       >
         По SoulSeek ничего не найдено.
       </p>
+      <p v-else-if="slskFilterEmptyHint" class="search-section-hint">
+        В этой выдаче нет файлов от пользователя <strong>{{ slskPeerFilter }}</strong>.
+        <button type="button" class="search-peer-filter-clear" @click="emit('clear-slsk-peer-filter')">
+          Показать все треки
+        </button>
+      </p>
+
+      <div
+        v-if="slskPeerFilter?.trim() && trackPlayable.length"
+        class="search-peer-filter-banner"
+      >
+        <span>Файлы пользователя {{ slskPeerFilter }}</span>
+        <button type="button" class="search-peer-filter-clear" @click="emit('clear-slsk-peer-filter')">
+          Все треки выдачи
+        </button>
+      </div>
 
       <div v-if="trackPlayable.length" class="slsk-tracklist">
         <SlskTrackRow
@@ -377,6 +430,7 @@ watch(
           @play="emit('play-slsk-track', $event)"
           @download="emit('download-slsk-track', $event)"
           @like="emit('like-slsk-track', $event)"
+          @open-source="emit('open-slsk-source', $event)"
         />
       </div>
       <div ref="sentinelTrack" />
@@ -462,5 +516,41 @@ watch(
   margin: -0.25rem 0 0.75rem;
   font-size: 0.8rem;
   color: var(--muted2);
+}
+
+.search-peer-filter-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
+}
+
+.search-peer-filter-clear {
+  margin: 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.search-peer-filter-clear:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme="light"] .search-peer-filter-clear {
+  background: rgba(0, 0, 0, 0.06);
 }
 </style>

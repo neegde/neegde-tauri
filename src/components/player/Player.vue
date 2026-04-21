@@ -129,7 +129,7 @@ function onArtistClick() {
 function onTrackClick() {
   const t = props.track;
   if (!t) return;
-  emit("open-torrent", {
+  const payload = {
     torrentId: t.torrentId,
     torrentName: t.torrentName,
     source: t.source,
@@ -138,7 +138,12 @@ function onTrackClick() {
     seeders: t.seeders ?? null,
     fileIdx: t.fileIdx,
     albumDirPath: t.albumDirPath ?? null,
-  });
+  };
+  if (t.source === "soulseek" && t.slskUsername) {
+    payload.slskUsername = t.slskUsername;
+    payload.slskFilepath = t.slskFilepath ?? null;
+  }
+  emit("open-torrent", payload);
 }
 
 function loadSavedVolume() {

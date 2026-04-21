@@ -103,7 +103,7 @@ watch(lines, () => {
   display: flex;
   flex-direction: column;
   font-size: 12px;
-  background: var(--bg-elevated, #1a1a1e);
+  background: var(--surface, var(--bg));
 }
 
 .app-debug-console--collapsed {
@@ -116,17 +116,17 @@ watch(lines, () => {
   gap: 10px;
   flex-wrap: wrap;
   padding: 6px 10px;
-  background: var(--bg-muted, #222);
-  border-bottom: 1px solid var(--border, #333);
+  background: var(--surface-h, var(--surface));
+  border-bottom: 1px solid var(--border);
 }
 
 .app-debug-title {
   font-weight: 600;
-  color: var(--text, #eee);
+  color: var(--text);
 }
 
 .app-debug-count {
-  color: var(--text-muted, #888);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -141,9 +141,9 @@ watch(lines, () => {
   padding: 4px 10px;
   font-size: 11px;
   border-radius: 6px;
-  border: 1px solid var(--border, #444);
-  background: var(--bg, #18181c);
-  color: var(--text, #ddd);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -152,8 +152,8 @@ watch(lines, () => {
 }
 
 .app-debug-btn--danger {
-  border-color: #633;
-  color: #faa;
+  border-color: var(--red);
+  color: var(--red);
 }
 
 .app-debug-btn--collapse {
@@ -174,6 +174,6 @@ watch(lines, () => {
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   line-height: 1.45;
-  color: var(--text, #e8e8ec);
+  color: var(--text);
 }
 </style>
