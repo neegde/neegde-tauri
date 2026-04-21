@@ -1,8 +1,8 @@
 # Где слушаешь? Нигде.
 
-Десктопный музыкальный плеер, который стримит аудио напрямую из торрент-роёв. Не скачивает — играет. Никаких подписок, никаких серверов. Только BitTorrent и немного наглости.
+Десктопный музыкальный плеер, который стримит аудио из торрент-роев и по желанию из сети **SoulSeek** (P2P). По умолчанию не кладёт альбом целиком на диск — играет по мере загрузки. Никаких подписок и своих серверов: BitTorrent, SoulSeek и немного наглости.
 
-Поиск через Rutracker. Стриминг через [vozduxan](https://github.com/neegde/vozduxan).
+Поиск — **RuTracker** и/или **SoulSeek** в одной выдаче с вкладками. Поток из торрентов гонит [vozduxan](https://github.com/neegde/vozduxan) (libtorrent); SoulSeek идёт отдельным нативным слоем.
 
 <p align="center"><img src="images/1.png" alt="Поиск" width="720" /></p>
 <p align="center"><img src="images/2.png" alt="Раздача" width="720" /></p>
@@ -15,22 +15,22 @@
 
 ## Возможности
 
-### Стриминг без скачивания
-Треки воспроизводятся прямо из торрент-роя по мере загрузки кусков. Не нужно ждать пока скачается — плеер получает данные в реальном времени через локальный HTTP-сервер с поддержкой Range-запросов, поэтому перемотка работает как обычно.
+### Стриминг без полной загрузки
+Треки из **торрентов** идут прямо из роя по мере загрузки кусков: локальный HTTP с Range-запросами, нормальная перемотка. **SoulSeek** стримит выбранный файл с чужого клиента по протоколу сети — тоже без скачивания «всего альбома» ради одного трека.
 
-### Hover-prefetch
-Когда наводишь курсор на трек, приложение начинает готовить стрим в фоне — ещё до клика. Когда нажимаешь play, буфер уже есть. Следующие два трека в очереди тоже пребуферируются заранее. Переключение между треками — мгновенное.
+### Префетч очереди
+Пока играет текущий трек, плеер **подогревает следующий** (и ещё один за ним), чтобы переключения в очереди были быстрее. Отдельно от этого в интерфейсе показывается статистика буфера/скорости там, где это уместно для торрент-стрима.
 
 ### Поиск
-- Поиск по Rutracker с кэшем последних 30 запросов
-- Авторизация через логин/пароль, сессия сохраняется между запусками
-- Поддержка зеркал (rutracker.net, .org, .nl, .cr, .lib, maintracker.org) — авто или вручную
-- HTTP-прокси (два встроенных пресета или свой)
+- **RuTracker**: поиск с кэшем последних 30 запросов; авторизация логин/пароль, сессия между запусками; зеркала (rutracker.net, .org, .nl, .cr, .lib, maintracker.org) — авто или вручную; HTTP-прокси (два пресета или свой).
+- **SoulSeek** (включается в настройках): отдельная P2P-сеть, не RuTracker — свой логин/пароль в настройках; поиск по шаре, группировка результатов, обложки где есть; лайки и очередь как у торрент-треков, со своими метаданными.
+- Если включены **оба источника**, общая выдача с **вкладками** (в т.ч. торренты без звука можно отфильтровать).
 
 ### Плеер
 - Очередь треков с восстановлением позиции после перезапуска
 - Перемотка, громкость, предыдущий/следующий
 - 10-полосный графический эквалайзер (32 Гц — 16 кГц, ±12 дБ) с 10 пресетами и своими настройками
+- Опциональные **визуализации** (в том числе в **отдельном окне**, если хочется)
 - Media Session API — управление через системные медиа-кнопки и экран блокировки
 - Discord Rich Presence — показывает что играет
 - Кнопка лайка прямо в плеере
@@ -44,8 +44,8 @@
 ### Библиотека
 Три раздела: Треки, Альбомы, Раздачи. Лайкнутое сохраняется локально — никаких аккаунтов.
 
-### Экспорт
-Скачать отдельный трек, альбом или всё из раздачи в выбранную папку — с прогрессом и сохранением структуры папок.
+### Экспорт и загрузка на диск
+Скачать отдельный трек, альбом или всё из **торрент-раздачи** в выбранную папку — с прогрессом и сохранением структуры папок. Отдельно можно **выгрузить плейлист** или треки из **SoulSeek** на диск, если нужен офлайн-файл, а не стрим.
 
 ### Настройки и кэш
 - Максимальный размер кэша (50–8192 МиБ) и TTL (5 мин–14 дней)
@@ -53,14 +53,15 @@
 - Тёмная / светлая / системная тема
 - Дебаг-консоль с фильтрами и экспортом лога
 - Диагностика: память, пути, размеры кэшей, активные стримы
+- По желанию: включаемые **достижения** и сопутствующие пасхалки в интерфейсе
 
 ---
 
 ## Установка
 
-Скачай последний релиз под свою платформу на [странице релизов](https://github.com/neegde/neegde-tauri/releases).
+Скачай последний билд под свою платформу на [странице релизов](https://github.com/neegde/neegde-tauri/releases).
 
-Для работы нужен аккаунт на Rutracker.
+Для поиска и скачивания с **RuTracker** нужен аккаунт на форуме. **SoulSeek** — отдельная регистрация в той сети; вводишь логин и пароль в настройках приложения, если включаешь этот источник.
 
 ---
 
@@ -68,8 +69,7 @@
 
 Баги и предложения — в [Issues](https://github.com/neegde/neegde-tauri/issues) или в [тгк](https://t.me/youthcode).
 
----
----
+
 
 ## For developers
 
@@ -88,20 +88,23 @@ No UI frameworks — all styles are hand-written CSS with dark/light theme via C
 
 ```
 src/
-  App.vue                   top-level: all view state, queue, hover-prefetch coordination
+  App.vue                   top-level: view state, queue, stream coordination
   style.css                 CSS variables (dark/light theme)
   components/
     player/Player.vue       audio element, EQ graph, media session, stream status popup
     search/                 SearchBar, Results grid, AlbumCard
-    torrent/TorrentView.vue tracklist, album grouping, hover-prefetch event emitter
+    torrent/TorrentView.vue tracklist, album grouping
     likes/LikesView.vue     liked tracks / albums / torrents tabs
     settings/SettingsView.vue
     shell/                  NavArrows, AppAuthPanel, DownloadProgressOverlay
     shared/                 CoverThumb, CoverLightbox, PlayingIndicator
     debug/AppDebugConsole.vue
   torrent/
-    api.js                  streamUrl(), hoverStreamUrl(), prefetchNextInQueue()
+    api.js                  streamUrl() — торренты и SoulSeek; prefetchNextInQueue()
     torrentSession.js       Tauri invoke wrappers, vozduxanNotifyPosition()
+  soulseek/
+    api.js                  поиск, prepare/release stream, экспорт на диск
+    coverCache.js, slskMetaStore.js
   audio/
     equalizerGraph.js       Web Audio API: 10 BiquadFilterNode chain
     equalizerState.js       gain state + localStorage persistence
@@ -112,7 +115,8 @@ src/
 src-tauri/src/
   lib.rs                    Tauri setup, managed state, invoke_handler
   vozduxan_ffi.rs           raw unsafe C bindings to vozduxan
-  vozduxan_stream.rs        safe Rust wrapper + all streaming Tauri commands
+  vozduxan_stream.rs        safe Rust wrapper + торрент-стриминг Tauri commands
+  soulseek/                 логин, поиск, стрим, обложки, экспорт файла
   rutracker/                Rust HTTP login (CP1251), search, torrent topic parser
   torrent_stream/           legacy full-download/export path (librqbit)
     export.rs               torrent_export_files + progress events
@@ -124,21 +128,13 @@ src-tauri/src/
 
 ### Streaming architecture
 
-All playback goes through **vozduxan** (C++ + libtorrent). The legacy `torrent_stream` module is kept only for full-download export.
+Воспроизведение из **торрентов** идёт через **vozduxan** (C++ + libtorrent). Треки из **SoulSeek** стримятся отдельным Rust-модулем `soulseek/` (не libtorrent). Полный **экспорт торрентов на диск** по-прежнему через `torrent_stream` и **librqbit**.
 
-vozduxan lives as a git submodule at `vozduxan/` and is compiled by the `cmake` crate in `build.rs`. No pre-built binaries — everything builds from source.
+Submodule **vozduxan** лежит в `vozduxan/`, собирается `cmake`-крейтом в `build.rs`. Готовых бинарников нет — всё из исходников.
 
-**Token buckets** in `vozduxan_stream.rs`:
+**Токены стрима** в `vozduxan_stream.rs`: `current_token` (играет сейчас), `prefetch_token` (следующий в очереди), `warm_prefetch_token` (прогрев через один трек — не вытесняет настоящий prefetch).
 
-| Bucket | Purpose | Releases current stream? |
-|--------|---------|--------------------------|
-| `current_token` | active playback | yes — replaces old on new track |
-| `prefetch_token` | next-queue look-ahead | no |
-| `hover_token` | hover-prefetch | never — released on mouse-leave |
-
-Hover path: `torrent_hover_prepare_stream` → `hover_token`.  
-On click: `torrent_hover_activate` promotes `hover_token → current_token`.  
-On mouse-leave: `torrent_hover_release_stream`.
+Плеер зовёт `prefetchNextInQueue()` из `torrent/api.js`, что мапится на `torrent_prefetch_next_track` в Rust.
 
 ### Running locally
 
@@ -160,23 +156,15 @@ cargo tauri dev
 
 Fast Rust-only type check: `cargo check`
 
-### Tauri commands (vozduxan path)
+### Tauri commands (часть; см. `lib.rs`)
 
-```
-torrent_prepare_stream          prepare + store in current_token
-torrent_release_stream          release by token string
-torrent_dispose_preview         release all tokens (cache purge)
-torrent_prepare_cancel          set prepare_cancelled flag
-vozduxan_notify_position        forward byte offset to C++ priority worker
-torrent_prefetch_next_track     prepare + store in prefetch_token
-torrent_hover_prepare_stream    prepare + store in hover_token
-torrent_hover_release_stream    release hover_token
-torrent_hover_activate          promote hover_token → current_token
-```
+**Торренты (vozduxan):** `torrent_prepare_stream`, `torrent_magnet_list_files`, `torrent_prefetch_next_track`, `torrent_prepare_cancel`, `torrent_dispose_preview`, `torrent_release_stream`, `vozduxan_notify_position`, `vozduxan_stream_stats`.
+
+**SoulSeek:** `soulseek_login`, `soulseek_logout`, `soulseek_status`, `soulseek_search`, `soulseek_prepare_stream`, `soulseek_release_stream`, `soulseek_cover_preview`, сохранение учётных данных, `soulseek_export_file` / `soulseek_export_cancel`.
+
+**Экспорт торрентов (librqbit):** `torrent_export_files`, `torrent_export_cancel`.
 
 ### Key invariants
 
-- Never call `torrent_prepare_stream` for hover-prefetch — it stores in `current_token` and gets killed by the next track
-- Always call `torrent_hover_activate` before assigning the hover URL to `<audio src>`
-- `VozduxanStreamState::new()` must receive the same `Arc<AppDebugLog>` as `TorrentStreamState`
-- `cargo:rerun-if-changed` in `build.rs` enumerates individual C++ source files — directory mtime is not updated on macOS when a file inside changes
+- Общий журнал отладки живёт в `TorrentStreamState`; `VozduxanStreamState::new` получает тот же `Arc<AppDebugLog>` через `ts.debug_log()` (см. комментарий в `lib.rs`)
+- `cargo:rerun-if-changed` в `build.rs` перечисляет отдельные файлы C++ в vozduxan — mtime каталога на macOS при правке файла внутри не обновляется
