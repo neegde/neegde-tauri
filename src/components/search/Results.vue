@@ -117,12 +117,54 @@ function parseSlskFilename(track) {
   return { artist: "", title: base };
 }
 
-/** Parse filenames and populate slskMeta synchronously — no API, no VPN needed. */
+/**
+ * Normalized file name for matching duplicate peers (same `track.name`, different folders).
+ *
+ * Args:
+ *     name: Row `name` (basename with extension).
+ *
+ * Returns:
+ *     Lowercase trimmed string, or "".
+ */
+function slskBasenameMetaKey(name) {
+  return String(name ?? "").trim().toLowerCase();
+}
+
+/**
+ * Parse filenames and populate slskMeta synchronously — no API, no VPN needed.
+ * Drops slskMeta entries not in this result set (avoids stale rows from a prior search).
+ * Second pass copies artist/title from another row with the same basename when folder-based
+ * parse failed for a peer (same file name, different `slsk_folder` layout).
+ *
+ * Args:
+ *     tracks: Current SoulSeek result rows after grouping.
+ *
+ * Returns:
+ *     void
+ */
 function applyFilenameMetadata(tracks) {
+  const incomingIds = new Set(tracks.map((t) => t.id));
+  for (const id of [...slskMeta.keys()]) {
+    if (!incomingIds.has(id)) slskMeta.delete(id);
+  }
   for (const track of tracks) {
     if (slskMeta.has(track.id)) continue;
     const parsed = parseSlskFilename(track);
     if (parsed.artist && parsed.title) slskMeta.set(track.id, parsed);
+  }
+  const metaByBasename = new Map();
+  for (const track of tracks) {
+    const meta = slskMeta.get(track.id);
+    if (!meta?.artist || !meta?.title) continue;
+    const k = slskBasenameMetaKey(track.name);
+    if (k && !metaByBasename.has(k)) metaByBasename.set(k, meta);
+  }
+  for (const track of tracks) {
+    if (slskMeta.has(track.id)) continue;
+    const donor = metaByBasename.get(slskBasenameMetaKey(track.name));
+    if (donor?.artist && donor?.title) {
+      slskMeta.set(track.id, { artist: donor.artist, title: donor.title });
+    }
   }
 }
 
