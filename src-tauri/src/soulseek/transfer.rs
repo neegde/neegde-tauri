@@ -53,8 +53,7 @@ pub async fn download_and_stream(
     {
         Ok(h) => Ok(h),
         Err(e_modern) => {
-            eprintln!("[soulseek] modern handshake failed: {e_modern}");
-            eprintln!("[soulseek] retrying with legacy TransferRequest (direction=download)…");
+            session.slog(format!("modern handshake failed: {e_modern}, retrying legacy"));
             download_legacy_transfer_request(session, &username, &filepath, filesize, prepare_token).await
         }
     }
@@ -92,7 +91,7 @@ pub async fn download_cover_preview(
     {
         Ok(b) => Ok(b),
         Err(e) => {
-            eprintln!("[soulseek] cover modern failed: {e}");
+            session.slog(format!("cover modern failed: {e}, retrying legacy"));
             download_legacy_cover(
                 session,
                 &username,
@@ -139,7 +138,7 @@ async fn download_modern_cover(
             if skip_peer_init > 32 {
                 return Err("Too many PeerInit frames after QueueUpload".to_string());
             }
-            eprintln!("[soulseek] P-conn: skipped peer PeerInit");
+            // skip PeerInit, wait for next message
             continue;
         }
         if raw.len() < 4 {
@@ -151,9 +150,8 @@ async fn download_modern_cover(
             44 => {
                 let mut b = super::proto::Buf::new(&raw);
                 let _c = b.u32();
-                let fname = b.str().unwrap_or_default();
-                let place = b.u32().unwrap_or(0);
-                eprintln!("[soulseek] P-conn: PlaceInQueueResponse file={fname:?} place={place}");
+                let _fname = b.str().unwrap_or_default();
+                let _place = b.u32().unwrap_or(0);
                 continue;
             }
             50 => {
@@ -179,7 +177,7 @@ async fn download_modern_cover(
                 }
                 let sz = b.u64().unwrap_or(0);
                 let final_sz = if sz > 0 { sz } else { filesize };
-                eprintln!("[soulseek] P-conn: TransferRequest upload token={tr_token} size={final_sz}");
+                session.slog(format!("TransferRequest upload token={tr_token} size={final_sz}"));
                 break (tr_token, final_sz);
             }
             41 => {
@@ -188,11 +186,7 @@ async fn download_modern_cover(
                         .to_string(),
                 );
             }
-            other => {
-                eprintln!(
-                    "[soulseek] P-conn: ignoring peer message code={other} (len={})",
-                    raw.len()
-                );
+            _other => {
                 continue;
             }
         }
@@ -210,7 +204,7 @@ async fn download_modern_cover(
     p_wh.flush().await.ok();
     drop(p_wh);
 
-    eprintln!("[soulseek] TransferResponse sent, waiting for F connection (token={peer_xfer_token})…");
+    session.slog(format!("TransferResponse sent, waiting for F connection (token={peer_xfer_token})…"));
 
     run_cover_memory_pipeline(
         session,
@@ -265,7 +259,7 @@ async fn download_legacy_cover(
                 session.unregister_f_waiter(prepare_token);
                 return Err("Too many PeerInit frames before TransferResponse".to_string());
             }
-            eprintln!("[soulseek] P-conn: skipped peer PeerInit (handshake)");
+            // skip PeerInit
             continue;
         }
         if raw.len() >= 4 {
@@ -297,7 +291,7 @@ async fn download_legacy_cover(
     let actual_size = rb.u64().unwrap_or(filesize);
     let final_size = if actual_size > 0 { actual_size } else { filesize };
 
-    eprintln!("[soulseek] TransferResponse OK (legacy), size={final_size}, waiting for F connection…");
+    session.slog(format!("TransferResponse OK (legacy), size={final_size}, waiting for F connection…"));
 
     run_cover_memory_pipeline(
         session,
@@ -344,7 +338,7 @@ async fn download_modern_queue_upload(
             if skip_peer_init > 32 {
                 return Err("Too many PeerInit frames after QueueUpload".to_string());
             }
-            eprintln!("[soulseek] P-conn: skipped peer PeerInit");
+            // skip PeerInit, wait for next message
             continue;
         }
         if raw.len() < 4 {
@@ -356,9 +350,8 @@ async fn download_modern_queue_upload(
             44 => {
                 let mut b = super::proto::Buf::new(&raw);
                 let _c = b.u32();
-                let fname = b.str().unwrap_or_default();
-                let place = b.u32().unwrap_or(0);
-                eprintln!("[soulseek] P-conn: PlaceInQueueResponse file={fname:?} place={place}");
+                let _fname = b.str().unwrap_or_default();
+                let _place = b.u32().unwrap_or(0);
                 continue;
             }
             50 => {
@@ -384,7 +377,7 @@ async fn download_modern_queue_upload(
                 }
                 let sz = b.u64().unwrap_or(0);
                 let final_sz = if sz > 0 { sz } else { filesize };
-                eprintln!("[soulseek] P-conn: TransferRequest upload token={tr_token} size={final_sz}");
+                session.slog(format!("TransferRequest upload token={tr_token} size={final_sz}"));
                 break (tr_token, final_sz);
             }
             41 => {
@@ -393,11 +386,7 @@ async fn download_modern_queue_upload(
                         .to_string(),
                 );
             }
-            other => {
-                eprintln!(
-                    "[soulseek] P-conn: ignoring peer message code={other} (len={})",
-                    raw.len()
-                );
+            _other => {
                 continue;
             }
         }
@@ -415,7 +404,7 @@ async fn download_modern_queue_upload(
     p_wh.flush().await.ok();
     drop(p_wh);
 
-    eprintln!("[soulseek] TransferResponse sent, waiting for F connection (token={peer_xfer_token})…");
+    session.slog(format!("TransferResponse sent, waiting for F connection (token={peer_xfer_token})…"));
 
     run_download_pipeline(
         session,
@@ -470,7 +459,7 @@ async fn download_legacy_transfer_request(
                 session.unregister_f_waiter(prepare_token);
                 return Err("Too many PeerInit frames before TransferResponse".to_string());
             }
-            eprintln!("[soulseek] P-conn: skipped peer PeerInit (handshake)");
+            // skip PeerInit
             continue;
         }
         if raw.len() >= 4 {
@@ -502,7 +491,7 @@ async fn download_legacy_transfer_request(
     let actual_size = rb.u64().unwrap_or(filesize);
     let final_size = if actual_size > 0 { actual_size } else { filesize };
 
-    eprintln!("[soulseek] TransferResponse OK (legacy), size={final_size}, waiting for F connection…");
+    session.slog(format!("TransferResponse OK (legacy), size={final_size}, waiting for F connection…"));
 
     run_download_pipeline(
         session,
@@ -522,7 +511,7 @@ async fn connect_peer_p(session: &Session, username: &str) -> Result<TcpStream, 
         .await
         .ok_or_else(|| format!("Cannot resolve SoulSeek address for user '{username}'"))?;
 
-    eprintln!("[soulseek] resolved {username} → {peer_ip}:{peer_port}");
+    session.slog(format!("resolved {username} → {peer_ip}:{peer_port}"));
 
     let s = tokio::time::timeout(
         Duration::from_secs(CONNECT_TIMEOUT_SECS),
@@ -594,16 +583,12 @@ async fn run_download_pipeline(
     } = f_ready;
     f_stream.set_nodelay(true).ok();
 
-    eprintln!("[soulseek] F connection established");
+    session.slog("F connection established");
 
     let (mut f_rh, mut f_wh) = f_stream.into_split();
 
     match file_transfer_init_consumed {
-        Some(tok) => {
-            eprintln!(
-                "[soulseek] FileTransferInit already read from peer (token={tok}, xfer={xfer_token})"
-            );
-        }
+        Some(_tok) => {}
         None => {
             let mut ft = [0u8; 4];
             let mut got = 0usize;
@@ -623,13 +608,7 @@ async fn run_download_pipeline(
                 got += n;
             }
             let ft_tok = u32::from_le_bytes(ft);
-            if ft_tok != xfer_token {
-                eprintln!(
-                    "[soulseek] FileTransferInit token {ft_tok} != xfer {xfer_token} (continuing)"
-                );
-            } else {
-                eprintln!("[soulseek] FileTransferInit ok token={ft_tok}");
-            }
+            let _ = ft_tok; // token mismatch is non-fatal, continue
         }
     }
 
@@ -672,7 +651,7 @@ async fn run_download_pipeline(
     let http_abort = http_jh.abort_handle();
 
     let url = format!("http://127.0.0.1:{http_port}/slsk/{http_release_token}");
-    eprintln!("[soulseek] ready: {url}  (file: {filepath})");
+    session.slog(format!("ready: {url}  (file: {filepath})"));
 
     Ok(StreamHandle {
         url,
@@ -723,16 +702,12 @@ async fn run_cover_memory_pipeline(
     } = f_ready;
     f_stream.set_nodelay(true).ok();
 
-    eprintln!("[soulseek] F connection established (cover)");
+    session.slog("F connection established (cover)");
 
     let (mut f_rh, mut f_wh) = f_stream.into_split();
 
     match file_transfer_init_consumed {
-        Some(tok) => {
-            eprintln!(
-                "[soulseek] FileTransferInit already read from peer (token={tok}, xfer={xfer_token})"
-            );
-        }
+        Some(_tok) => {}
         None => {
             let mut ft = [0u8; 4];
             let mut got = 0usize;
@@ -752,13 +727,7 @@ async fn run_cover_memory_pipeline(
                 got += n;
             }
             let ft_tok = u32::from_le_bytes(ft);
-            if ft_tok != xfer_token {
-                eprintln!(
-                    "[soulseek] FileTransferInit token {ft_tok} != xfer {xfer_token} (continuing)"
-                );
-            } else {
-                eprintln!("[soulseek] FileTransferInit ok token={ft_tok}");
-            }
+            let _ = ft_tok; // token mismatch is non-fatal, continue
         }
     }
 
@@ -804,7 +773,6 @@ async fn read_f_stream_capped(
     if out.is_empty() {
         return Err("Пир не прислал данные для обложки".to_string());
     }
-    eprintln!("[soulseek] cover preview: {} bytes ({})", out.len(), filepath);
     Ok(out)
 }
 
@@ -851,11 +819,10 @@ async fn download_loop(
                 }).await.ok();
                 downloaded.fetch_add(n as u64, Ordering::Release);
             }
-            Err(e) => { eprintln!("[soulseek/dl] read error: {e}"); break; }
+            Err(_) => break,
         }
     }
     complete.store(true, Ordering::Release);
-    eprintln!("[soulseek/dl] done: {}B", downloaded.load(Ordering::Relaxed));
 }
 
 // ── HTTP server ───────────────────────────────────────────────────────────────

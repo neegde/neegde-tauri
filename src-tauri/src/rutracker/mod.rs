@@ -219,8 +219,7 @@ impl RutrackerState {
         let loaded_proxy = load_http_proxy_url(&proxy_path);
         let client = match build_reqwest_client(Arc::clone(&cookie_store), loaded_proxy.as_deref()) {
             Ok(c) => c,
-            Err(e) => {
-                eprintln!("[neegde] invalid saved HTTP proxy, using direct connection: {}", e);
+            Err(_) => {
                 build_reqwest_client(Arc::clone(&cookie_store), None)
                     .expect("reqwest client init failed")
             }

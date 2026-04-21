@@ -101,6 +101,11 @@ unsafe extern "C" fn on_vozduxan_log(message: *const c_char, userdata: *mut c_vo
     let msg = unsafe { CStr::from_ptr(message) }
         .to_string_lossy()
         .into_owned();
+    // Suppress high-frequency peer-connection noise that floods the log.
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("connecttopeer") || lower.contains("connect to peer") {
+        return;
+    }
     debug_log.push("vozduxan", msg, None);
 }
 

@@ -95,6 +95,46 @@ function likesTrackRowClass(like) {
 function trackCoverFileIdx(like) {
   return trackCoverFileIdxForLike(like, props.likes);
 }
+
+/**
+ * Tooltip for the track title: basename, optional format, source-specific line.
+ *
+ * Args:
+ *     like: Liked track row.
+ *
+ * Returns:
+ *     Multiline string for the native `title` attribute.
+ */
+function likeTrackTooltip(like) {
+  const name = trackDisplayBasename(like.fileName);
+  const fmt = audioFormatLabel(like.filePath || like.fileName);
+  const lines = [name];
+  if (fmt && fmt !== "AUDIO") lines.push(`Формат: ${fmt}`);
+  if (like.source === "soulseek") {
+    lines.push("SoulSeek");
+    if (like.slskUsername) lines.push(like.slskUsername);
+  } else {
+    lines.push("RuTracker");
+    if (like.torrentName) lines.push(like.torrentName);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Second line under the title: release name or SoulSeek peer.
+ *
+ * Args:
+ *     like: Liked track row.
+ *
+ * Returns:
+ *     Short subtitle string.
+ */
+function likeTrackSubtitle(like) {
+  if (like.source === "soulseek") {
+    return like.slskUsername || like.torrentName || "SoulSeek";
+  }
+  return like.torrentName ?? "";
+}
 </script>
 
 <template>
@@ -167,20 +207,29 @@ function trackCoverFileIdx(like) {
             </template>
           </div>
           <div class="likes-track-main">
-            <CoverThumb
-              :torrent-id="like.torrentId"
-              :source="like.source"
-              :magnet="like.magnet"
-              :cover-file-idx="trackCoverFileIdx(like)"
-              :size="40"
-              :radius="4"
-            />
+            <div
+              class="likes-thumb-frame"
+              :class="like.source === 'soulseek' ? 'likes-thumb-frame--slsk' : 'likes-thumb-frame--rt'"
+              :title="like.source === 'soulseek' ? 'SoulSeek' : 'RuTracker'"
+            >
+              <CoverThumb
+                :torrent-id="like.torrentId"
+                :source="like.source"
+                :magnet="like.magnet"
+                :cover-file-idx="trackCoverFileIdx(like)"
+                :size="40"
+                :radius="4"
+              />
+            </div>
             <div class="track-info">
               <div class="track-name-wrap">
-                <div class="track-name">{{ trackDisplayBasename(like.fileName) }}</div>
-                <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(like.filePath || like.fileName)}`">{{ audioFormatLabel(like.filePath || like.fileName) }}</span>
+                <div class="track-name" :title="likeTrackTooltip(like)">{{ trackDisplayBasename(like.fileName) }}</div>
               </div>
-              <button class="likes-track-sub" @click.stop="emit('open-torrent', like)">{{ like.torrentName }}</button>
+              <button
+                class="likes-track-sub"
+                :class="{ 'likes-track-sub--peer': like.source === 'soulseek' }"
+                @click.stop="emit('open-torrent', like)"
+              >{{ likeTrackSubtitle(like) }}</button>
             </div>
           </div>
           <div class="track-actions">

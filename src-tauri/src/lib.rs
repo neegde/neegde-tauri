@@ -33,13 +33,7 @@ use discord_presence::DiscordPresenceState;
 fn raise_nofile_limit() {
     #[cfg(unix)]
     {
-        match rlimit::increase_nofile_limit(65_536) {
-            Ok(n) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[neegde] RLIMIT_NOFILE soft limit: {n}");
-            }
-            Err(e) => eprintln!("[neegde] could not raise RLIMIT_NOFILE: {e}"),
-        }
+        let _ = rlimit::increase_nofile_limit(65_536);
     }
 }
 

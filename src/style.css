@@ -1816,6 +1816,31 @@ body {
   padding: 6px 8px;
 }
 
+.likes-thumb-frame {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  box-sizing: border-box;
+  box-shadow:
+    0 0 0 1px var(--likes-origin-ring, rgba(255, 255, 255, 0.14)),
+    0 2px 10px rgba(0, 0, 0, 0.14);
+  transition: box-shadow 0.18s ease;
+}
+.likes-track-row:hover .likes-thumb-frame {
+  box-shadow:
+    0 0 0 1px var(--likes-origin-ring, rgba(255, 255, 255, 0.14)),
+    0 4px 14px rgba(0, 0, 0, 0.18);
+}
+/* RuTracker — холодный акцент; SoulSeek — тёплый фиолетовый */
+.likes-thumb-frame--rt {
+  --likes-origin-ring: rgba(56, 189, 248, 0.42);
+}
+.likes-thumb-frame--slsk {
+  --likes-origin-ring: rgba(167, 139, 250, 0.48);
+}
+
 .likes-track-main {
   display: flex;
   align-items: center;
@@ -1828,6 +1853,26 @@ body {
 }
 .likes-track-main .track-name-wrap {
   margin-bottom: 2px;
+}
+.likes-track-sub--peer {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: rgba(196, 181, 253, 0.92);
+}
+.track-row:hover .likes-track-sub--peer {
+  color: rgba(216, 204, 255, 0.98);
+}
+[data-theme="light"] .likes-thumb-frame--rt {
+  --likes-origin-ring: rgba(2, 132, 199, 0.38);
+}
+[data-theme="light"] .likes-thumb-frame--slsk {
+  --likes-origin-ring: rgba(124, 58, 237, 0.38);
+}
+[data-theme="light"] .likes-track-sub--peer {
+  color: rgba(91, 33, 182, 0.88);
+}
+[data-theme="light"] .track-row:hover .likes-track-sub--peer {
+  color: rgba(76, 29, 149, 0.95);
 }
 
 /* track subtitle link inside likes */
@@ -2429,20 +2474,80 @@ body {
   transition: color 0.15s, background 0.15s;
 }
 .slsk-track-row:hover .slsk-track-play { color: var(--text); background: var(--surface); }
-.slsk-track-name {
+/* Name area — replaces .slsk-track-name; contains raw/enriched blocks */
+.slsk-track-name-area {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+.slsk-track-name-block {
+  display: block;
   font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
+  line-height: 1.35;
 }
+.slsk-track-name-block--enriched {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.slsk-track-enriched-artist {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+.slsk-track-enriched-title {
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+/* Terminal cursor — blinking while waiting, solid while erasing/typing, fades on done */
+.slsk-cursor {
+  display: inline-block;
+  width: 1.5px;
+  height: 0.82em;
+  background: var(--muted);
+  margin-left: 2px;
+  vertical-align: -0.05em;
+  border-radius: 1px;
+}
+@keyframes slsk-cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.slsk-cursor--waiting { animation: slsk-cursor-blink 0.8s step-end infinite; }
+.slsk-cursor--erasing,
+.slsk-cursor--typing  { opacity: 1; animation: none; }
+.slsk-cursor--fading  { opacity: 0; transition: opacity 0.35s ease; }
+
 .slsk-track-meta {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
 }
+.slsk-track-ext-link {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.slsk-track-row:hover .slsk-track-ext-link { opacity: 1; }
+.slsk-track-ext-link:hover { color: var(--text); }
 .slsk-track-chip {
   font-size: 11px;
   color: var(--accent);

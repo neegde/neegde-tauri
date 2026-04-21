@@ -166,13 +166,6 @@ impl StreamCache {
                         "dirSizeMiB": directory_size_bytes(base_dir) / (1024 * 1024),
                     })),
                 );
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "[stream_cache] evicted info_hash={} step={} dir_size≈{} MiB",
-                    hash.as_string(),
-                    step,
-                    directory_size_bytes(base_dir) / (1024 * 1024)
-                );
             } else {
                 break;
             }

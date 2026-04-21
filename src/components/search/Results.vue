@@ -2,7 +2,13 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import AlbumCard from "./AlbumCard.vue";
 import SlskTrackRow from "./SlskTrackRow.vue";
-import { isLikelyPlayable } from "../../lib/utils.js";
+import { isLikelyPlayable, stripMetaTags, parseAudioTrackPrefix } from "../../lib/utils.js";
+import { fetchAlbumCover } from "../../audio/coverFetch.js";
+import {
+  slskMeta,
+  coverGeneration, bumpCoverGeneration,
+  coverTimer, setCoverTimer, clearCoverTimer,
+} from "../../soulseek/slskMetaStore.js";
 
 const props = defineProps({
   results: Array,
@@ -49,11 +55,154 @@ function setupObserver() {
 onMounted(() => {
   nextTick(setupObserver);
 });
-onUnmounted(() => observer?.disconnect());
+onUnmounted(() => {
+  observer?.disconnect();
+});
 
 watch(
   () => [props.results?.length, isSoulseek.value],
   () => nextTick(setupObserver),
+);
+
+// ── SoulSeek metadata enrichment ─────────────────────────────────────────────
+// slskMeta / coverGeneration / coverTimer live in slskMetaStore.js (module-level)
+// so they survive navigation and component remounts.
+
+/**
+ * Parse artist/title from a SoulSeek track's filename + folder path.
+ * Handles patterns like:
+ *   "[2024-05-05] Пошлая молли - супермаркет.flac"
+ *   "01 - Artist - Track Title.mp3"
+ *   "Artist\Album\03. Track Name.flac"
+ */
+function parseSlskFilename(track) {
+  const name   = track.name ?? "";
+  const folder = track.slsk_folder ?? "";
+
+  // Remove file extension
+  const dot  = name.lastIndexOf(".");
+  let base   = dot > 0 ? name.slice(0, dot) : name;
+
+  // Strip date-stamp prefix: [2024-05-05], (2024.05.05), 2024-05-05
+  base = base
+    .replace(/^[\[(]\d{4}[-./]\d{2}[-./]\d{2}[\])]\s*/, "")
+    .replace(/^\d{4}[-./]\d{2}[-./]\d{2}\s+/, "");
+
+  // Strip leading track number: "01 -", "02. ", "03 "
+  const trackParsed = parseAudioTrackPrefix(base);
+  if (trackParsed) base = trackParsed.title;
+
+  // Strip common meta tags ([FLAC], [320kbps], (Deluxe Edition), …)
+  base = stripMetaTags(base).trim();
+
+  // Try "Artist - Title" pattern in the cleaned filename
+  const m = base.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (m) return { artist: m[1].trim(), title: m[2].trim() };
+
+  // Fallback: derive artist from folder hierarchy.
+  // slsk_folder is the directory containing the file, e.g. "UserShare/Artist/Album".
+  // The last segment is typically the album — skip it. Require at least 2 segments
+  // so we don't mistake the album folder itself for the artist.
+  const segs = folder.split("/").filter(Boolean);
+  if (segs.length < 2) return { artist: "", title: base };
+  const start = segs.length - 2;
+  for (let i = start; i >= 0; i--) {
+    const seg = stripMetaTags(segs[i]).trim();
+    if (!seg || /^\d{4}$/.test(seg)) continue;
+    const fm = seg.match(/^(.+?)\s+[-–—]\s+/);
+    const artist = fm ? fm[1].trim() : seg;
+    if (artist.length >= 2) return { artist, title: base };
+  }
+
+  return { artist: "", title: base };
+}
+
+/** Parse filenames and populate slskMeta synchronously — no API, no VPN needed. */
+function applyFilenameMetadata(tracks) {
+  for (const track of tracks) {
+    if (slskMeta.has(track.id)) continue;
+    const parsed = parseSlskFilename(track);
+    if (parsed.artist && parsed.title) slskMeta.set(track.id, parsed);
+  }
+}
+
+/**
+ * iTunes cover fetch for tracks that don't have a folder cover image.
+ * Debounced 1.5 s so it only fires once after results settle.
+ */
+function scheduleCoverFetches() {
+  clearCoverTimer();
+  setCoverTimer(setTimeout(runCoverFetches, 1500));
+}
+
+/**
+ * Extract album name from a SoulSeek folder path.
+ * Last segment is the immediate parent dir (usually the album).
+ * Skip year-only and disc-marker segments.
+ */
+function albumFromFolder(folder) {
+  if (!folder) return "";
+  const segs = folder.split("/").filter(Boolean);
+  for (let i = segs.length - 1; i >= 0; i--) {
+    // Strip leading year (e.g. "2013 - Album Name" → "Album Name")
+    const s = segs[i].trim()
+      .replace(/^(19|20)\d{2}\s*[-–—]\s*/, "")
+      .replace(/\s*[\[(](19|20)\d{2}[\])]\s*$/, "")
+      .trim();
+    if (s.length >= 2 && !/^\d{4}$/.test(s) && !/^(cd|disc|disk|part|диск)\s*\d+$/i.test(s))
+      return s;
+  }
+  return "";
+}
+
+function runCoverFetches() {
+  if (!isSoulseek.value) return;
+  const gen = bumpCoverGeneration();
+
+  // One iTunes request per unique folder (= album), not per track.
+  const folderMap = new Map();
+  for (const track of playableResults.value) {
+    if (track.slsk_cover_filepath) continue;   // already has folder art
+    const meta = slskMeta.get(track.id);
+    if (!meta || meta.coverUrl) continue;
+    const key = track.slsk_folder ?? track.id;
+    if (!folderMap.has(key)) folderMap.set(key, { track, ids: [] });
+    folderMap.get(key).ids.push(track.id);
+  }
+
+  for (const { track, ids } of folderMap.values()) {
+    if (gen !== coverGeneration) break;
+    const meta = slskMeta.get(track.id);
+    if (!meta) continue;
+    const album = albumFromFolder(track.slsk_folder) || meta.title;
+
+    fetchAlbumCover(meta.artist, album).then((result) => {
+      if (gen !== coverGeneration || !result?.coverUrl) return;
+      for (const id of ids) {
+        const cur = slskMeta.get(id);
+        if (!cur || cur.coverUrl) continue;
+        // iTunes returns the canonical artist name — use it to correct filename-parsed guesses
+        // (e.g. "Pablo Honey - Creep.mp3" gets parsed as artist="Pablo Honey", but iTunes
+        // knows the real artist is "Radiohead").
+        const artist = result.artist || cur.artist;
+        slskMeta.set(id, { ...cur, artist, coverUrl: result.coverUrl, albumUrl: result.albumUrl });
+      }
+    });
+  }
+}
+
+watch(
+  () => props.results,
+  (newResults) => {
+    if (!newResults?.length || newResults[0]?.source !== "soulseek") {
+      slskMeta.clear();
+      bumpCoverGeneration();
+      clearCoverTimer();
+      return;
+    }
+    applyFilenameMetadata(newResults);
+    scheduleCoverFetches();
+  },
 );
 </script>
 
@@ -71,6 +220,7 @@ watch(
           v-for="t in visibleResults"
           :key="t.id"
           :track="t"
+          :enriched="slskMeta.get(t.id) ?? null"
           @play="emit('play-slsk-track', $event)"
         />
       </div>

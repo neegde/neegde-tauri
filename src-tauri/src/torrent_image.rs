@@ -424,10 +424,7 @@ impl TorrentImageState {
                 match stream.read(&mut buf[pos..]).await {
                     Ok(0) => break,
                     Ok(n) => pos += n,
-                    Err(e) => {
-                        eprintln!("[cover] read error at pos={pos}/{total}: {e}");
-                        return None;
-                    }
+                    Err(_) => return None,
                 }
             }
             if pos == 0 { None } else { Some(buf[..pos].to_vec()) }

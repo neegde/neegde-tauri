@@ -103,6 +103,7 @@ impl SoulSeekState {
 #[tauri::command]
 pub async fn soulseek_login(
     state: tauri::State<'_, SoulSeekState>,
+    ts: tauri::State<'_, crate::torrent_stream::TorrentStreamState>,
     username: String,
     password: String,
 ) -> Result<SlskLoginResult, String> {
@@ -112,7 +113,7 @@ pub async fn soulseek_login(
         *guard = None; // drops Arc, background tasks see Weak upgrade fail and exit
     }
 
-    match Session::connect(username.clone(), password).await {
+    match Session::connect(username.clone(), password, ts.debug_log()).await {
         Ok(sess) => {
             let mut guard = state.session.lock().map_err(|_| "lock error".to_string())?;
             *guard = Some(sess);

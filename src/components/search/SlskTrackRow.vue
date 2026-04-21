@@ -7,20 +7,12 @@ import {
 } from "../../soulseek/coverCache.js";
 
 const props = defineProps({
-  track: { type: Object, required: true },
+  track:    { type: Object, required: true },
+  enriched: { type: Object, default: null }, // { artist, title, coverUrl?, albumUrl? }
 });
 
 const emit = defineEmits(["play"]);
 
-/**
- * Formats duration in seconds as `m:ss`.
- *
- * Args:
- *     secs: Duration in seconds.
- *
- * Returns:
- *     Label string, or empty if missing.
- */
 function fmtDuration(secs) {
   if (!secs) return "";
   const m = Math.floor(secs / 60);
@@ -28,75 +20,53 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/**
- * Formats byte size for display.
- *
- * Args:
- *     bytes: Size in bytes.
- *
- * Returns:
- *     Human-readable string, or empty if missing.
- */
 function fmtSize(bytes) {
   if (!bytes) return "";
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-/**
- * Returns uppercased file extension from a SoulSeek track row.
- *
- * Args:
- *     track: Result row with `slsk_filepath` / `name`.
- *
- * Returns:
- *     Extension without dot, or empty string.
- */
 function trackExt(track) {
   const fp = track.slsk_filepath ?? track.name ?? "";
   const dot = fp.lastIndexOf(".");
   return dot >= 0 ? fp.slice(dot + 1).toUpperCase() : "";
 }
 
-const rowRef = ref(null);
+// ── Cover art ────────────────────────────────────────────────────────────────
+
+const rowRef  = ref(null);
 const coverErr = ref(false);
 
-const coverUrl = computed(() => {
+const folderCoverUrl = computed(() => {
   const u = props.track?.slsk_cover_username;
   const p = props.track?.slsk_cover_filepath;
   if (!u || !p) return null;
   return getSlskCoverReactive(u, p);
 });
 
+// Folder cover takes priority; iTunes cover is a fallback for tracks without folder art
+const coverUrl = computed(() => folderCoverUrl.value ?? props.enriched?.coverUrl ?? null);
+
 watch(
-  () => [props.track?.id, props.track?.slsk_cover_filepath],
-  () => {
-    coverErr.value = false;
-  },
+  () => [props.track?.id, props.track?.slsk_cover_filepath, props.enriched?.coverUrl],
+  () => { coverErr.value = false; },
 );
 
-let observer = null;
+let coverObserver = null;
 
-/** Detaches the lazy-load IntersectionObserver for the row cover. */
 function disconnectObserver() {
-  if (observer) {
-    observer.disconnect();
-    observer = null;
-  }
+  if (coverObserver) { coverObserver.disconnect(); coverObserver = null; }
 }
 
-/**
- * Lazily fetches the folder cover when the row scrolls near the viewport.
- */
 function setupCoverObserver() {
   disconnectObserver();
   coverErr.value = false;
-  const u = props.track?.slsk_cover_username;
-  const p = props.track?.slsk_cover_filepath;
+  const u  = props.track?.slsk_cover_username;
+  const p  = props.track?.slsk_cover_filepath;
   const sz = props.track?.slsk_cover_size ?? 0;
   if (!u || !p) return;
   if (peekSlskCover(u, p) !== undefined) return;
-  observer = new IntersectionObserver(
+  coverObserver = new IntersectionObserver(
     ([entry]) => {
       if (!entry?.isIntersecting) return;
       disconnectObserver();
@@ -105,20 +75,85 @@ function setupCoverObserver() {
     { rootMargin: "400px" },
   );
   const el = rowRef.value;
-  if (el) observer.observe(el);
+  if (el) coverObserver.observe(el);
 }
-
-onMounted(() => {
-  nextTick(setupCoverObserver);
-});
-onUnmounted(() => {
-  disconnectObserver();
-});
 
 watch(
   () => [props.track?.slsk_cover_filepath, props.track?.slsk_cover_username],
   () => nextTick(setupCoverObserver),
 );
+
+// ── Terminal cursor animation ─────────────────────────────────────────────────
+// States: 'waiting' → 'erasing' → 'typing' → 'fading' → 'done'
+
+const animPhase  = ref("waiting");
+const displayText = ref("");
+let animTimer = null;
+
+const BASE_MS = 18;   // ms per character at default speed
+const MAX_MS  = 650;  // cap on total erase+type duration
+
+function clearAnim() { clearTimeout(animTimer); animTimer = null; }
+
+function initAnim() {
+  clearAnim();
+  if (props.enriched) {
+    animPhase.value  = "done";
+  } else {
+    displayText.value = props.track?.name ?? "";
+    animPhase.value  = "waiting";
+  }
+}
+
+onMounted(() => {
+  initAnim();
+  nextTick(setupCoverObserver);
+});
+
+// Reset when a different track is rendered in this row slot
+watch(() => props.track?.id, initAnim);
+
+watch(() => props.enriched, (val) => {
+  if (!val || animPhase.value === "done") return;
+  startEraseType(val);
+});
+
+function startEraseType(enriched) {
+  clearAnim();
+  const target  = enriched.artist
+    ? `${enriched.artist} — ${enriched.title}`
+    : (enriched.title ?? "");
+  const source  = displayText.value;
+  const total   = source.length + target.length;
+  const msChar  = Math.min(BASE_MS, MAX_MS / Math.max(total, 1));
+
+  animPhase.value = "erasing";
+  let pos = source.length;
+
+  (function eraseStep() {
+    if (pos > 0) {
+      displayText.value = source.slice(0, --pos);
+      animTimer = setTimeout(eraseStep, msChar);
+    } else {
+      animPhase.value = "typing";
+      pos = 0;
+      (function typeStep() {
+        if (pos < target.length) {
+          displayText.value = target.slice(0, ++pos);
+          animTimer = setTimeout(typeStep, msChar);
+        } else {
+          animPhase.value = "fading";
+          animTimer = setTimeout(() => { animPhase.value = "done"; }, 380);
+        }
+      })();
+    }
+  })();
+}
+
+onUnmounted(() => {
+  clearAnim();
+  disconnectObserver();
+});
 </script>
 
 <template>
@@ -137,13 +172,51 @@ watch(
       >
       <div v-else class="slsk-track-thumb slsk-track-thumb--placeholder" />
     </div>
+
     <button class="slsk-track-play" title="Слушать" @click.stop="emit('play', track)">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <polygon points="5,3 19,12 5,21"/>
       </svg>
     </button>
-    <span class="slsk-track-name">{{ track.name }}</span>
+
+    <!-- Name area: animated single-line → two-line enriched layout -->
+    <div class="slsk-track-name-area">
+      <!-- Final two-line layout after animation completes -->
+      <div
+        v-if="animPhase === 'done' && enriched"
+        class="slsk-track-name-block slsk-track-name-block--enriched"
+      >
+        <span class="slsk-track-enriched-artist">{{ enriched.artist }}</span>
+        <span class="slsk-track-enriched-title">{{ enriched.title }}</span>
+      </div>
+      <!-- Animated / static single line -->
+      <span v-else class="slsk-track-name-block">
+        {{ animPhase === 'done' ? (track.name ?? '') : displayText
+        }}<span
+          v-if="animPhase !== 'done'"
+          class="slsk-cursor"
+          :class="`slsk-cursor--${animPhase}`"
+          aria-hidden="true"
+        ></span>
+      </span>
+    </div>
+
     <span class="slsk-track-meta">
+      <a
+        v-if="enriched?.albumUrl"
+        class="slsk-track-ext-link"
+        :href="enriched.albumUrl"
+        target="_blank"
+        rel="noopener"
+        title="Открыть в Apple Music"
+        @click.stop
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+      </a>
       <span
         v-if="Number(track.seeders) > 1"
         class="slsk-track-chip"
