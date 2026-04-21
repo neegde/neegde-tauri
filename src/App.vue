@@ -119,7 +119,8 @@ function _slskPickCover(candidates) {
  * Returns:
  *     Array of track-shaped results with slsk_cover_* when an image exists in-folder.
  *     `seeders` is the number of distinct SoulSeek peers that matched the same dedup key
- *     (proxy for availability). Results are sorted by that count, then bitrate, then size.
+ *     (proxy for availability). Row order is not re-sorted — grouping preserves arrival order
+ *     as much as the data structures allow.
  */
 function groupSlskResults(rawTracks) {
   const images = rawTracks.filter((r) => r.slsk_is_image);
@@ -184,11 +185,6 @@ function groupSlskResults(rawTracks) {
   const tracksOut = [];
 
   for (const g of albumsByKey.values()) {
-    g.tracks.sort((a, b) => {
-      const na = (a.slsk_filepath ?? "").split(/[\\/]/).pop() ?? "";
-      const nb = (b.slsk_filepath ?? "").split(/[\\/]/).pop() ?? "";
-      return na.localeCompare(nb, undefined, { numeric: true });
-    });
     const coverKey = `${g.user}|${g.folder}`;
     const cover = _slskPickCover(imagesByKey.get(coverKey) ?? []);
     const bestBitrate = _slskBestBitrate(g.tracks) || null;
@@ -243,21 +239,6 @@ function groupSlskResults(rawTracks) {
       slsk_cover_size: cover?.size ?? 0,
     });
   }
-
-  tracksOut.sort((a, b) => {
-    const pa = Number(a.seeders) || 0;
-    const pb = Number(b.seeders) || 0;
-    if (pb !== pa) return pb - pa;
-    const ba = a.bitrate ?? 0;
-    const bb = b.bitrate ?? 0;
-    if (bb !== ba) return bb - ba;
-    const sa = a.size ?? 0;
-    const sb = b.size ?? 0;
-    if (sa !== sb) return sa - sb;
-    const fa = (a.slsk_folder ?? "").localeCompare(b.slsk_folder ?? "", undefined, { numeric: true });
-    if (fa !== 0) return fa;
-    return (a.name ?? "").localeCompare(b.name ?? "", undefined, { numeric: true });
-  });
 
   return tracksOut;
 }
@@ -956,17 +937,27 @@ async function handleSearch(query) {
     finalizeCombinedSearch(seq, qn);
   } else {
     let slskAccum = [];
+    let slskBatchRaf = 0;
     listen("soulseek-search-batch", (e) => {
       const p = e.payload;
       if (p.requestId !== seq) return;
       slskAccum = slskAccum.concat(p.rows);
       if (seq !== searchRequestSeq) return;
-      searchTrackResults.value = groupSlskResults(slskAccum);
+      if (slskBatchRaf) return;
+      slskBatchRaf = requestAnimationFrame(() => {
+        slskBatchRaf = 0;
+        if (seq !== searchRequestSeq) return;
+        searchTrackResults.value = groupSlskResults(slskAccum);
+      });
     })
       .then((unlistenSlsk) => {
         soulseekSearch(q, seq)
           .then((finalRows) => {
             if (seq !== searchRequestSeq) return;
+            if (slskBatchRaf) {
+              cancelAnimationFrame(slskBatchRaf);
+              slskBatchRaf = 0;
+            }
             searchTrackResults.value = groupSlskResults(finalRows);
           })
           .catch((e) => {
@@ -975,6 +966,10 @@ async function handleSearch(query) {
             searchTrackResults.value = [];
           })
           .finally(() => {
+            if (slskBatchRaf) {
+              cancelAnimationFrame(slskBatchRaf);
+              slskBatchRaf = 0;
+            }
             unlistenSlsk();
             if (seq === searchRequestSeq) searchLoadingSlsk.value = false;
             finalizeCombinedSearch(seq, qn);

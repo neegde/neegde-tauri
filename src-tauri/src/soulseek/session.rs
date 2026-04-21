@@ -210,7 +210,7 @@ impl Session {
     ///     request_id: Correlates events with the frontend `invoke` call (ignore stale searches).
     ///
     /// Returns:
-    ///     Deduped, size-sorted file hits (same as the final command payload).
+    ///     Deduped file hits in network batch order (same as the final command payload).
     pub async fn search(
         &self,
         query: String,
@@ -256,10 +256,7 @@ impl Session {
         self.pending_searches.remove(&token);
         self.slog(format!("search: collected {} raw results for {:?}", results.len(), query));
 
-        // Sort by size descending (larger = likely higher quality)
-        results.sort_by(|a, b| b.size.cmp(&a.size));
-
-        // Dedup: keep one entry per (username, filepath)
+        // Dedup: keep one entry per (username, filepath) — first occurrence wins (arrival order)
         let mut seen = std::collections::HashSet::new();
         results.retain(|r| {
             let key = format!("{}|{}", r.username, r.filepath.to_lowercase());
