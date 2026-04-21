@@ -307,6 +307,32 @@ export function isDiscMarker(name) {
   return DISC_MARKER_RE.test((name ?? "").trim());
 }
 
+/** True if the whole token is a 4-digit release year (not an artist name). */
+export function isYearLike(s) {
+  return /^\d{4}$/.test(String(s ?? "").trim());
+}
+
+/**
+ * Removes leading "YYYY - …" segments. RuTracker often uses "2005 - Artist - Album";
+ * otherwise the first token before " - " is parsed as the artist and becomes a year.
+ *
+ * Args:
+ *     str: Already tag-stripped title (torrent name or folder segment).
+ *
+ * Returns:
+ *     Title with release-year prefixes removed.
+ */
+function stripLeadingYearDashPrefixes(str) {
+  let s = String(str ?? "").trim();
+  let guard = 0;
+  while (guard++ < 8 && s.length) {
+    const m = s.match(/^(19\d{2}|20\d{2})\s*[-–—]\s+(.+)$/);
+    if (!m) break;
+    s = m[2].trim();
+  }
+  return s;
+}
+
 /**
  * Extracts the album title from a torrent name like "Artist - Album [tags]".
  * Strips meta tags first, then returns the part after the first " - " separator,
@@ -314,7 +340,8 @@ export function isDiscMarker(name) {
  */
 export function extractAlbumFromTorrentName(torrentName) {
   if (!torrentName) return "";
-  const cleaned = stripMetaTags(torrentName.trim());
+  let cleaned = stripMetaTags(torrentName.trim());
+  cleaned = stripLeadingYearDashPrefixes(cleaned);
   if (!cleaned) return "";
   const m = cleaned.match(/^.+?\s+[-–—]\s+(.+)$/);
   return m ? m[1].trim() : cleaned;
@@ -322,23 +349,17 @@ export function extractAlbumFromTorrentName(torrentName) {
 
 /**
  * Extracts artist from a torrent name in "Artist - Album" format.
+ * Strips leading "YYYY - " (common RuTracker pattern) so the year is not taken as artist.
  * Falls back to the full torrent name if no separator is found.
  */
 export function extractArtist(torrentName) {
   if (!torrentName) return "";
-  // Strip leading year bracket before parsing
   let name = stripMetaTags(torrentName);
-  // Strip remaining leading category/genre brackets that stripMetaTags missed
-  // (>40 chars, e.g. "(Underground hip-hop, gangsta rap, hyperrealism) Artist - Album")
   name = name.replace(/^([\[(][^\[\]()]*[\])]\s*)+/, "").trim();
+  name = stripLeadingYearDashPrefixes(name);
   const m = name.match(/^(.+?)\s+[-–—]\s+/);
   const artist = m ? m[1].trim() : name;
-  // Reject VA placeholders
   return VARIOUS_ARTISTS_RE.test(artist) ? "" : artist;
-}
-
-function isYearLike(s) {
-  return /^\d{4}$/.test(s);
 }
 
 /**
@@ -355,10 +376,15 @@ function isYearLike(s) {
  * @param {string|null} magnet - magnet link (dn= contains torrent internal name)
  */
 export function extractTrackArtist(torrentName, albumDirPath, explicitArtist, magnet) {
-  // Best source: parsed from RuTracker post body — strip genre prefixes just in case
+  // Best source: RuTracker post body "Исполнитель: …". Reject plain years — posts sometimes
+  // misalign lines or parsers pick "Год" metadata; SoulSeek has no equivalent footgun.
   if (explicitArtist) {
-    const cleaned = extractArtist(explicitArtist);
-    return cleaned || explicitArtist;
+    const raw = String(explicitArtist).trim();
+    if (raw && !isYearLike(raw)) {
+      const cleaned = extractArtist(raw);
+      const candidate = (cleaned || raw).trim();
+      if (candidate && !isYearLike(candidate)) return candidate;
+    }
   }
 
   const fromTorrent = extractArtist(torrentName);
@@ -386,7 +412,10 @@ export function extractTrackArtist(torrentName, albumDirPath, explicitArtist, ma
     }
   }
 
-  return stripMetaTags(fromTorrent) || stripMetaTags(torrentName) || "";
+  const tail =
+    stripMetaTags(fromTorrent) || stripMetaTags(torrentName || "") || "";
+  if (tail && !isYearLike(tail.trim())) return tail;
+  return "";
 }
 
 /** Basename for UI: no leading "01. " / "02 - ", no file extension. */

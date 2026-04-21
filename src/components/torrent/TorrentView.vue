@@ -15,6 +15,7 @@ import {
   MAX_TORRENT_COVER_BYTES,
   enrichMagnetWithOpenTrackers,
   extractTrackArtist,
+  isYearLike,
   stripMetaTags,
   parseAudioTrackPrefix,
   isDiscMarker,
@@ -230,8 +231,10 @@ function makeTrackLike(torrent, magnet, f) {
   let coverFileIdx = null;
   /** Как у лайка альбома — чтобы во вкладке «Треки» брать тот же origIdx, что и для coverFile в торренте. */
   let coverFile = null;
+  let albumDirPath = null;
   for (const a of albums.value) {
     if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
+      albumDirPath = a.dirPath ?? null;
       const cf = a.coverFile;
       if (cf) {
         coverFileIdx = cf.origIdx ?? null;
@@ -253,6 +256,7 @@ function makeTrackLike(torrent, magnet, f) {
     magnet,
     fileIdx: f.origIdx,
     fileName: f.path,
+    albumDirPath,
     coverFileIdx,
     coverFile,
   };
@@ -337,7 +341,9 @@ const albumHeroTitle = computed(
 const albumHeroArtist = computed(() => {
   const album0 = albums.value[0];
   const enriched = enrichedAlbumData.value.get(album0?.dirPath ?? "");
-  if (enriched?.artist) return enriched.artist;
+  if (enriched?.artist && !isYearLike(String(enriched.artist).trim())) {
+    return enriched.artist;
+  }
   const artist = extractTrackArtist(props.torrent?.name, album0?.dirPath ?? null, props.torrent?.artist ?? null, props.magnet);
   return artist || "Неизвестный исполнитель";
 });

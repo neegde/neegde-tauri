@@ -4,6 +4,8 @@
  * Rate-limited to 1 req/sec per MusicBrainz ToS.
  */
 
+import { isYearLike } from "../lib/utils.js";
+
 const MB  = "https://musicbrainz.org/ws/2";
 const CAA = "https://coverartarchive.org";
 
@@ -81,6 +83,7 @@ function caaFront(mbid) {
  */
 export async function enrichTrackMeta(artist, title, onResult) {
   if (!artist || !title || artist.length < 2 || title.length < 2) return;
+  if (isYearLike(artist.trim())) return;
 
   const key = `track\0${artist.toLowerCase()}\0${title.toLowerCase()}`;
   if (cache.has(key)) {
@@ -116,6 +119,7 @@ export async function enrichTrackMeta(artist, title, onResult) {
  */
 export async function enrichAlbumTracklist(artist, albumName) {
   if (!artist || !albumName || artist.length < 2 || albumName.length < 2) return null;
+  if (isYearLike(artist.trim())) return null;
 
   const key = `album\0${artist.toLowerCase()}\0${albumName.toLowerCase()}`;
   if (cache.has(key)) return cache.get(key);
@@ -141,10 +145,12 @@ export async function enrichAlbumTracklist(artist, albumName) {
     }
   }
 
+  const mbArtist =
+    d2["artist-credit"]?.[0]?.artist?.name
+    ?? rel["artist-credit"]?.[0]?.artist?.name;
+  const fallbackArtist = mbArtist && !isYearLike(String(mbArtist).trim()) ? mbArtist : artist;
   const result = {
-    artist:        d2["artist-credit"]?.[0]?.artist?.name
-                ?? rel["artist-credit"]?.[0]?.artist?.name
-                ?? artist,
+    artist:        fallbackArtist,
     album:         d2.title ?? albumName,
     coverUrl:      caaFront(rel.id),
     tracksByNumber,

@@ -8,7 +8,7 @@ import {
   trackDisplayBasename,
   audioFormatLabel,
   parseArtistTitleFromTrackFilename,
-  extractArtist as extractArtistFromTorrentName,
+  extractTrackArtist,
 } from "../../lib/utils.js";
 import { getCoverReactive } from "../../rutracker/search.js";
 
@@ -94,7 +94,13 @@ function likeTrackLines(like) {
   let subtitle = "";
   if (artist) subtitle = artist;
   else if (like.source === "rutracker") {
-    subtitle = extractArtistFromTorrentName(like.torrentName ?? "") || "";
+    subtitle =
+      extractTrackArtist(
+        like.torrentName,
+        like.albumDirPath ?? null,
+        null,
+        like.magnet ?? null,
+      ) || "";
   }
   return { title: primary, subtitle };
 }
@@ -333,7 +339,9 @@ function likeTrackTooltip(like) {
           </div>
           <div class="album-name">{{ like.torrentName }}</div>
           <div class="album-meta likes-album-artist">
-            <span class="likes-track-sub">{{ extractArtistFromTorrentName(like.torrentName) }}</span>
+            <span class="likes-track-sub">{{
+              extractTrackArtist(like.torrentName, null, null, like.magnet ?? null)
+            }}</span>
           </div>
         </div>
       </div>
@@ -370,7 +378,9 @@ function likeTrackTooltip(like) {
           </div>
           <div class="album-name">{{ like.albumName || like.torrentName }}</div>
           <div class="album-meta likes-album-artist">
-            <span class="likes-track-sub">{{ extractArtistFromTorrentName(like.torrentName) }}</span>
+            <span class="likes-track-sub">{{
+              extractTrackArtist(like.torrentName, like.dirPath ?? null, null, like.magnet ?? null)
+            }}</span>
           </div>
         </div>
       </div>

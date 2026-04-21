@@ -7,6 +7,7 @@ import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
 import {
   trackDisplayBasename,
   extractTrackArtist,
+  isYearLike,
   parseArtistTitleFromTrackFilename,
 } from "../../lib/utils.js";
 import {
@@ -94,7 +95,9 @@ const soulseekSearchMeta = computed(() => {
 const currentArtist = computed(() => {
   const t = props.track;
   if (soulseekSearchMeta.value?.artist) return soulseekSearchMeta.value.artist;
-  if (enrichedMeta.value?.artist) return enrichedMeta.value.artist;
+  if (enrichedMeta.value?.artist && !isYearLike(String(enrichedMeta.value.artist).trim())) {
+    return enrichedMeta.value.artist;
+  }
   const parsed = parseArtistTitleFromTrackFilename(t?.fileName ?? "");
   if (parsed.artist) return parsed.artist;
   return (

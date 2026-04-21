@@ -58,6 +58,9 @@ struct SessionMeta {
     username: Option<String>,
     /// base64 data: URL — cached so the WebView never needs Rutracker cookies.
     avatar_data_url: Option<String>,
+    /// Mirror base URL used at login (`LoginResult`); cookies are scoped to that host.
+    /// Restore must probe this URL, not whatever mirror the UI picked for “auto” mode.
+    login_mirror: Option<String>,
 }
 
 fn load_meta(path: &Option<PathBuf>) -> SessionMeta {
@@ -474,6 +477,7 @@ pub async fn rutracker_login(
         state.persist(&SessionMeta {
             username: Some(username.clone()),
             avatar_data_url: avatar_data_url.clone(),
+            login_mirror: Some(base.clone()),
         });
 
         let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
@@ -548,7 +552,14 @@ pub async fn rutracker_restore_session(
     }
 
     let client = state.http_client()?;
-    let base = mirror.trim_end_matches('/').to_string();
+    let meta = load_meta(&state.meta_path);
+    let from_ui = mirror.trim().trim_end_matches('/').to_string();
+    let base = meta
+        .login_mirror
+        .as_ref()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(from_ui);
 
     // Light healthcheck: try loading the forum index
     let resp = client
@@ -605,8 +616,6 @@ pub async fn rutracker_restore_session(
     }
 
     // Index + tracker both indicate an authenticated session — restore from saved meta
-    let meta = load_meta(&state.meta_path);
-
     let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
     inner.logged_in = true;
     inner.username = meta.username.clone();
