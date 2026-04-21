@@ -21,7 +21,12 @@ import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/a
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
 import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
-import { searchMusic, getTorrentDetails, filterRutrackerRowsWithPlayableAudio } from "./rutracker/search.js";
+import {
+  searchMusic,
+  getTorrentDetails,
+  filterRutrackerRowsWithPlayableAudio,
+  prefetchTorrentDetails,
+} from "./rutracker/search.js";
 import {
   soulseekLogin,
   soulseekLogout,
@@ -47,6 +52,7 @@ import Player       from "./components/player/Player.vue";
 import NavArrows       from "./components/shell/NavArrows.vue";
 import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
+import AppSplash from "./components/shell/AppSplash.vue";
 import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow, closeAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory } from "./lib/recentHistory.js";
@@ -359,6 +365,12 @@ function applyEffectiveTheme(mode) {
 
 const restoringSession = ref(true);
 
+/**
+ * When true, splash stays on screen for layout review (app still boots underneath).
+ * Set to false for normal startup.
+ */
+const holdSplashForReview = false;
+
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
 const RESTORE_UI_MAX_MS = 5_000;
 
@@ -456,6 +468,21 @@ const returnView = ref("search");
 
 // ── Recent History ────────────────────────────────────────────────────────────
 const recentHistory = ref(loadRecentHistory());
+
+/**
+ * Fetches RuTracker torrent details for recent home cards so topic covers sit in cache
+ * during splash (overlap with restoringSession) instead of after HomeView mounts.
+ */
+function prefetchRecentRutrackerCoversForHome() {
+  if (!rtLoggedIn.value) return;
+  for (const item of recentHistory.value.slice(0, 10)) {
+    if (item.source === "rutracker" && item.id != null && item.id !== "") {
+      prefetchTorrentDetails(String(item.id));
+    }
+  }
+}
+
+watch([rtLoggedIn, recentHistory], prefetchRecentRutrackerCoversForHome, { deep: true });
 
 // ── Search History ────────────────────────────────────────────────────────────
 const searchHistory = ref(loadSearchHistory());
@@ -2426,7 +2453,6 @@ function onMouseSideButtonUp(e) {
         <HomeView
           v-if="view === 'home'"
           :recent-history="recentHistory"
-          :logged-in="rtLoggedIn"
           @open-recent="handleOpenRecent"
           @go-to-search="navToSearch"
           @search-query="(q) => { searchQuery = q; view = 'search'; void handleSearch(q); }"
@@ -2607,6 +2633,8 @@ function onMouseSideButtonUp(e) {
       @queue-jump="handleQueueJump"
       @queue-remove="handleQueueRemove"
     />
+
+    <AppSplash :visible="holdSplashForReview || restoringSession" />
 
     <DownloadProgressOverlay
       v-model:expanded="downloadOverlayExpanded"

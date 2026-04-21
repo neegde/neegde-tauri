@@ -1,30 +1,12 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import CoverThumb from "../shared/CoverThumb.vue";
-import { prefetchTorrentDetails } from "../../rutracker/search.js";
 
 const props = defineProps({
   recentHistory: { type: Array, default: () => [] },
-  loggedIn: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["open-recent", "go-to-search", "search-query"]);
-
-// ── Cover prefetch on auth ────────────────────────────────────────────────────
-// IntersectionObserver fires before auth restores → rutracker_get_cover fails silently.
-// Re-trigger when loggedIn becomes true.
-watch(
-  () => props.loggedIn,
-  (on) => {
-    if (!on) return;
-    for (const item of props.recentHistory.slice(0, 10)) {
-      if (item.source === "rutracker" && item.id) {
-        prefetchTorrentDetails(item.id);
-      }
-    }
-  },
-  { immediate: true }
-);
 
 // ── Monthly stats ─────────────────────────────────────────────────────────────
 const thisMonthCount = computed(() => {
@@ -132,9 +114,7 @@ onUnmounted(() => {
 
     <template v-else>
 
-      <!-- ── Недавно слушал ──────────────────────────────────────────── -->
-      <section class="home-section">
-        <h2 class="home-section-title">Недавно слушал</h2>
+      <section class="home-section" aria-label="Недавно открытые раздачи">
         <div class="home-grid">
           <button
             v-for="item in recentSlice"
