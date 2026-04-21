@@ -25,6 +25,9 @@ pub struct StreamHandle {
     pub url: String,
     pub token: u32,
     pub temp_path: PathBuf,
+    pub total_size: u64,
+    pub downloaded: Arc<AtomicU64>,
+    pub complete: Arc<AtomicBool>,
     pub download_abort: tokio::task::AbortHandle,
     pub http_abort: tokio::task::AbortHandle,
 }
@@ -657,6 +660,9 @@ async fn run_download_pipeline(
         url,
         token: http_release_token,
         temp_path,
+        total_size: final_size,
+        downloaded,
+        complete,
         download_abort,
         http_abort,
     })

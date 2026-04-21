@@ -23,7 +23,7 @@ const SLSK_CTX_ACTIONS = [
   { id: "source",   label: "Источник (SoulSeek)", icon: "source" },
   { id: "divider" },
   { id: "play",     label: "Слушать",     icon: "play"     },
-  { id: "download", label: "Скачать",     icon: "download", disabled: true },
+  { id: "download", label: "Скачать",     icon: "download" },
   { id: "divider" },
   { id: "like",     label: "В избранное", icon: "heart"    },
   { id: "playlist", label: "В плейлист",  icon: "playlist" },

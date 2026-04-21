@@ -82,11 +82,10 @@ function expand() {
 
 async function requestStop() {
   if (!canStop.value) return;
-  // IPC invoke can queue behind the long `torrent_export_files` call — emit reaches Rust immediately.
+  // IPC invoke can queue behind the long export call — emit reaches Rust immediately.
   await emit("torrent-export-cancel-request", {});
-  try {
-    await invoke("torrent_export_cancel");
-  } catch (_) { /* команда всегда Ok; ошибка сети редка */ }
+  try { await invoke("torrent_export_cancel"); } catch (_) {}
+  try { await invoke("soulseek_export_cancel"); } catch (_) {}
 }
 </script>
 

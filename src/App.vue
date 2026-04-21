@@ -37,7 +37,7 @@ import {
   soulseekClearSavedCredentials,
   clearSlskCoverCache,
 } from "./soulseek/api.js";
-import { exportTorrentFiles } from "./torrent/torrentExport.js";
+import { exportTorrentFiles, exportPlaylistTracks, exportSlskTrack } from "./torrent/torrentExport.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
@@ -2060,22 +2060,73 @@ function handlePlayAlbumFromLike(like) {
   queuePos.value = 0;
 }
 
+/**
+ * Passes RuTracker topic id into export so `.torrent` is fetched like streaming (fast metadata).
+ *
+ * Returns:
+ *     Options object for `exportTorrentFiles` (may be empty for non-RuTracker / missing id).
+ */
+function rutrackerTorrentFileOptsFromSelection() {
+  const s = selected.value;
+  if (!s || String(s.source) !== "rutracker") {
+    return {};
+  }
+  const tid = s.id != null && String(s.id).trim() !== "" ? s.id : null;
+  if (tid == null) {
+    return {};
+  }
+  return { track: { source: "rutracker", torrentId: tid } };
+}
+
 function handleDownloadTrack(origIdx) {
   downloadOverlayExpanded.value = true;
   const f = files.value.find((x) => x.origIdx === origIdx);
   const label = f ? trackDisplayBasename(f.path) : `Файл ${origIdx}`;
-  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], null, (p) => {
+  exportTorrentFiles(torrentMagnet.value, [origIdx], [label], rutrackerTorrentFileOptsFromSelection(), (p) => {
     downloadProgress.value = p;
   });
 }
 
-/** Скачивание трека из списка «Мне нравится» без открытия раздачи. */
+/** Скачивание трека из списка «Мне нравится», плейлиста или очереди (без открытия раздачи). */
 function handleDownloadTrackFromLike(like) {
-  if (!like?.magnet || like.fileIdx == null) return;
+  if (!like) return;
   downloadOverlayExpanded.value = true;
+  if (like.source === "soulseek") {
+    exportSlskTrack(like, (p) => { downloadProgress.value = p; });
+    return;
+  }
+  if (!like.magnet || like.fileIdx == null) return;
   const idx = Number(like.fileIdx);
   const label = trackDisplayBasename(like.fileName);
-  exportTorrentFiles(like.magnet, [idx], [label], null, (p) => {
+  exportTorrentFiles(like.magnet, [idx], [label], { track: like }, (p) => {
+    downloadProgress.value = p;
+  });
+}
+
+/** Скачивание трека SoulSeek из результатов поиска. */
+function handleDownloadSlskTrack(track) {
+  if (!track) return;
+  downloadOverlayExpanded.value = true;
+  exportSlskTrack(track, (p) => { downloadProgress.value = p; });
+}
+
+/** Скачивание всех треков текущего плейлиста. */
+function handleDownloadPlaylist() {
+  const tracks = currentPlaylist.value?.tracks;
+  if (!tracks?.length) return;
+  downloadOverlayExpanded.value = true;
+  exportPlaylistTracks(tracks, (p) => {
+    downloadProgress.value = p;
+  });
+}
+
+/** Скачивание трека из контекстного меню очереди плеера (торрент). */
+function handleDownloadFromQueue(q) {
+  if (!q?.magnet?.trim() || q.fileIdx == null) return;
+  downloadOverlayExpanded.value = true;
+  const idx = Number(q.fileIdx);
+  const label = trackDisplayBasename(q.fileName);
+  exportTorrentFiles(q.magnet, [idx], [label], { track: q }, (p) => {
     downloadProgress.value = p;
   });
 }
@@ -2085,9 +2136,15 @@ function handleDownloadAll() {
   const audio = files.value.filter((f) => isAudio(f.path));
   const idxs = audio.map((f) => f.origIdx);
   const labels = audio.map((f) => trackDisplayBasename(f.path));
-  exportTorrentFiles(torrentMagnet.value, idxs, labels, null, (p) => {
-    downloadProgress.value = p;
-  });
+  exportTorrentFiles(
+    torrentMagnet.value,
+    idxs,
+    labels,
+    rutrackerTorrentFileOptsFromSelection(),
+    (p) => {
+      downloadProgress.value = p;
+    }
+  );
 }
 
 function handleDownloadAlbum(albumFiles, albumName = "") {
@@ -2099,7 +2156,10 @@ function handleDownloadAlbum(albumFiles, albumName = "") {
     torrentMagnet.value,
     idxs,
     labels,
-    { albumDirName: albumName || selected.value?.name || "Альбом" },
+    {
+      albumDirName: albumName || selected.value?.name || "Альбом",
+      ...rutrackerTorrentFileOptsFromSelection(),
+    },
     (p) => {
       downloadProgress.value = p;
     }
@@ -2766,6 +2826,7 @@ function onMouseSideButtonUp(e) {
             :selected-id="null"
             @select="handleSelect"
             @play-slsk-track="handlePlaySlskTrack"
+            @download-slsk-track="handleDownloadSlskTrack"
             @like-slsk-track="handleLikeSlskTrack"
             @open-slsk-source="handleOpenSoulseekSourceFromResults"
             @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
@@ -2857,6 +2918,8 @@ function onMouseSideButtonUp(e) {
             @rename="handleRenamePlaylist(currentPlaylistId, $event)"
             @add-to-queue="handleAddToQueueFromPlaylistTrack"
             @add-to-playlist="handleShowAddToPlaylist($event)"
+            @download-track="handleDownloadTrackFromLike"
+            @download-playlist="handleDownloadPlaylist"
           />
         </div>
         </Transition>
@@ -2890,6 +2953,7 @@ function onMouseSideButtonUp(e) {
       @queue-jump="handleQueueJump"
       @queue-remove="handleQueueRemove"
       @queue-add-to-playlist="handleShowAddToPlaylist(queueItemToPlaylistTrack($event))"
+      @queue-download="handleDownloadFromQueue"
     />
 
     <AppSplash :visible="holdSplashForReview || restoringSession" />

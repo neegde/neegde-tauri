@@ -57,6 +57,7 @@ function onCtxAction(id) {
   if (!like) return;
   if (id === "queue") emit("add-to-queue", like);
   if (id === "playlist") emit("add-to-playlist", like);
+  if (id === "download") emit("download", like);
   if (id === "source") emit("open-track-source", like);
 }
 
@@ -65,9 +66,14 @@ const likesCtxActions = computed(() => {
   if (!like) return [];
   const srcLabel =
     like.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
+  const canDownload =
+    (like.source === "soulseek"
+      ? String(like.slskUsername ?? "").trim().length > 0 && String(like.slskFilepath ?? "").trim().length > 0
+      : String(like.magnet ?? "").trim().length > 0 && like.fileIdx != null && Number.isFinite(Number(like.fileIdx)));
   return [
     { id: "queue", label: "В очередь", icon: "queue" },
     { id: "playlist", label: "В плейлист", icon: "playlist" },
+    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload },
     { id: "divider" },
     { id: "source", label: srcLabel, icon: "source" },
   ];

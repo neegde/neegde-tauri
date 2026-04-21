@@ -262,6 +262,8 @@ pub fn run() {
             soulseek::soulseek_save_credentials,
             soulseek::soulseek_load_credentials,
             soulseek::soulseek_clear_saved_credentials,
+            soulseek::soulseek_export_file,
+            soulseek::soulseek_export_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

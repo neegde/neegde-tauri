@@ -8,7 +8,11 @@ use session::{next_token, Session, SlskFileResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::time::Duration;
 
 // ── Public types (serialised to frontend) ────────────────────────────────────
 
@@ -60,6 +64,22 @@ pub struct SlskCoverPreview {
     pub base64: String,
 }
 
+/// Progress event emitted during `soulseek_export_file` (compatible with DownloadProgressOverlay).
+#[derive(Serialize, Clone)]
+struct SlskExportProgress {
+    phase: String,
+    #[serde(rename = "progressBytes")]
+    progress_bytes: u64,
+    #[serde(rename = "totalBytes")]
+    total_bytes: u64,
+    pct: u32,
+    #[serde(rename = "queueLabels")]
+    queue_labels: Vec<String>,
+    message: String,
+    #[serde(rename = "torrentState")]
+    torrent_state: String,
+}
+
 /// Incremental search: emitted from the backend as peer batches arrive.
 #[derive(Serialize, Clone)]
 pub(super) struct SlskSearchBatchEvent {
@@ -79,6 +99,7 @@ struct ActiveStream {
 pub struct SoulSeekState {
     session: Mutex<Option<Arc<Session>>>,
     streams: Mutex<HashMap<String, ActiveStream>>,
+    export_cancel: AtomicBool,
 }
 
 impl SoulSeekState {
@@ -86,6 +107,7 @@ impl SoulSeekState {
         Self {
             session: Mutex::new(None),
             streams: Mutex::new(HashMap::new()),
+            export_cancel: AtomicBool::new(false),
         }
     }
 
@@ -291,6 +313,150 @@ pub async fn soulseek_cover_preview(
     })
 }
 
+/// Download a SoulSeek file to disk with progress events.
+///
+/// Emits `slsk-export-progress` events (same shape as torrent export overlay).
+/// Returns the path of the saved file on success.
+#[tauri::command]
+pub async fn soulseek_export_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SoulSeekState>,
+    username: String,
+    filepath: String,
+    filesize: u64,
+    dest_dir: String,
+    file_name: String,
+) -> Result<String, String> {
+    use tauri::Emitter;
+
+    let session = state.get_session()?;
+    state.export_cancel.store(false, Ordering::Release);
+
+    let label = file_name.clone();
+
+    let _ = app.emit(
+        "slsk-export-progress",
+        SlskExportProgress {
+            phase: "preparing".to_string(),
+            progress_bytes: 0,
+            total_bytes: filesize,
+            pct: 0,
+            queue_labels: vec![label.clone()],
+            message: "Подключение к пиру…".to_string(),
+            torrent_state: "".to_string(),
+        },
+    );
+
+    let token = next_token();
+    let handle = transfer::download_and_stream(
+        Arc::clone(&session),
+        username,
+        filepath.clone(),
+        filesize,
+        token,
+    )
+    .await?;
+
+    let total = handle.total_size;
+    let downloaded = Arc::clone(&handle.downloaded);
+    let complete = Arc::clone(&handle.complete);
+
+    // Poll until download finishes or user cancels
+    loop {
+        let dl = downloaded.load(Ordering::Acquire);
+        let done = complete.load(Ordering::Acquire);
+        let cancelled = state.export_cancel.load(Ordering::Acquire);
+
+        let pct = if total > 0 {
+            ((dl as f64 / total as f64) * 100.0) as u32
+        } else {
+            0
+        };
+        let _ = app.emit(
+            "slsk-export-progress",
+            SlskExportProgress {
+                phase: "downloading".to_string(),
+                progress_bytes: dl,
+                total_bytes: total,
+                pct,
+                queue_labels: vec![label.clone()],
+                message: format!("{} / {}", slsk_fmt_bytes(dl), slsk_fmt_bytes(total)),
+                torrent_state: "".to_string(),
+            },
+        );
+
+        if cancelled {
+            handle.download_abort.abort();
+            handle.http_abort.abort();
+            let _ = std::fs::remove_file(&handle.temp_path);
+            return Err("Скачивание остановлено".to_string());
+        }
+        // Peer may not close the F-connection after sending all bytes — treat
+        // "received >= declared size" as completion even without EOF.
+        if done || (total > 0 && dl >= total) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    handle.http_abort.abort();
+
+    let dl_final = downloaded.load(Ordering::Acquire);
+    if total > 0 && dl_final < total * 90 / 100 {
+        let _ = std::fs::remove_file(&handle.temp_path);
+        return Err(format!(
+            "Загрузка прервана пиром: получено {} из {}",
+            slsk_fmt_bytes(dl_final),
+            slsk_fmt_bytes(total)
+        ));
+    }
+
+    let _ = app.emit(
+        "slsk-export-progress",
+        SlskExportProgress {
+            phase: "copying".to_string(),
+            progress_bytes: dl_final,
+            total_bytes: total,
+            pct: 100,
+            queue_labels: vec![label.clone()],
+            message: "Сохранение файла…".to_string(),
+            torrent_state: "".to_string(),
+        },
+    );
+
+    let dest_path = slsk_unique_dest_path(&dest_dir, &file_name);
+    let temp = handle.temp_path.clone();
+    let dest = dest_path.clone();
+    tokio::task::spawn_blocking(move || std::fs::copy(&temp, &dest).map(|_| ()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Ошибка сохранения: {e}"))?;
+
+    let _ = std::fs::remove_file(&handle.temp_path);
+
+    let _ = app.emit(
+        "slsk-export-progress",
+        SlskExportProgress {
+            phase: "done".to_string(),
+            progress_bytes: dl_final,
+            total_bytes: total,
+            pct: 100,
+            queue_labels: vec![label.clone()],
+            message: "Готово".to_string(),
+            torrent_state: "".to_string(),
+        },
+    );
+
+    Ok(dest_path.to_string_lossy().to_string())
+}
+
+/// Cancel an in-progress `soulseek_export_file` call.
+#[tauri::command]
+pub fn soulseek_export_cancel(state: tauri::State<'_, SoulSeekState>) -> Result<(), String> {
+    state.export_cancel.store(true, Ordering::Release);
+    Ok(())
+}
+
 // ── Credential persistence ────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
@@ -363,6 +529,53 @@ fn bitrate_category(bitrate: Option<u32>) -> String {
         Some(b) => format!("{b} kbps"),
         None => "SoulSeek".to_string(),
     }
+}
+
+fn slsk_fmt_bytes(n: u64) -> String {
+    if n < 1024 {
+        return format!("{n} Б");
+    }
+    let units = ["КБ", "МБ", "ГБ"];
+    // Start already in КБ (first division done here), then loop into МБ/ГБ as needed.
+    let mut v = n as f64 / 1024.0;
+    let mut i = 0usize;
+    while v >= 1024.0 && i < units.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if v < 10.0 {
+        format!("{:.1} {}", v, units[i])
+    } else {
+        format!("{} {}", v.round() as u64, units[i])
+    }
+}
+
+fn slsk_unique_dest_path(dest_dir: &str, file_name: &str) -> PathBuf {
+    let base = PathBuf::from(dest_dir);
+    let candidate = base.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file_name);
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    for i in 1..=999 {
+        let name = if ext.is_empty() {
+            format!("{stem} ({i})")
+        } else {
+            format!("{stem} ({i}).{ext}")
+        };
+        let p = base.join(&name);
+        if !p.exists() {
+            return p;
+        }
+    }
+    candidate // fallback, overwrite
 }
 
 fn stable_id(username: &str, filepath: &str) -> String {
