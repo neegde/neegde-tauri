@@ -597,7 +597,7 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 .torrent-page--album-hero .album-tool-btn.liked {
-  color: #e05c6a;
+  color: var(--accent);
 }
 .torrent-page--album-hero .album-tracklist {
   position: relative;
@@ -1133,7 +1133,7 @@ body {
   transition: border-color 0.15s, color 0.15s, transform 0.1s;
 }
 .album-actions .like-btn:hover { border-color: var(--text); transform: scale(1.02); }
-.album-actions .like-btn.liked { border-color: #e05c6a; }
+.album-actions .like-btn.liked { border-color: var(--accent); }
 
 /* ── Track List ───────────────────────────────────────────────────────── */
 .tracklist-header {
@@ -1331,8 +1331,9 @@ body {
 .track-btn:hover          { color: var(--text); }
 .track-btn.dl:hover       { color: var(--accent); }
 .track-btn.like-btn       { font-size: 15px; }
-.track-btn.like-btn:hover { color: #e05c6a; }
-.track-btn.like-btn.liked { color: #e05c6a; opacity: 1; }
+.track-btn.like-btn:hover:not(.liked) { color: var(--text); }
+.track-btn.like-btn.liked,
+.track-btn.like-btn.liked:hover { color: var(--accent); opacity: 1; }
 .track-btn.add-to-pl:hover { color: var(--accent); }
 
 .album-like-btn {
