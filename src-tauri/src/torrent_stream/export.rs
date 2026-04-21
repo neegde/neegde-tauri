@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
+use bytes::Bytes;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, Magnet, ManagedTorrent, Session,
-    TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, Magnet, ManagedTorrent,
+    PeerConnectionOptions, Session, TorrentStatsState,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -141,11 +143,16 @@ fn sanitize_folder_name(raw: &str) -> String {
 }
 
 /// Добавить торрент в сессию или взять существующий и оставить только один файл в загрузке.
+///
+/// Args:
+///     torrent_file: Optional `.torrent` bytes (RuTracker or disk cache). When `None`, falls back
+///         to on-disk metadata cache, then magnet + DHT/trackers — same order as `prepare_inner`.
 async fn ensure_torrent_with_single_file(
     session: &Arc<Session>,
     magnet: &str,
     file_idx: usize,
     state: &TorrentStreamState,
+    mut torrent_file: Option<Vec<u8>>,
 ) -> Result<Arc<ManagedTorrent>, String> {
     if state.export_cancel_triggered() {
         return Err("Скачивание остановлено".into());
@@ -175,13 +182,33 @@ async fn ensure_torrent_with_single_file(
         return Err("Скачивание остановлено".into());
     }
 
+    if torrent_file.is_none() {
+        torrent_file = state.torrent_metadata_cache_bytes(info_hash);
+    }
+
+    let from_magnet_only = torrent_file.is_none();
     let opts = AddTorrentOptions {
         only_files: Some(vec![file_idx]),
         overwrite: true,
+        peer_opts: if from_magnet_only {
+            Some(PeerConnectionOptions {
+                connect_timeout: Some(Duration::from_secs(4)),
+                ..Default::default()
+            })
+        } else {
+            None
+        },
         ..Default::default()
     };
+
+    let add_fut = if let Some(tf) = torrent_file {
+        session.add_torrent(AddTorrent::TorrentFileBytes(Bytes::from(tf)), Some(opts))
+    } else {
+        session.add_torrent(AddTorrent::from_url(magnet), Some(opts))
+    };
+
     let added = tokio::select! {
-        r = session.add_torrent(AddTorrent::from_url(magnet), Some(opts)) => {
+        r = add_fut => {
             r.map_err(|e| format!("Не удалось добавить торрент: {e}"))?
         }
         _ = export_cancel_detected(state) => {
@@ -313,6 +340,11 @@ async fn wait_until_selected_finished(
     }
 }
 
+/// Copies selected files from the librqbit session to `dest_dir`.
+///
+/// Args:
+///     torrent_file_b64: Optional RuTracker `.torrent` (same as `torrent_prepare_stream`) so
+///         librqbit resolves metadata immediately instead of waiting on DHT alone.
 #[tauri::command]
 pub async fn torrent_export_files(
     app: AppHandle,
@@ -322,6 +354,7 @@ pub async fn torrent_export_files(
     dest_dir: String,
     file_names: Vec<String>,
     album_dir_name: Option<String>,
+    torrent_file_b64: Option<String>,
 ) -> Result<TorrentExportResult, String> {
     state.export_cancel_reset();
 
@@ -361,6 +394,20 @@ pub async fn torrent_export_files(
     let batch_total = file_indices.len();
     let session = state.torrent_session().await?;
 
+    let torrent_file_decoded = if let Some(raw) = torrent_file_b64
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        Some(
+            base64::engine::general_purpose::STANDARD
+                .decode(raw)
+                .map_err(|e| format!("Неверный base64 торрент-файла: {e}"))?,
+        )
+    } else {
+        None
+    };
+
     let m = Magnet::parse(&magnet).map_err(|e| format!("Неверный magnet: {e}"))?;
     let info_hash = m.as_id20().ok_or_else(|| "В magnet нет BTIH".to_string())?;
 
@@ -397,7 +444,14 @@ pub async fn torrent_export_files(
         }
 
         let first_idx = file_indices[0];
-        let handle = match ensure_torrent_with_single_file(&session, &magnet, first_idx, &state).await
+        let handle = match ensure_torrent_with_single_file(
+            &session,
+            &magnet,
+            first_idx,
+            &state,
+            torrent_file_decoded.clone(),
+        )
+        .await
         {
             Ok(h) => h,
             Err(e) => {

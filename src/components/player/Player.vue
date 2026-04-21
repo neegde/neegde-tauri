@@ -81,13 +81,10 @@ const emit = defineEmits([
   "queue-jump",
   "queue-remove",
   "queue-add-to-playlist",
+  "queue-download",
   "cycle-repeat",
   "toggle-shuffle",
 ]);
-
-const QUEUE_CTX_ACTIONS = [
-  { id: "playlist", label: "В плейлист", icon: "playlist" },
-];
 
 const queueCtxOpen = ref(false);
 const queueCtxX = ref(0);
@@ -108,16 +105,41 @@ function openQueueCtx(e, idx) {
   queueCtxOpen.value = true;
 }
 
+const queueCtxActions = computed(() => {
+  const idx = queueCtxIdx.value;
+  const q = idx != null ? props.playbackQueue?.[idx] : null;
+  const canDownload =
+    !!q &&
+    String(q.magnet ?? "").trim().length > 0 &&
+    q.fileIdx != null &&
+    Number.isFinite(Number(q.fileIdx));
+  return [
+    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload },
+    { id: "divider" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
+  ];
+});
+
 /**
  * @param {string} id
  * @returns {void}
  */
 function onQueueCtxAction(id) {
   const idx = queueCtxIdx.value;
-  if (idx == null || id !== "playlist") return;
+  if (idx == null) return;
   const q = props.playbackQueue?.[idx];
   if (!q) return;
-  emit("queue-add-to-playlist", q);
+  if (id === "playlist") emit("queue-add-to-playlist", q);
+  if (id === "download") {
+    if (
+      !String(q.magnet ?? "").trim() ||
+      q.fileIdx == null ||
+      !Number.isFinite(Number(q.fileIdx))
+    ) {
+      return;
+    }
+    emit("queue-download", q);
+  }
 }
 
 /** Same key as Results `slskMeta` — artist/title/coverUrl from filename + iTunes, matches track list. */
@@ -2029,7 +2051,7 @@ onUnmounted(() => {
       v-model:open="queueCtxOpen"
       :x="queueCtxX"
       :y="queueCtxY"
-      :actions="QUEUE_CTX_ACTIONS"
+      :actions="queueCtxActions"
       @action="onQueueCtxAction"
     />
 
