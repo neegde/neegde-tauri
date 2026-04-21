@@ -5,24 +5,40 @@ import {
   peekSlskCover,
   getSlskCoverReactive,
 } from "../../soulseek/coverCache.js";
-import SlskContextMenu from "./SlskContextMenu.vue";
+import TrackContextMenu from "../shared/TrackContextMenu.vue";
 
 const props = defineProps({
   track:    { type: Object, required: true },
-  enriched: { type: Object, default: null }, // { artist, title, coverUrl?, albumUrl? }
+  enriched: { type: Object, default: null }, // { artist, title, coverUrl? }
 });
 
 const emit = defineEmits(["play", "download", "like"]);
 
 // ── Context menu ─────────────────────────────────────────────────────────────
-const ctxMenu = ref(null); // { x, y } or null
+const ctxOpen = ref(false);
+const ctxX    = ref(0);
+const ctxY    = ref(0);
+
+const SLSK_CTX_ACTIONS = [
+  { id: "play",     label: "Слушать",     icon: "play"     },
+  { id: "download", label: "Скачать",     icon: "download", disabled: true },
+  { id: "divider" },
+  { id: "like",     label: "В избранное", icon: "heart"    },
+];
 
 function onContextMenu(e) {
-  e.preventDefault();
-  ctxMenu.value = { x: e.clientX, y: e.clientY };
+  ctxX.value = e.clientX;
+  ctxY.value = e.clientY;
+  ctxOpen.value = true;
 }
-function closeCtxMenu() { ctxMenu.value = null; }
 
+function onCtxAction(id) {
+  if (id === "play")     emit("play",     props.track);
+  if (id === "download") emit("download", props.track);
+  if (id === "like")     emit("like",     props.track);
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 function fmtDuration(secs) {
   if (!secs) return "";
   const m = Math.floor(secs / 60);
@@ -43,8 +59,7 @@ function trackExt(track) {
 }
 
 // ── Cover art ────────────────────────────────────────────────────────────────
-
-const rowRef  = ref(null);
+const rowRef   = ref(null);
 const coverErr = ref(false);
 
 const folderCoverUrl = computed(() => {
@@ -54,7 +69,6 @@ const folderCoverUrl = computed(() => {
   return getSlskCoverReactive(u, p);
 });
 
-// Folder cover takes priority; iTunes cover is a fallback for tracks without folder art
 const coverUrl = computed(() => folderCoverUrl.value ?? props.enriched?.coverUrl ?? null);
 
 watch(
@@ -95,28 +109,33 @@ watch(
 
 // ── Terminal cursor animation ─────────────────────────────────────────────────
 // States: 'waiting' → 'erasing' → 'typing' → 'fading' → 'done'
+//
+// Two-line layout is always used once animation starts (or enriched is set).
+// The artist row starts collapsed (max-height:0, opacity:0) and expands when
+// animPhase becomes 'fading', so the row height never jumps at 'done'.
 
-const animPhase  = ref("waiting");
-const displayText = ref("");
+const animPhase   = ref("waiting");
+const displayText = ref("");         // title slot text during animation
 let animTimer = null;
 
-const BASE_MS = 18;   // ms per character at default speed
-const MAX_MS  = 650;  // cap on total erase+type duration
+const BASE_MS = 18;
+const MAX_MS  = 650;
+
+// Artist row is visible in fading+done phases (if artist exists)
+const artistVisible = computed(
+  () => (animPhase.value === "fading" || animPhase.value === "done") && !!props.enriched?.artist,
+);
 
 function clearAnim() { clearTimeout(animTimer); animTimer = null; }
-
-function enrichedText(e) {
-  return e.artist ? `${e.artist} — ${e.title}` : (e.title ?? "");
-}
 
 function initAnim() {
   clearAnim();
   if (props.enriched) {
-    displayText.value = enrichedText(props.enriched);
-    animPhase.value  = "done";
+    displayText.value = props.enriched.title ?? props.track?.name ?? "";
+    animPhase.value   = "done";
   } else {
     displayText.value = props.track?.name ?? "";
-    animPhase.value  = "waiting";
+    animPhase.value   = "waiting";
   }
 }
 
@@ -125,7 +144,6 @@ onMounted(() => {
   nextTick(setupCoverObserver);
 });
 
-// Reset when a different track is rendered in this row slot
 watch(() => props.track?.id, initAnim);
 
 watch(() => props.enriched, (val) => {
@@ -135,9 +153,8 @@ watch(() => props.enriched, (val) => {
 
 function startEraseType(enriched) {
   clearAnim();
-  const target  = enriched.artist
-    ? `${enriched.artist} — ${enriched.title}`
-    : (enriched.title ?? "");
+  // Only animate the title; artist will fade in separately at 'fading' phase
+  const target  = enriched.title ?? "";
   const source  = displayText.value;
   const total   = source.length + target.length;
   const msChar  = Math.min(BASE_MS, MAX_MS / Math.max(total, 1));
@@ -157,6 +174,7 @@ function startEraseType(enriched) {
           displayText.value = target.slice(0, ++pos);
           animTimer = setTimeout(typeStep, msChar);
         } else {
+          // Start fading cursor + reveal artist row simultaneously
           animPhase.value = "fading";
           animTimer = setTimeout(() => { animPhase.value = "done"; }, 380);
         }
@@ -195,30 +213,41 @@ onUnmounted(() => {
       </svg>
     </button>
 
-    <!-- Name area: single line throughout (no DOM switch = no flicker) -->
+    <!-- Name area:
+         - During 'waiting' (no enriched yet): single-line span
+         - Once animating or enriched: two-line div with artist row starting collapsed.
+           The artist row expands smoothly when animPhase hits 'fading',
+           so row height never jumps at the 'done' transition. -->
     <div class="slsk-track-name-area">
-      <span class="slsk-track-name-block">
-        {{ displayText }}<span
-          v-if="animPhase !== 'done'"
-          class="slsk-cursor"
-          :class="`slsk-cursor--${animPhase}`"
-          aria-hidden="true"
-        ></span>
+      <!-- Plain single line while waiting for first enrichment -->
+      <span v-if="animPhase === 'waiting'" class="slsk-track-name-block">
+        {{ displayText }}<span class="slsk-cursor slsk-cursor--waiting" aria-hidden="true"></span>
       </span>
+      <!-- Two-line layout: used from erasing phase onward -->
+      <div v-else class="slsk-track-name-block slsk-track-name-block--enriched">
+        <span
+          class="slsk-track-enriched-artist"
+          :class="{ 'slsk-track-enriched-artist--show': artistVisible }"
+          aria-hidden="!artistVisible"
+        >{{ enriched?.artist ?? '' }}</span>
+        <span class="slsk-track-enriched-title">
+          {{ displayText }}<span
+            v-if="animPhase !== 'done'"
+            class="slsk-cursor"
+            :class="`slsk-cursor--${animPhase}`"
+            aria-hidden="true"
+          ></span>
+        </span>
+      </div>
     </div>
 
-    <Teleport to="body">
-      <SlskContextMenu
-        v-if="ctxMenu"
-        :x="ctxMenu.x"
-        :y="ctxMenu.y"
-        :track="track"
-        @close="closeCtxMenu"
-        @play="emit('play', $event)"
-        @download="emit('download', $event)"
-        @like="emit('like', $event)"
-      />
-    </Teleport>
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      :actions="SLSK_CTX_ACTIONS"
+      @action="onCtxAction"
+    />
 
     <span class="slsk-track-meta">
       <span

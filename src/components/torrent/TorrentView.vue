@@ -79,8 +79,24 @@ function openTrackCtx(e, origIdx) {
 /**
  * @returns {void}
  */
-function onCtxAddToQueue() {
-  if (ctxOrigIdx.value != null) emit("add-to-queue", ctxOrigIdx.value);
+const TORRENT_CTX_ACTIONS = [
+  { id: "play",     label: "Слушать",    icon: "play"     },
+  { id: "download", label: "Скачать",    icon: "download" },
+  { id: "divider" },
+  { id: "like",     label: "В избранное", icon: "heart"   },
+  { id: "queue",    label: "В очередь",  icon: "queue"    },
+  { id: "playlist", label: "В плейлист", icon: "playlist" },
+];
+
+function onCtxAction(id) {
+  const origIdx = ctxOrigIdx.value;
+  if (origIdx == null) return;
+  if (id === "play")     emit("play", origIdx);
+  if (id === "download") emit("download", origIdx);
+  if (id === "queue")    emit("add-to-queue", origIdx);
+  const f = (props.files ?? []).find((f) => f.origIdx === origIdx);
+  if (id === "playlist" && f) emit("add-to-playlist", makePlaylistTrack(props.torrent, props.magnet, f));
+  if (id === "like"     && f) emit("toggle-like",     makePlaylistTrack(props.torrent, props.magnet, f));
 }
 
 // ── View mode ────────────────────────────────────────────────────────────────
@@ -802,7 +818,8 @@ watch(
       v-model:open="ctxOpen"
       :x="ctxX"
       :y="ctxY"
-      @action="onCtxAddToQueue"
+      :actions="TORRENT_CTX_ACTIONS"
+      @action="onCtxAction"
     />
   </div>
 </template>

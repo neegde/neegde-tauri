@@ -2503,6 +2503,14 @@ body {
   text-overflow: ellipsis;
   line-height: 1.2;
   letter-spacing: 0.01em;
+  /* Start collapsed — expands smoothly when animation reaches 'fading' phase */
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+}
+.slsk-track-enriched-artist--show {
+  max-height: 18px;
+  opacity: 1;
 }
 .slsk-track-enriched-title {
   font-size: 14px;
