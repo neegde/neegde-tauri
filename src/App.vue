@@ -2458,7 +2458,7 @@ function onMouseSideButtonUp(e) {
         <div class="nav-label" style="margin-top: 16px">Библиотека</div>
         <button
           :class="['source-btn', view === 'likes' ? 'active' : '']"
-          @click="view = view === 'likes' ? 'search' : 'likes'"
+          @click="view = 'likes'"
         >
           <span class="source-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
