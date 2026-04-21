@@ -40,7 +40,7 @@ async function mapPool(items, limit, mapper) {
       const idx = slot;
       slot += 1;
       if (idx >= n) return;
-      out[idx] = await mapper(items[idx], idx);
+      out[idx] = await mapper(items[idx]);
     }
   };
 
