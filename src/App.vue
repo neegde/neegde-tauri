@@ -62,6 +62,20 @@ import {
   addTrackToPlaylist, removeTrackFromPlaylist,
 } from "./lib/playlistStorage.js";
 import PlaylistView from "./components/playlist/PlaylistView.vue";
+import {
+  loadAchievementsOptIn,
+  saveAchievementsOptIn,
+  loadAchievementsState,
+  saveAchievementsState,
+  emptyAchievementsProgress,
+} from "./achievements/achievementsStorage.js";
+import {
+  achievementMeta,
+  applyPlaybackStarted,
+  applyRetroactiveOptIn,
+  applyLikeChange,
+} from "./achievements/achievementsCore.js";
+import AchievementToast from "./components/shell/AchievementToast.vue";
 
 // ── SoulSeek result grouping ──────────────────────────────────────────────────
 
@@ -757,6 +771,93 @@ watch(likes, (v) => saveLikes(v), { deep: true });
 
 /** Состояние воспроизведения из плеера — подсветка и анимация в списках. */
 const playerPlaying = ref(true);
+
+// ── Achievements (opt-in; localStorage) ─────────────────────────────────────────
+const achievementsOptIn = ref(loadAchievementsOptIn());
+const achievementsState = ref(loadAchievementsState());
+
+const achievementToastOpen = ref(false);
+const achievementToastTitle = ref("");
+const achievementToastDesc = ref("");
+
+/**
+ * Shows a single toast for the first id in the list (others appear only in settings).
+ *
+ * Args:
+ *     ids: Newly unlocked achievement ids.
+ *
+ * Returns:
+ *     void
+ */
+function showAchievementToastForIds(ids) {
+  if (!ids.length) return;
+  const m = achievementMeta(ids[0]);
+  if (!m) return;
+  achievementToastTitle.value = m.title;
+  achievementToastDesc.value = m.description;
+  achievementToastOpen.value = true;
+}
+
+/**
+ * Persists state and optionally shows toast when opt-in is on.
+ *
+ * Args:
+ *     nextState: New achievement state snapshot.
+ *     newUnlocked: Ids to notify (toast).
+ *
+ * Returns:
+ *     void
+ */
+function commitAchievementsState(nextState, newUnlocked) {
+  achievementsState.value = nextState;
+  saveAchievementsState(nextState);
+  if (achievementsOptIn.value && newUnlocked.length) {
+    showAchievementToastForIds(newUnlocked);
+  }
+}
+
+watch(playerPlaying, (playing, wasPlaying) => {
+  if (!playing || !nowPlaying.value) return;
+  if (wasPlaying) return;
+  const r = applyPlaybackStarted(achievementsState.value, achievementsOptIn.value);
+  if (r.state === achievementsState.value) return;
+  commitAchievementsState(r.state, r.newUnlocked);
+});
+
+/**
+ * Args:
+ *     enabled: New opt-in value from settings.
+ *
+ * Returns:
+ *     void
+ */
+function handleAchievementsOptInChange(enabled) {
+  achievementsOptIn.value = enabled;
+  saveAchievementsOptIn(enabled);
+  if (!enabled) {
+    achievementToastOpen.value = false;
+    return;
+  }
+  const likesCount = Object.keys(likes.value).length;
+  const retro = applyRetroactiveOptIn(achievementsState.value, likesCount);
+  if (retro.state !== achievementsState.value) {
+    achievementsState.value = retro.state;
+    saveAchievementsState(retro.state);
+  }
+}
+
+/**
+ * Wipes stored achievement marks so the user can earn them again.
+ *
+ * Returns:
+ *     void
+ */
+function handleAchievementsReset() {
+  achievementToastOpen.value = false;
+  const next = emptyAchievementsProgress();
+  achievementsState.value = next;
+  saveAchievementsState(next);
+}
 
 const nowPlayingMatchForLikes = computed(() => {
   const np = nowPlaying.value;
@@ -1533,10 +1634,17 @@ function handleQueueRemove(i) {
 }
 
 function handleToggleLike(like) {
+  const likesBefore = Object.keys(likes.value).length;
   const next = { ...likes.value };
   if (next[like.id]) delete next[like.id];
   else next[like.id] = { ...like, addedAt: Date.now() };
+  const likesAfter = Object.keys(next).length;
   likes.value = next;
+  if (!achievementsOptIn.value) return;
+  const lr = applyLikeChange(achievementsState.value, true, likesAfter, likesBefore);
+  if (lr.state !== achievementsState.value) {
+    commitAchievementsState(lr.state, lr.newUnlocked);
+  }
 }
 
 /** Предпросмотр одного альбома из галереи — как handleOpenTorrentFromLike для type === "album". */
@@ -2485,6 +2593,8 @@ function onMouseSideButtonUp(e) {
             :restoring-session="restoringSession"
             :theme="theme"
             :app-debug-enabled="appDebugEnabled"
+            :achievements-opt-in="achievementsOptIn"
+            :achievements-unlocked="achievementsState.unlocked"
             :slsk-connected="slskConnected"
             :slsk-username="slskUsername"
             :slsk-logging-in="slskLoggingIn"
@@ -2493,6 +2603,8 @@ function onMouseSideButtonUp(e) {
             @logout="handleLogout"
             @theme-change="handleThemeChange"
             @update:app-debug-enabled="appDebugEnabled = $event"
+            @achievements-opt-in-change="handleAchievementsOptInChange"
+            @achievements-reset="handleAchievementsReset"
             @slsk-login="handleSoulseekLogin"
             @slsk-logout="handleSoulseekLogout"
           />
@@ -2635,6 +2747,12 @@ function onMouseSideButtonUp(e) {
     />
 
     <AppSplash :visible="holdSplashForReview || restoringSession" />
+
+    <AchievementToast
+      v-model:open="achievementToastOpen"
+      :title="achievementToastTitle"
+      :description="achievementToastDesc"
+    />
 
     <DownloadProgressOverlay
       v-model:expanded="downloadOverlayExpanded"

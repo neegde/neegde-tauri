@@ -31,6 +31,7 @@ import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 import { hadRutrackerAccount } from "../../rutracker/accountHint.js";
 import { clearSlskCoverCache } from "../../soulseek/api.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
+import AchievementsModal from "./AchievementsModal.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
 import {
   fetchLatestGithubRelease,
@@ -39,6 +40,7 @@ import {
 } from "../../githubReleaseCheck.js";
 import appIconSrc from "../../assets/neegde-logo.png";
 import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
+import { ACHIEVEMENT_CATALOG } from "../../achievements/achievementsCore.js";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -47,6 +49,8 @@ const props = defineProps({
   restoringSession: { type: Boolean, default: false },
   theme:            { type: String, default: "dark" },
   appDebugEnabled:  { type: Boolean, default: false },
+  achievementsOptIn:   { type: Boolean, default: false },
+  achievementsUnlocked: { type: Array, default: () => [] },
   // SoulSeek
   slskConnected:    { type: Boolean, default: false },
   slskUsername:     { type: String, default: null },
@@ -108,9 +112,25 @@ const emit = defineEmits([
   "logout",
   "theme-change",
   "update:appDebugEnabled",
+  "achievements-opt-in-change",
+  "achievements-reset",
   "slsk-login",
   "slsk-logout",
 ]);
+
+const achievementRows = computed(() => {
+  const u = new Set(props.achievementsUnlocked ?? []);
+  return ACHIEVEMENT_CATALOG.map((a) => ({
+    ...a,
+    unlocked: a.stub ? false : u.has(a.id),
+  }));
+});
+
+const achievementRowsReal = computed(() => achievementRows.value.filter((r) => !r.stub));
+
+const unlockedAchievementsCount = computed(
+  () => achievementRowsReal.value.filter((r) => r.unlocked).length
+);
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
 const appVersion = __APP_VERSION__;
@@ -295,6 +315,10 @@ async function handleRtReconnect() {
     rtReconnectBusy.value = false;
   }
 }
+
+const achievementsBrowseOpen = ref(false);
+/** Раскрыт блок «Щитпост» (как nerdOpen). */
+const shitpostOpen = ref(false);
 
 // ── Параметры для задротов ─────────────────────────────────────────────────────────────
 const nerdOpen   = ref(false);
@@ -680,6 +704,21 @@ async function confirmClearCoverTorrents() {
   }
 }
 
+/**
+ * Asks confirmation and clears persisted achievement marks via parent.
+ *
+ * Returns:
+ *     void
+ */
+async function confirmResetAchievements() {
+  const ok = await ask(
+    "Сбросятся отметки о полученных достижениях и флаг первого прослушивания — их можно заработать снова. Список лайков не меняется. Продолжить?",
+    { title: "Сбросить достижения", kind: "warning" },
+  );
+  if (!ok) return;
+  emit("achievements-reset");
+}
+
 </script>
 
 <template>
@@ -1029,17 +1068,84 @@ async function confirmClearCoverTorrents() {
       </div>
     </div>
 
-    <!-- ── Параметры для задротов ─────────────────────────────── -->
-    <div class="settings-section">
-      <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
-        <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
-        Параметры для задротов
-        <span
-          v-if="hasCustomMirror() || hasHttpProxyConfigured()"
-          class="nerd-custom-dot"
-          title="Нестандартные зеркало или прокси"
-        />
-      </button>
+    <!-- ── Параметры для задротов / Щитпост ─────────────────────────────── -->
+    <div class="settings-section settings-section--bottom-extras">
+      <div class="settings-extra-toggles">
+        <button type="button" class="nerd-toggle nerd-toggle--row" @click="nerdOpen = !nerdOpen">
+          <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
+          Параметры для задротов
+          <span
+            v-if="hasCustomMirror() || hasHttpProxyConfigured()"
+            class="nerd-custom-dot"
+            title="Нестандартные зеркало или прокси"
+          />
+        </button>
+        <button type="button" class="nerd-toggle nerd-toggle--row" @click="shitpostOpen = !shitpostOpen">
+          <span class="nerd-toggle-icon">{{ shitpostOpen ? '▾' : '▸' }}</span>
+          Щитпост
+          <span
+            v-if="achievementsOptIn"
+            class="nerd-custom-dot"
+            title="Достижения включены"
+          />
+        </button>
+      </div>
+
+      <div v-if="shitpostOpen" class="settings-shitpost-panel">
+        <div class="settings-card settings-card--achievements">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">✦</div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Достижения</div>
+              <div class="settings-card-status">
+                {{
+                  achievementsOptIn
+                    ? `${unlockedAchievementsCount} из ${achievementRowsReal.length}`
+                    : "Выключено"
+                }}
+              </div>
+            </div>
+            <label class="ach-opt-toggle">
+              <input
+                type="checkbox"
+                :checked="achievementsOptIn"
+                class="ach-opt-toggle-input"
+                @change="emit('achievements-opt-in-change', $event.target.checked)"
+              />
+              <span class="ach-opt-toggle-ui" aria-hidden="true" />
+            </label>
+          </div>
+          <div class="settings-card-body settings-card-body--achievements">
+            <p class="settings-card-desc">
+              В
+              <a
+                v-if="telegramChannelUrl"
+                href="#"
+                class="ach-inline-link"
+                @click.prevent="openExternalUrl(telegramChannelUrl)"
+              >щитпост паблике</a>
+              <template v-else>щитпост паблике</template>
+              чел просил «крутые ачивки» (вплоть до рофла про тысячу минут одной песни) — ну на че
+            </p>
+
+            <p v-if="achievementsOptIn" class="settings-card-desc ach-copy ach-copy-tight">
+              Короткий пуш при получении; полный список — по кнопке.
+            </p>
+            <p v-else class="settings-card-desc ach-copy ach-copy--muted ach-copy-tight">
+              Включите переключатель, чтобы считать галочки и пуши; выключите — всё тихо.
+            </p>
+
+            <div v-if="achievementsOptIn" class="ach-actions">
+              <button type="button" class="ach-btn ach-btn--primary" @click="achievementsBrowseOpen = true">
+                Просмотреть достижения…
+              </button>
+              <button type="button" class="ach-btn ach-btn--danger" @click="confirmResetAchievements">
+                Сбросить достижения
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div v-if="nerdOpen" class="nerd-stack">
         <div class="settings-card nerd-card nerd-card--cache-stats">
@@ -1419,6 +1525,8 @@ async function confirmClearCoverTorrents() {
         </div>
 
       </div>
+
+      <AchievementsModal v-model:open="achievementsBrowseOpen" :rows="achievementRows" />
     </div>
 
     <!-- ── О приложении ───────────────────────────────────────── -->
@@ -1603,6 +1711,25 @@ async function confirmClearCoverTorrents() {
   font-size: 13px;
   color: var(--muted);
   line-height: 1.4;
+}
+
+/* ── Параметры для задротов / Щитпост ─────────────────────────────────────────────── */
+.settings-extra-toggles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.settings-extra-toggles .nerd-toggle {
+  margin-bottom: 0;
+}
+.settings-extra-toggles .nerd-toggle--row {
+  flex: none;
+  align-self: flex-start;
+}
+.settings-shitpost-panel {
+  margin-bottom: 12px;
 }
 
 /* ── Параметры для задротов ────────────────────────────────────────────────────────── */
@@ -2256,5 +2383,113 @@ async function confirmClearCoverTorrents() {
   color: #fff;
   flex-shrink: 0;
   box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+
+/* ── Achievements (opt-in) ──────────────────────────────────────────────────── */
+.settings-card--achievements .settings-card-header {
+  align-items: center;
+}
+.ach-opt-toggle {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 26px;
+  cursor: pointer;
+}
+.ach-opt-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+.ach-opt-toggle-ui {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 13px;
+  background: var(--border);
+  transition: background 0.15s ease;
+  pointer-events: none;
+}
+.ach-opt-toggle-ui::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  transition: transform 0.15s ease;
+}
+.ach-opt-toggle-input:checked + .ach-opt-toggle-ui {
+  background: color-mix(in srgb, var(--accent) 75%, var(--border));
+}
+.ach-opt-toggle-input:checked + .ach-opt-toggle-ui::after {
+  transform: translateX(18px);
+}
+.ach-opt-toggle-input:focus-visible + .ach-opt-toggle-ui {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.settings-card-body--achievements {
+  /* Отступ от разделительной линии до текста (раньше было 0 — прилипало) */
+  padding-top: 22px;
+}
+.ach-inline-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ach-inline-link:hover {
+  color: var(--text);
+}
+.ach-copy {
+  margin-bottom: 10px;
+}
+.ach-copy-tight {
+  margin-bottom: 12px;
+}
+.ach-copy--muted {
+  color: var(--muted);
+}
+.ach-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.ach-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface-h);
+  color: var(--text);
+}
+.ach-btn:hover {
+  background: color-mix(in srgb, var(--surface-h) 85%, var(--accent));
+}
+.ach-btn--primary {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--text);
+}
+.ach-btn--primary:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+.ach-btn--danger {
+  border-color: color-mix(in srgb, #c44 35%, var(--border));
+  background: transparent;
+  color: color-mix(in srgb, #e66 88%, var(--text));
+}
+.ach-btn--danger:hover {
+  background: color-mix(in srgb, #c44 12%, transparent);
 }
 </style>
