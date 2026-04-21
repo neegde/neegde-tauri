@@ -34,6 +34,8 @@ import {
 import { appDebugLog } from "../../appDebugLog.js";
 import { syncDiscordPresence, clearDiscordPresence } from "../../discordPresence.js";
 import { enrichTrackMeta } from "../../audio/metadataEnrich.js";
+import { slskMeta } from "../../soulseek/slskMetaStore.js";
+import { getSlskCoverReactive, getSlskCoverDataUrl } from "../../soulseek/coverCache.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -78,15 +80,46 @@ const emit = defineEmits([
   "toggle-shuffle",
 ]);
 
-const currentArtist = computed(() =>
-  enrichedMeta.value?.artist ||
-  extractTrackArtist(props.track?.torrentName, props.track?.albumDirPath, props.track?.artist, props.track?.magnet) ||
-  ""
-);
+/** Same key as Results `slskMeta` — artist/title/coverUrl from filename + iTunes, matches track list. */
+const soulseekSearchMeta = computed(() => {
+  const t = props.track;
+  if (!t || t.source !== "soulseek" || t.slskMetaTrackId == null || t.slskMetaTrackId === "") {
+    return null;
+  }
+  return slskMeta.get(t.slskMetaTrackId) ?? null;
+});
 
-const displayTitle = computed(
-  () => enrichedMeta.value?.title || trackDisplayBasename(props.track?.fileName ?? "")
-);
+const currentArtist = computed(() => {
+  const t = props.track;
+  if (soulseekSearchMeta.value?.artist) return soulseekSearchMeta.value.artist;
+  if (enrichedMeta.value?.artist) return enrichedMeta.value.artist;
+  return (
+    extractTrackArtist(t?.torrentName, t?.albumDirPath, t?.artist, t?.magnet) || ""
+  );
+});
+
+const displayTitle = computed(() => {
+  const t = props.track;
+  if (soulseekSearchMeta.value?.title) return soulseekSearchMeta.value.title;
+  if (enrichedMeta.value?.title) return enrichedMeta.value.title;
+  return trackDisplayBasename(t?.fileName ?? "");
+});
+
+const playerCoverOverride = computed(() => {
+  const e = enrichedMeta.value?.coverUrl;
+  if (e) return e;
+  const t = props.track;
+  if (!t || t.source !== "soulseek") return "";
+  const sm = soulseekSearchMeta.value;
+  if (sm?.coverUrl) return sm.coverUrl;
+  const u = t.slskFolderCoverUsername;
+  const p = t.slskFolderCoverFilepath;
+  if (u && p) {
+    const folder = getSlskCoverReactive(u, p);
+    if (folder) return folder;
+  }
+  return "";
+});
 
 function onArtistClick() {
   const a = currentArtist.value;
@@ -697,6 +730,29 @@ watchEffect(() => {
   });
 });
 
+/**
+ * Merges SoulSeek search metadata with MusicBrainz for Media Session / OS "now playing".
+ *
+ * Args:
+ *     t: Current queue item or null.
+ *
+ * Returns:
+ *     Object suitable as second arg to syncMediaSessionMetadata, or null.
+ */
+function buildSessionEnriched(t) {
+  if (!t || t.source !== "soulseek" || t.slskMetaTrackId == null || t.slskMetaTrackId === "") {
+    return null;
+  }
+  const sm = slskMeta.get(t.slskMetaTrackId);
+  if (!sm) return null;
+  return {
+    artist: sm.artist,
+    title: sm.title,
+    album: sm.albumUrl ?? "",
+    coverUrl: sm.coverUrl ?? null,
+  };
+}
+
 watch(
   () => props.track,
   (t) => {
@@ -705,19 +761,32 @@ watch(
       clearMediaSessionPresentation();
       return;
     }
-    void syncMediaSessionMetadata(t);
+    if (t.source === "soulseek") {
+      const u = t.slskFolderCoverUsername;
+      const p = t.slskFolderCoverFilepath;
+      if (u && p && !getSlskCoverReactive(u, p)) {
+        void getSlskCoverDataUrl(u, p, t.slskFolderCoverSize ?? 0);
+      }
+    }
+    void syncMediaSessionMetadata(t, buildSessionEnriched(t));
     // MusicBrainz enrichment in background — does NOT block playback
     let artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
     let titleLocal = trackDisplayBasename(t.fileName);
-    const parsed = parseArtistTitleFromTrackFilename(t.fileName || t.torrentName || "");
-    if (parsed.artist) {
-      artistLocal = parsed.artist;
-      titleLocal = parsed.title;
+    const sm0 = t.slskMetaTrackId ? slskMeta.get(t.slskMetaTrackId) : null;
+    if (sm0?.artist && sm0?.title) {
+      artistLocal = sm0.artist;
+      titleLocal = sm0.title;
+    } else {
+      const parsed = parseArtistTitleFromTrackFilename(t.fileName || t.torrentName || "");
+      if (parsed.artist) {
+        artistLocal = parsed.artist;
+        titleLocal = parsed.title;
+      }
     }
     enrichTrackMeta(artistLocal, titleLocal, (meta) => {
       if (props.track !== t) return; // track changed while request was in flight
       enrichedMeta.value = meta;
-      void syncMediaSessionMetadata(t, meta);
+      void syncMediaSessionMetadata(t, { ...buildSessionEnriched(t), ...meta });
     });
   },
   { immediate: true }
@@ -739,8 +808,8 @@ function discordPresencePayload() {
   const t = props.track;
   if (!trackHasPlaybackIdentity(t)) return null;
   return {
-    title: trackDisplayBasename(t.fileName) || "Трек",
-    subtitle: extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet),
+    title: displayTitle.value || "Трек",
+    subtitle: currentArtist.value || "",
     playing: playing.value,
     positionSec: Number.isFinite(current.value) ? current.value : null,
     durationSec:
@@ -1388,7 +1457,7 @@ onUnmounted(() => {
           :source="track.source"
           :magnet="track.magnet"
           :cover-file-idx="track.coverFileIdx ?? null"
-          :override-cover-url="enrichedMeta?.coverUrl ?? ''"
+          :override-cover-url="playerCoverOverride"
           :size="56"
           :radius="4"
           fallback="♪"

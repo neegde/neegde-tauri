@@ -1104,6 +1104,11 @@ async function handleSelect(torrent) {
         slskUsername: t.slsk_username ?? torrent.slsk_username,
         slskFilepath: t.slsk_filepath ?? normalized,
         slskFilesize: t.size ?? 0,
+        /** Same id as search rows — `slskMeta` map key for artist/title/cover from Results. */
+        slskMetaTrackId: torrent.id,
+        slskFolderCoverUsername: torrent.slsk_cover_username ?? null,
+        slskFolderCoverFilepath: torrent.slsk_cover_filepath ?? null,
+        slskFolderCoverSize: torrent.slsk_cover_size ?? 0,
       };
     });
     loadingFiles.value = false;
@@ -1163,6 +1168,10 @@ function handlePlaySlskTrack(track) {
     slskUsername: username,
     slskFilepath: track.slsk_filepath ?? track.slsk_tracks?.[0]?.slsk_filepath ?? filepath,
     slskFilesize: track.size ?? 0,
+    slskMetaTrackId: track.id,
+    slskFolderCoverUsername: track.slsk_cover_username ?? null,
+    slskFolderCoverFilepath: track.slsk_cover_filepath ?? null,
+    slskFolderCoverSize: track.slsk_cover_size ?? 0,
   };
   queue.value = [item];
   queuePos.value = 0;
@@ -1239,6 +1248,10 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
     item.slskUsername = f.slskUsername ?? torrent.slsk_username ?? null;
     item.slskFilepath = f.slskFilepath ?? f.path ?? null;
     item.slskFilesize = f.slskFilesize ?? f.size ?? torrent.size ?? 0;
+    item.slskMetaTrackId = f.slskMetaTrackId ?? torrent?.id ?? null;
+    item.slskFolderCoverUsername = f.slskFolderCoverUsername ?? torrent?.slsk_cover_username ?? null;
+    item.slskFolderCoverFilepath = f.slskFolderCoverFilepath ?? torrent?.slsk_cover_filepath ?? null;
+    item.slskFolderCoverSize = f.slskFolderCoverSize ?? torrent?.slsk_cover_size ?? 0;
   }
   return item;
 }
