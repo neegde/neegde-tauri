@@ -323,6 +323,21 @@ pub fn soulseek_load_credentials(app: tauri::AppHandle) -> Option<(String, Strin
     Some((creds.username, creds.password))
 }
 
+/// Deletes saved SoulSeek credentials (after explicit logout from settings).
+#[tauri::command]
+pub fn soulseek_clear_saved_credentials(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("slsk_creds.json");
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn cover_mime_from_path(filepath: &str) -> String {

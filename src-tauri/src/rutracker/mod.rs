@@ -557,7 +557,7 @@ pub async fn rutracker_restore_session(
         .await
         .map_err(|e| format!("Сетевая ошибка: {}", e))?;
 
-    if resp.url().to_string().contains("/login.php") {
+    if resp.url().path().contains("login") {
         // Session expired — wipe files
         state.wipe();
         return Ok(LoginStatus {
@@ -567,7 +567,44 @@ pub async fn rutracker_restore_session(
         });
     }
 
-    // Session is valid — restore from saved meta (no extra network requests)
+    // Tracker search page: same auth barrier as `search_music` — index alone can load for guests.
+    let resp_t = client
+        .get(format!("{}/forum/tracker.php", base))
+        .query(&[("nm", ".")])
+        .send()
+        .await
+        .map_err(|e| format!("Сетевая ошибка: {}", e))?;
+
+    if resp_t.url().path().contains("login") {
+        state.wipe();
+        return Ok(LoginStatus {
+            logged_in: false,
+            username: None,
+            avatar_url: None,
+        });
+    }
+
+    let bytes = resp_t
+        .bytes()
+        .await
+        .map_err(|e| format!("Ошибка чтения ответа трекера: {}", e))?;
+    let html_track = if std::str::from_utf8(&bytes).is_ok() {
+        String::from_utf8(bytes.to_vec()).unwrap()
+    } else {
+        let (cow, _, _) = WINDOWS_1251.decode(&bytes);
+        cow.into_owned()
+    };
+
+    if html_track.contains(r#"name="login_username""#) {
+        state.wipe();
+        return Ok(LoginStatus {
+            logged_in: false,
+            username: None,
+            avatar_url: None,
+        });
+    }
+
+    // Index + tracker both indicate an authenticated session — restore from saved meta
     let meta = load_meta(&state.meta_path);
 
     let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;

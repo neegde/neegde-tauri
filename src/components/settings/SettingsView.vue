@@ -28,6 +28,7 @@ import {
   probeHttpProxy,
 } from "../../rutracker/proxyConfig.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
+import { hadRutrackerAccount } from "../../rutracker/accountHint.js";
 import { clearSlskCoverCache } from "../../soulseek/api.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
@@ -61,6 +62,34 @@ const slskFormUser = ref(localStorage.getItem("neegde.slsk.user") || "");
 const slskFormPass = ref("");
 watch(slskFormUser, (v) => localStorage.setItem("neegde.slsk.user", v));
 
+/**
+ * After explicit logout the backend deletes `slsk_creds.json` — clear the form if nothing saved.
+ *
+ * Returns:
+ *     void
+ */
+watch(
+  () => props.slskConnected,
+  async (connected, prev) => {
+    if (prev !== true || connected !== false) return;
+    let creds = null;
+    try {
+      creds = await invoke("soulseek_load_credentials");
+    } catch {
+      return;
+    }
+    if (!creds) {
+      slskFormUser.value = "";
+      slskFormPass.value = "";
+      try {
+        localStorage.removeItem("neegde.slsk.user");
+      } catch {
+        /* ignore */
+      }
+    }
+  },
+);
+
 // Предзаполняем форму сохранёнными credentials
 onMounted(async () => {
   try {
@@ -92,6 +121,11 @@ const vozduxanVersion = __VOZDUXAN_VERSION__;
 const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
 const githubProjectUrl = __GITHUB_PROJECT_URL__;
 const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
+
+/** Официальный форум RuTracker (регистрация и вход — те же логин/пароль). */
+const RUTRACKER_FORUM_URL = "https://rutracker.org/forum/index.php";
+/** Сайт Soulseek: справка по аккаунту и сеть. */
+const SOULSEEK_ACCOUNT_INFO_URL = "https://www.slsknet.org/news/user";
 
 const releaseCheckState = ref(githubReleaseApiUrl ? "loading" : "idle");
 const releaseRemoteTag = ref(null);
@@ -215,6 +249,22 @@ const rtReconnectBusy = ref(false);
 const rtReconnectMsg = ref(null);
 /** После неуспеха переподключения скрываем текст и форму ввода до «Выйти из аккаунта» (или успешного входа). */
 const rtCredentialsHiddenUntilLogout = ref(false);
+
+/**
+ * Показывать «Переподключиться» / «Выйти из аккаунта» только если есть сохранённая сессия
+ * или уже шёл сценарий ошибки сессии — не после явного «Выйти» без следов аккаунта.
+ *
+ * Returns:
+ *     Whether session-recovery actions should be visible.
+ */
+const showRutrackerSessionRecovery = computed(() => {
+  if (props.rtLoggedIn || props.restoringSession) return false;
+  return (
+    hadRutrackerAccount() ||
+    Boolean(rtReconnectMsg.value) ||
+    rtCredentialsHiddenUntilLogout.value
+  );
+});
 
 /** Повторная проверка сохранённых cookies на сервере (без пароля). */
 async function handleRtReconnect() {
@@ -639,8 +689,11 @@ async function confirmClearCoverTorrents() {
     <!-- ── Источники ─────────────────────────────────────────── -->
     <div class="settings-section">
       <div class="settings-section-label">Источники музыки</div>
+      <p class="settings-section-lead">
+        Подключите те сервисы, которыми пользуетесь: оба независимы — регистрируются отдельно.
+      </p>
 
-      <div class="settings-card">
+      <div class="settings-card settings-card--integration">
         <!-- ── Logged in: user card + выход ── -->
         <div v-if="rtLoggedIn" class="settings-card-header">
           <div class="rt-avatar">
@@ -694,32 +747,65 @@ async function confirmClearCoverTorrents() {
           </div>
         </div>
 
-        <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
-          <p v-if="rtReconnectMsg" class="rt-reconnect-msg rt-reconnect-msg--error">
-            {{ rtReconnectMsg }}
+        <div
+          v-if="!rtLoggedIn && !restoringSession"
+          class="settings-integration-banner settings-integration-banner--rt"
+        >
+          <div class="settings-integration-banner__head">
+            <span class="integration-pill integration-pill--rt">Торрент-трекер</span>
+            <span class="integration-pill integration-pill--neutral">Поиск альбомов</span>
+          </div>
+          <p class="settings-integration-banner__text">
+            Нужен <strong>аккаунт форума RuTracker</strong> — тот же логин и пароль, что на
+            rutracker.org / rutracker.net. Если профиля ещё нет, зарегистрируйтесь на официальном зеркале форума.
           </p>
-          <p v-else class="settings-card-desc rt-session-desc">
-            Уже входили в этом приложении? Можно восстановить сессию без пароля.
-          </p>
-          <div class="rt-session-actions rt-session-actions--failure">
+          <div class="settings-integration-banner__actions">
             <button
               type="button"
-              class="settings-action-btn settings-action-btn--primary"
-              :disabled="rtReconnectBusy"
-              @click="handleRtReconnect"
+              class="settings-integration-link-btn"
+              @click="openExternalUrl(RUTRACKER_FORUM_URL)"
             >
-              <span v-if="rtReconnectBusy" class="spinner" />
-              <template v-else>{{ rtCredentialsHiddenUntilLogout ? "Попробовать снова" : "Переподключиться" }}</template>
-            </button>
-            <button
-              type="button"
-              class="settings-action-btn settings-action-btn--ghost"
-              :disabled="rtReconnectBusy"
-              @click="handleRtLogout"
-            >
-              Выйти из аккаунта
+              Открыть форум RuTracker
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
             </button>
           </div>
+        </div>
+        <p v-else-if="rtLoggedIn" class="settings-integration-compact settings-integration-compact--rt">
+          <span class="integration-pill integration-pill--rt integration-pill--tiny">RuTracker</span>
+          Поиск и прослушивание через торрент-раздачи; вход — ваш логин с форума.
+        </p>
+
+        <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
+          <template v-if="showRutrackerSessionRecovery">
+            <p v-if="rtReconnectMsg" class="rt-reconnect-msg rt-reconnect-msg--error">
+              {{ rtReconnectMsg }}
+            </p>
+            <p v-else class="settings-card-desc rt-session-desc">
+              Уже входили в этом приложении? Можно восстановить сессию без пароля.
+            </p>
+            <div class="rt-session-actions rt-session-actions--failure">
+              <button
+                type="button"
+                class="settings-action-btn settings-action-btn--primary"
+                :disabled="rtReconnectBusy"
+                @click="handleRtReconnect"
+              >
+                <span v-if="rtReconnectBusy" class="spinner" />
+                <template v-else>{{ rtCredentialsHiddenUntilLogout ? "Попробовать снова" : "Переподключиться" }}</template>
+              </button>
+              <button
+                type="button"
+                class="settings-action-btn settings-action-btn--ghost"
+                :disabled="rtReconnectBusy"
+                @click="handleRtLogout"
+              >
+                Выйти из аккаунта
+              </button>
+            </div>
+          </template>
 
           <template v-if="!rtCredentialsHiddenUntilLogout">
             <p class="settings-card-desc settings-card-desc--after-reconnect">
@@ -755,7 +841,7 @@ async function confirmClearCoverTorrents() {
       </div>
 
       <!-- ── SoulSeek card ── -->
-      <div class="settings-card settings-card--slsk">
+      <div class="settings-card settings-card--slsk settings-card--integration">
         <!-- Connected -->
         <div v-if="slskConnected" class="settings-card-header">
           <div class="slsk-avatar">
@@ -789,9 +875,42 @@ async function confirmClearCoverTorrents() {
           </div>
         </div>
 
+        <div
+          v-if="!slskConnected"
+          class="settings-integration-banner settings-integration-banner--slsk"
+        >
+          <div class="settings-integration-banner__head">
+            <span class="integration-pill integration-pill--slsk">P2P-сеть</span>
+            <span class="integration-pill integration-pill--neutral">Отдельные треки</span>
+          </div>
+          <p class="settings-integration-banner__text">
+            <strong>Логин и пароль — от сети SoulSeek</strong>, те же, что в клиентах
+            Nicotine+, Soulseek Qt и др. Отдельной «регистрации на сайте» обычно нет: имя пользователя
+            и пароль задаются при первом входе в официальном клиенте. Здесь вводите те же данные.
+            Сброс пароля и справка — на сайте проекта Soulseek.
+          </p>
+          <div class="settings-integration-banner__actions">
+            <button
+              type="button"
+              class="settings-integration-link-btn settings-integration-link-btn--slsk"
+              @click="openExternalUrl(SOULSEEK_ACCOUNT_INFO_URL)"
+            >
+              Справка по аккаунту Soulseek
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p v-else class="settings-integration-compact settings-integration-compact--slsk">
+          <span class="integration-pill integration-pill--slsk integration-pill--tiny">SoulSeek</span>
+          Поиск треков у пользователей сети; учётные данные — от вашего клиента SoulSeek.
+        </p>
+
         <div v-if="!slskConnected" class="settings-card-body">
           <p class="settings-card-desc">
-            Войдите в аккаунт SoulSeek для поиска и стриминга музыки от пользователей сети.
+            Войдите, используя логин и пароль от сети SoulSeek (см. плашку выше).
           </p>
           <form
             class="settings-login-form"

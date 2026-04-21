@@ -29,6 +29,7 @@ import {
   soulseekSearch,
   soulseekSaveCredentials,
   soulseekLoadCredentials,
+  soulseekClearSavedCredentials,
   clearSlskCoverCache,
 } from "./soulseek/api.js";
 import { exportTorrentFiles } from "./torrent/torrentExport.js";
@@ -797,7 +798,16 @@ async function handleSoulseekLogin(username, password) {
 }
 
 async function handleSoulseekLogout() {
-  try { await soulseekLogout(); } catch { /* ignore */ }
+  try {
+    await soulseekLogout();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await soulseekClearSavedCredentials();
+  } catch {
+    /* ignore */
+  }
   slskConnected.value = false;
   slskUsername.value = null;
   clearSlskCoverCache();

@@ -90,6 +90,13 @@ export function soulseekLoadCredentials() {
   return invoke("soulseek_load_credentials");
 }
 
+/**
+ * Removes saved SoulSeek username/password from disk (used after «Выйти» in settings).
+ */
+export function soulseekClearSavedCredentials() {
+  return invoke("soulseek_clear_saved_credentials");
+}
+
 export {
   clearSlskCoverCache,
   getSlskCoverDataUrl,
