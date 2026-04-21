@@ -31,7 +31,13 @@ function clear() {
 <template>
   <form class="search-form" @submit="submit">
     <div class="search-input-wrap">
-      <span class="search-icon">♫</span>
+      <span class="search-icon" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M9 18V5l12-2v13"/>
+          <circle cx="6" cy="18" r="3"/>
+          <circle cx="18" cy="16" r="3"/>
+        </svg>
+      </span>
       <input
         class="search-input"
         type="text"

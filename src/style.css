@@ -243,7 +243,15 @@ body {
   transition: background 0.2s;
 }
 .search-input-wrap:focus-within { background: rgba(255,255,255,0.17); }
-.search-icon  { color: var(--muted); font-size: 17px; flex-shrink: 0; }
+.search-icon  {
+  color: var(--muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.search-icon svg { display: block; }
 .search-input {
   flex: 1;
   background: none;
@@ -953,6 +961,10 @@ body {
   padding: 7px 16px;
   cursor: pointer;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
   transition: border-color 0.15s, color 0.15s, transform 0.1s;
 }
 .btn-dl-album:hover { border-color: var(--text); color: var(--text); transform: scale(1.04); }
@@ -1868,10 +1880,13 @@ body {
 }
 .onboarding-card--dim { opacity: 0.55; }
 .onboarding-icon {
-  font-size: 22px;
   flex-shrink: 0;
   margin-top: 1px;
-  line-height: 1;
+  line-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
 }
 .onboarding-body { min-width: 0; }
 .onboarding-title {

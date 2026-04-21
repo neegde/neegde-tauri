@@ -32,6 +32,7 @@ import { hadRutrackerAccount } from "../../rutracker/accountHint.js";
 import { clearSlskCoverCache } from "../../soulseek/api.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import AchievementsModal from "./AchievementsModal.vue";
+import SystemIcon from "../shared/SystemIcon.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
 import {
   fetchLatestGithubRelease,
@@ -776,7 +777,9 @@ async function confirmResetAchievements() {
 
         <!-- ── Not logged in: generic icon ── -->
         <div v-else class="settings-card-header">
-          <div class="settings-card-icon">🔗</div>
+          <div class="settings-card-icon">
+            <SystemIcon name="link" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Rutracker</div>
             <div class="settings-card-status">
@@ -904,7 +907,9 @@ async function confirmResetAchievements() {
 
         <!-- Not connected -->
         <div v-else class="settings-card-header">
-          <div class="settings-card-icon">🎵</div>
+          <div class="settings-card-icon">
+            <SystemIcon name="music" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">SoulSeek</div>
             <div class="settings-card-status">
@@ -989,7 +994,9 @@ async function confirmResetAchievements() {
 
       <div class="settings-card">
         <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">🎨</div>
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="palette" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Тема</div>
             <div class="settings-card-status">{{ theme === 'light' ? 'Светлая' : theme === 'system' ? 'Системная' : 'Тёмная' }}</div>
@@ -1017,7 +1024,9 @@ async function confirmResetAchievements() {
       <div class="settings-section-label">Звук</div>
       <div class="settings-card">
         <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">🎚</div>
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="sliders" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Эквалайзер</div>
             <div class="settings-card-status">10 полос · Web Audio · локально</div>
@@ -1034,7 +1043,9 @@ async function confirmResetAchievements() {
       <div class="settings-section-label">Кэш</div>
       <div class="settings-card settings-card--cache-quick">
         <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">🗑</div>
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="trash" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Очистка на диске</div>
             <div class="settings-card-status">Удалить данные кэша без смены лимитов</div>
@@ -1072,7 +1083,9 @@ async function confirmResetAchievements() {
     <div class="settings-section settings-section--bottom-extras">
       <div class="settings-extra-toggles">
         <button type="button" class="nerd-toggle nerd-toggle--row" @click="nerdOpen = !nerdOpen">
-          <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
+          <span class="nerd-toggle-icon" aria-hidden="true">
+            <SystemIcon :name="nerdOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
+          </span>
           Параметры для задротов
           <span
             v-if="hasCustomMirror() || hasHttpProxyConfigured()"
@@ -1081,7 +1094,9 @@ async function confirmResetAchievements() {
           />
         </button>
         <button type="button" class="nerd-toggle nerd-toggle--row" @click="shitpostOpen = !shitpostOpen">
-          <span class="nerd-toggle-icon">{{ shitpostOpen ? '▾' : '▸' }}</span>
+          <span class="nerd-toggle-icon" aria-hidden="true">
+            <SystemIcon :name="shitpostOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
+          </span>
           Щитпост
           <span
             v-if="achievementsOptIn"
@@ -1094,7 +1109,9 @@ async function confirmResetAchievements() {
       <div v-if="shitpostOpen" class="settings-shitpost-panel">
         <div class="settings-card settings-card--achievements">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">✦</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="sparkle" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">Достижения</div>
               <div class="settings-card-status">
@@ -1150,7 +1167,9 @@ async function confirmResetAchievements() {
       <div v-if="nerdOpen" class="nerd-stack">
         <div class="settings-card nerd-card nerd-card--cache-stats">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">⏱</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="clock" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">Кэш на диске и статистика</div>
               <div class="settings-card-status">Лимиты TTL, объёмы и папка данных</div>
@@ -1163,13 +1182,13 @@ async function confirmResetAchievements() {
               @click="loadNerdDiagnostics"
             >
               <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
-              <template v-else>↻</template>
+              <SystemIcon v-else name="refresh" :size="18" />
             </button>
           </div>
           <div class="settings-card-body">
             <p class="settings-card-desc nerd-desc">
               Лимиты задают размер папки стриминга и время жизни неактивных торрентов. Ниже — фактические
-              объёмы RAM и диска (↻ обновляет цифры и подтягивает сохранённые лимиты).
+              объёмы RAM и диска (<span class="nerd-inline-ico" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span> обновляет цифры и подтягивает сохранённые лимиты).
             </p>
 
             <div class="nerd-merge-label">Лимиты</div>
@@ -1208,7 +1227,11 @@ async function confirmResetAchievements() {
                 @click="saveCacheSettings"
               >
                 <span v-if="cacheSaveBusy" class="spinner" />
-                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
+                <span v-else-if="cacheSaveOk" class="settings-btn-saved">
+                  <SystemIcon name="check" :size="14" />
+                  <span>Сохранено</span>
+                </span>
+                <template v-else>Сохранить лимиты</template>
               </button>
             </div>
 
@@ -1334,13 +1357,19 @@ async function confirmResetAchievements() {
               </div>
             </div>
 
-            <p v-else class="nerd-stat-hint">Нажми ↻ чтобы обновить.</p>
+            <p v-else class="nerd-stat-hint">
+              Нажми
+              <span class="nerd-inline-ico nerd-inline-ico--btn" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span>
+              чтобы обновить.
+            </p>
           </div>
         </div>
 
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🪞</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="mirror" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">Зеркало Rutracker</div>
               <div class="settings-card-status">Адрес сайта для подключения</div>
@@ -1378,7 +1407,11 @@ async function confirmResetAchievements() {
                   @click="saveMirror"
                 >
                   <span v-if="nerdProbeBusy" class="spinner" />
-                  <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
+                    <SystemIcon name="check" :size="14" />
+                    <span>Сохранено</span>
+                  </span>
+                  <template v-else>Сохранить</template>
                 </button>
                 <button
                   v-if="persistedMirrorMode === MIRROR_MODE_AUTO"
@@ -1421,7 +1454,11 @@ async function confirmResetAchievements() {
                   @click="saveMirror"
                 >
                   <span v-if="nerdProbeBusy" class="spinner" />
-                  <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
+                    <SystemIcon name="check" :size="14" />
+                    <span>Сохранено</span>
+                  </span>
+                  <template v-else>Сохранить</template>
                 </button>
               </div>
             </template>
@@ -1447,7 +1484,9 @@ async function confirmResetAchievements() {
 
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🌐</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="globe" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">HTTP-прокси</div>
               <div class="settings-card-status">Тип HTTP · пресеты blockme</div>
@@ -1473,7 +1512,11 @@ async function confirmResetAchievements() {
                 @click="saveProxy"
               >
                 <span v-if="proxySaveBusy" class="spinner" />
-                <template v-else>{{ proxySaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                <span v-else-if="proxySaved" class="settings-btn-saved">
+                  <SystemIcon name="check" :size="14" />
+                  <span>Сохранено</span>
+                </span>
+                <template v-else>Сохранить</template>
               </button>
               <button
                 type="button"
@@ -1500,7 +1543,9 @@ async function confirmResetAchievements() {
 
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🪲</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="bug" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">Журнал отладки</div>
               <div class="settings-card-status">Клики, экраны, плеер, торренты</div>
@@ -1750,7 +1795,32 @@ async function confirmResetAchievements() {
   transition: color 0.15s;
 }
 .nerd-toggle:hover { color: var(--text); }
-.nerd-toggle-icon  { font-size: 10px; }
+.nerd-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  flex-shrink: 0;
+}
+.settings-btn-saved {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  line-height: 1;
+}
+.nerd-inline-ico {
+  display: inline-flex;
+  vertical-align: -0.15em;
+  margin: 0 1px;
+  color: inherit;
+}
+.nerd-inline-ico--btn {
+  padding: 1px 2px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  vertical-align: -0.2em;
+}
 
 .nerd-toggle-inline {
   display: flex;

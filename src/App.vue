@@ -76,6 +76,7 @@ import {
   applyLikeChange,
 } from "./achievements/achievementsCore.js";
 import AchievementToast from "./components/shell/AchievementToast.vue";
+import SystemIcon from "./components/shared/SystemIcon.vue";
 
 // ── SoulSeek result grouping ──────────────────────────────────────────────────
 
@@ -2636,7 +2637,9 @@ function onMouseSideButtonUp(e) {
             class="onboarding"
           >
             <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
-              <div class="onboarding-icon">🔗</div>
+              <div class="onboarding-icon" aria-hidden="true">
+                <SystemIcon name="link" :size="28" />
+              </div>
               <div class="onboarding-body">
                 <div class="onboarding-title">Подключите источники поиска</div>
                 <div class="onboarding-desc">

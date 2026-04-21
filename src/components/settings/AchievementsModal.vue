@@ -1,4 +1,6 @@
 <script setup>
+import SystemIcon from "../shared/SystemIcon.vue";
+
 const props = defineProps({
   /** Controlled visibility. */
   open: { type: Boolean, default: false },
@@ -36,7 +38,9 @@ function close() {
       >
         <div class="ach-modal-head">
           <h2 id="ach-modal-title" class="ach-modal-title">Достижения</h2>
-          <button type="button" class="ach-modal-x" title="Закрыть" @click="close">×</button>
+          <button type="button" class="ach-modal-x" title="Закрыть" @click="close">
+            <SystemIcon name="close" :size="20" />
+          </button>
         </div>
         <p class="ach-modal-hint">
           Список может со временем расти — здесь удобно листать всё сразу.
@@ -53,7 +57,9 @@ function close() {
             }"
           >
             <span class="ach-modal-row-mark" aria-hidden="true">
-              {{ row.stub ? "—" : row.unlocked ? "✓" : "○" }}
+              <template v-if="row.stub">—</template>
+              <SystemIcon v-else-if="row.unlocked" name="check" :size="14" />
+              <SystemIcon v-else name="circle" :size="14" />
             </span>
             <span class="ach-modal-row-body">
               <span class="ach-modal-row-title">
@@ -118,9 +124,11 @@ function close() {
   border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font-size: 22px;
-  line-height: 1;
+  line-height: 0;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ach-modal-x:hover {
@@ -188,9 +196,12 @@ function close() {
 .ach-modal-row-mark {
   flex-shrink: 0;
   width: 22px;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--muted);
   font-size: 13px;
+  line-height: 0;
 }
 
 .ach-modal-row--ok .ach-modal-row-mark {

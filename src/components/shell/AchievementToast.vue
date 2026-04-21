@@ -1,5 +1,6 @@
 <script setup>
 import { watch, onUnmounted } from "vue";
+import SystemIcon from "../shared/SystemIcon.vue";
 
 const props = defineProps({
   /** Achievement title (Russian). */
@@ -59,13 +60,17 @@ function close() {
     <Transition name="ach-toast">
       <div v-if="open && title" class="ach-toast" role="status" aria-live="polite">
         <div class="ach-toast-inner">
-          <div class="ach-toast-icon" aria-hidden="true">✦</div>
+          <div class="ach-toast-icon" aria-hidden="true">
+            <SystemIcon name="sparkle" :size="18" />
+          </div>
           <div class="ach-toast-text">
             <div class="ach-toast-kicker">Достижение</div>
             <div class="ach-toast-title">{{ title }}</div>
             <p v-if="description" class="ach-toast-desc">{{ description }}</p>
           </div>
-          <button type="button" class="ach-toast-close" title="Закрыть" @click="close">×</button>
+          <button type="button" class="ach-toast-close" title="Закрыть" @click="close">
+            <SystemIcon name="close" :size="18" />
+          </button>
         </div>
       </div>
     </Transition>
@@ -103,8 +108,7 @@ function close() {
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
-  font-size: 15px;
-  line-height: 1;
+  line-height: 0;
 }
 
 .ach-toast-text {
@@ -142,9 +146,11 @@ function close() {
   border: none;
   background: transparent;
   color: var(--muted);
-  font-size: 20px;
-  line-height: 1;
+  line-height: 0;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
 }
 
