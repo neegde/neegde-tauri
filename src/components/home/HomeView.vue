@@ -114,7 +114,8 @@ onUnmounted(() => {
 
     <template v-else>
 
-      <section class="home-section" aria-label="Недавно открытые раздачи">
+      <section class="home-section" aria-labelledby="home-recent-heading">
+        <h2 id="home-recent-heading" class="home-section-title">Недавно слушали</h2>
         <div class="home-grid">
           <button
             v-for="item in recentSlice"
