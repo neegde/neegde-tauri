@@ -1581,6 +1581,7 @@ function handleAddToQueueFromLike(like) {
       slskUsername: like.slskUsername,
       slskFilepath: like.slskFilepath,
       slskFilesize: like.slskFilesize ?? 0,
+      slskMetaTrackId: like.id,
     });
     return;
   }
@@ -1879,6 +1880,7 @@ function handlePlayFromLike(like) {
         slskUsername: l.slskUsername,
         slskFilepath: l.slskFilepath,
         slskFilesize: l.slskFilesize ?? 0,
+        slskMetaTrackId: l.id,
       };
     }
     return row;

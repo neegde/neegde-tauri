@@ -95,16 +95,22 @@ const currentArtist = computed(() => {
   const t = props.track;
   if (soulseekSearchMeta.value?.artist) return soulseekSearchMeta.value.artist;
   if (enrichedMeta.value?.artist) return enrichedMeta.value.artist;
+  const parsed = parseArtistTitleFromTrackFilename(t?.fileName ?? "");
+  if (parsed.artist) return parsed.artist;
   return (
     extractTrackArtist(t?.torrentName, t?.albumDirPath, t?.artist, t?.magnet) || ""
   );
 });
 
+/** Matches `likeTrackLines` / Results rows: prefer split «Artist — Title» from filename when present. */
 const displayTitle = computed(() => {
   const t = props.track;
   if (soulseekSearchMeta.value?.title) return soulseekSearchMeta.value.title;
   if (enrichedMeta.value?.title) return enrichedMeta.value.title;
-  return trackDisplayBasename(t?.fileName ?? "");
+  const path = t?.fileName ?? "";
+  const { artist, title } = parseArtistTitleFromTrackFilename(path);
+  if (artist) return title;
+  return trackDisplayBasename(path);
 });
 
 const playerCoverOverride = computed(() => {
