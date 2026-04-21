@@ -15,7 +15,7 @@ const props = defineProps({
   selectedId: { default: null },
 });
 
-const emit = defineEmits(["select", "play-slsk-track"]);
+const emit = defineEmits(["select", "play-slsk-track", "download-slsk-track", "like-slsk-track"]);
 
 const INITIAL_BATCH = 40;
 const BATCH_INCREMENT = 30;
@@ -222,6 +222,8 @@ watch(
           :track="t"
           :enriched="slskMeta.get(t.id) ?? null"
           @play="emit('play-slsk-track', $event)"
+          @download="emit('download-slsk-track', $event)"
+          @like="emit('like-slsk-track', $event)"
         />
       </div>
       <div ref="sentinel" />

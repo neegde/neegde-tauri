@@ -2546,8 +2546,46 @@ body {
   transition: opacity 0.15s, color 0.15s;
   flex-shrink: 0;
 }
-.slsk-track-row:hover .slsk-track-ext-link { opacity: 1; }
-.slsk-track-ext-link:hover { color: var(--text); }
+/* ── SoulSeek context menu ────────────────────────────────────────────────── */
+.slsk-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 200px;
+  background: #282828;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+.slsk-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.slsk-ctx-item:hover { background: rgba(255,255,255,0.1); }
+.slsk-ctx-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.slsk-ctx-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 4px 0;
+}
+
 .slsk-track-chip {
   font-size: 11px;
   color: var(--accent);

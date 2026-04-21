@@ -5,13 +5,23 @@ import {
   peekSlskCover,
   getSlskCoverReactive,
 } from "../../soulseek/coverCache.js";
+import SlskContextMenu from "./SlskContextMenu.vue";
 
 const props = defineProps({
   track:    { type: Object, required: true },
   enriched: { type: Object, default: null }, // { artist, title, coverUrl?, albumUrl? }
 });
 
-const emit = defineEmits(["play"]);
+const emit = defineEmits(["play", "download", "like"]);
+
+// ── Context menu ─────────────────────────────────────────────────────────────
+const ctxMenu = ref(null); // { x, y } or null
+
+function onContextMenu(e) {
+  e.preventDefault();
+  ctxMenu.value = { x: e.clientX, y: e.clientY };
+}
+function closeCtxMenu() { ctxMenu.value = null; }
 
 function fmtDuration(secs) {
   if (!secs) return "";
@@ -95,9 +105,14 @@ const MAX_MS  = 650;  // cap on total erase+type duration
 
 function clearAnim() { clearTimeout(animTimer); animTimer = null; }
 
+function enrichedText(e) {
+  return e.artist ? `${e.artist} — ${e.title}` : (e.title ?? "");
+}
+
 function initAnim() {
   clearAnim();
   if (props.enriched) {
+    displayText.value = enrichedText(props.enriched);
     animPhase.value  = "done";
   } else {
     displayText.value = props.track?.name ?? "";
@@ -161,6 +176,7 @@ onUnmounted(() => {
     ref="rowRef"
     class="slsk-track-row"
     @click="emit('play', track)"
+    @contextmenu.prevent="onContextMenu"
   >
     <div class="slsk-track-thumb-wrap" aria-hidden="true">
       <img
@@ -179,20 +195,10 @@ onUnmounted(() => {
       </svg>
     </button>
 
-    <!-- Name area: animated single-line → two-line enriched layout -->
+    <!-- Name area: single line throughout (no DOM switch = no flicker) -->
     <div class="slsk-track-name-area">
-      <!-- Final two-line layout after animation completes -->
-      <div
-        v-if="animPhase === 'done' && enriched"
-        class="slsk-track-name-block slsk-track-name-block--enriched"
-      >
-        <span class="slsk-track-enriched-artist">{{ enriched.artist }}</span>
-        <span class="slsk-track-enriched-title">{{ enriched.title }}</span>
-      </div>
-      <!-- Animated / static single line -->
-      <span v-else class="slsk-track-name-block">
-        {{ animPhase === 'done' ? (track.name ?? '') : displayText
-        }}<span
+      <span class="slsk-track-name-block">
+        {{ displayText }}<span
           v-if="animPhase !== 'done'"
           class="slsk-cursor"
           :class="`slsk-cursor--${animPhase}`"
@@ -201,22 +207,20 @@ onUnmounted(() => {
       </span>
     </div>
 
+    <Teleport to="body">
+      <SlskContextMenu
+        v-if="ctxMenu"
+        :x="ctxMenu.x"
+        :y="ctxMenu.y"
+        :track="track"
+        @close="closeCtxMenu"
+        @play="emit('play', $event)"
+        @download="emit('download', $event)"
+        @like="emit('like', $event)"
+      />
+    </Teleport>
+
     <span class="slsk-track-meta">
-      <a
-        v-if="enriched?.albumUrl"
-        class="slsk-track-ext-link"
-        :href="enriched.albumUrl"
-        target="_blank"
-        rel="noopener"
-        title="Открыть в Apple Music"
-        @click.stop
-      >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-          <polyline points="15 3 21 3 21 9"/>
-          <line x1="10" y1="14" x2="21" y2="3"/>
-        </svg>
-      </a>
       <span
         v-if="Number(track.seeders) > 1"
         class="slsk-track-chip"
