@@ -1902,9 +1902,10 @@ body {
   line-height: 1.5;
 }
 
-/* ── Search history pills ──────────────────────────────────────────────── */
+/* ── Search history (list) ─────────────────────────────────────────────── */
 .search-history-wrap {
   margin-top: 8px;
+  width: 100%;
   animation: fade-up 0.2s ease;
 }
 .search-history-label {
@@ -1915,29 +1916,85 @@ body {
   color: var(--muted);
   margin-bottom: 10px;
 }
-.search-history-pills {
+.search-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: none;
 }
-.search-history-pill {
+.search-history-item {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  overflow: hidden;
+  transition: background 0.15s;
+}
+.search-history-item:hover {
+  background: var(--surface-h);
+}
+.search-history-run {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  border-radius: 20px;
-  background: var(--surface);
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 0;
+  border: none;
+  background: transparent;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  text-align: left;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: color 0.15s;
 }
-.search-history-pill:hover {
-  background: var(--surface-h);
-  border-color: var(--accent);
+.search-history-run:hover {
   color: var(--accent);
+}
+.search-history-run-icon {
+  flex-shrink: 0;
+  opacity: 0.45;
+  color: var(--muted);
+}
+.search-history-run:hover .search-history-run-icon {
+  opacity: 0.85;
+  color: var(--accent);
+}
+.search-history-query-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-history-remove {
+  flex-shrink: 0;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.search-history-remove:hover {
+  background: rgba(180, 40, 50, 0.1);
+  color: #e05c6a;
+}
+.search-history-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* ── Sidebar Playlists ────────────────────────────────────────────────── */

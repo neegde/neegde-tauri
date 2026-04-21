@@ -26,3 +26,17 @@ export function addToRecentHistory(entry) {
   } catch {}
   return history;
 }
+
+/**
+ * Removes one entry from recent history by torrent/id key.
+ *
+ * @param {string} id
+ * @returns {Array} updated history
+ */
+export function removeFromRecentHistory(id) {
+  let history = loadRecentHistory().filter((h) => h.id !== id);
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(history));
+  } catch {}
+  return history;
+}

@@ -21,3 +21,17 @@ export function addToSearchHistory(query) {
   } catch {}
   return history;
 }
+
+/**
+ * Removes one query string from saved search history.
+ *
+ * @param {string} query
+ * @returns {string[]} updated history
+ */
+export function removeFromSearchHistory(query) {
+  let history = loadSearchHistory().filter((h) => h !== query);
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(history));
+  } catch {}
+  return history;
+}

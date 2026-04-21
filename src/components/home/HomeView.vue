@@ -6,7 +6,7 @@ const props = defineProps({
   recentHistory: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(["open-recent", "go-to-search", "search-query"]);
+const emit = defineEmits(["open-recent", "remove-recent", "go-to-search", "search-query"]);
 
 // ── Monthly stats ─────────────────────────────────────────────────────────────
 const thisMonthCount = computed(() => {
@@ -117,29 +117,58 @@ onUnmounted(() => {
       <section class="home-section" aria-labelledby="home-recent-heading">
         <h2 id="home-recent-heading" class="home-section-title">Недавно слушали</h2>
         <div class="home-grid">
-          <button
+          <article
             v-for="item in recentSlice"
             :key="item.id"
             class="home-card"
-            @click="emit('open-recent', item)"
           >
-            <div class="home-card-cover">
-              <CoverThumb
-                :torrent-id="item.id"
-                :source="item.source"
-                :size="120"
-                :radius="6"
-                :fill="true"
-              />
-              <div class="home-card-play-overlay">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="7,4 21,12 7,20"/>
+            <div class="home-card-cover-wrap">
+              <button
+                type="button"
+                class="home-card-open home-card-open--cover"
+                @click="emit('open-recent', item)"
+              >
+                <div class="home-card-cover">
+                  <CoverThumb
+                    :torrent-id="item.id"
+                    :source="item.source"
+                    :size="120"
+                    :radius="6"
+                    :fill="true"
+                  />
+                  <div class="home-card-play-overlay">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <polygon points="7,4 21,12 7,20"/>
+                    </svg>
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                class="home-card-remove"
+                title="Убрать из недавних"
+                aria-label="Убрать из недавних"
+                @click="emit('remove-recent', item)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M18 6L6 18M6 6l12 12"
+                    stroke="currentColor"
+                    stroke-width="2.25"
+                    stroke-linecap="round"
+                  />
                 </svg>
-              </div>
+              </button>
             </div>
-            <div class="home-card-name">{{ torrentDisplayName(item.name) }}</div>
-            <div v-if="item.artist" class="home-card-sub">{{ item.artist }}</div>
-          </button>
+            <button
+              type="button"
+              class="home-card-open home-card-open--text"
+              @click="emit('open-recent', item)"
+            >
+              <div class="home-card-name">{{ torrentDisplayName(item.name) }}</div>
+              <div v-if="item.artist" class="home-card-sub">{{ item.artist }}</div>
+            </button>
+          </article>
         </div>
       </section>
 
@@ -846,16 +875,67 @@ onUnmounted(() => {
   gap: 16px;
 }
 .home-card {
-  background: none;
-  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  margin: 0;
   padding: 0;
-  cursor: pointer;
-  text-align: left;
   border-radius: 8px;
   transition: background 0.15s;
 }
 .home-card:hover {
   background: var(--surface-h);
+}
+.home-card-cover-wrap {
+  position: relative;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.home-card-open {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.home-card-open--cover {
+  border-radius: 8px 8px 0 0;
+}
+.home-card-open--text {
+  padding: 0 4px 6px;
+  border-radius: 0 0 8px 8px;
+}
+.home-card-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.52);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s, transform 0.12s;
+}
+.home-card-remove:hover {
+  background: rgba(180, 40, 50, 0.92);
+  transform: scale(1.06);
+}
+.home-card-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .home-card-cover {
   position: relative;
@@ -864,7 +944,6 @@ onUnmounted(() => {
   border-radius: 6px;
   overflow: hidden;
   background: var(--surface);
-  margin-bottom: 8px;
 }
 .home-card-play-overlay {
   position: absolute;

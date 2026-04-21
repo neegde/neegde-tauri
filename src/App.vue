@@ -55,8 +55,8 @@ import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.
 import AppSplash from "./components/shell/AppSplash.vue";
 import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow, closeAppDebugWindow } from "./appDebugWindow.js";
-import { loadRecentHistory, addToRecentHistory } from "./lib/recentHistory.js";
-import { loadSearchHistory, addToSearchHistory } from "./lib/searchHistory.js";
+import { loadRecentHistory, addToRecentHistory, removeFromRecentHistory } from "./lib/recentHistory.js";
+import { loadSearchHistory, addToSearchHistory, removeFromSearchHistory } from "./lib/searchHistory.js";
 import {
   loadPlaylists, createPlaylist, deletePlaylist, renamePlaylist,
   addTrackToPlaylist, removeTrackFromPlaylist,
@@ -2218,6 +2218,14 @@ function handleOpenRecent(item) {
   });
 }
 
+function handleRemoveFromRecent(item) {
+  recentHistory.value = removeFromRecentHistory(item.id);
+}
+
+function handleRemoveSearchQuery(q) {
+  searchHistory.value = removeFromSearchHistory(q);
+}
+
 function navToSearch() {
   forwardStack.value = [];
   backStack.value = [];
@@ -2565,6 +2573,7 @@ function onMouseSideButtonUp(e) {
           v-if="view === 'home'"
           :recent-history="recentHistory"
           @open-recent="handleOpenRecent"
+          @remove-recent="handleRemoveFromRecent"
           @go-to-search="navToSearch"
           @search-query="(q) => { searchQuery = q; view = 'search'; void handleSearch(q); }"
         />
@@ -2657,24 +2666,53 @@ function onMouseSideButtonUp(e) {
             class="search-history-wrap"
           >
             <div class="search-history-label">Недавние запросы</div>
-            <div class="search-history-pills">
-              <button
+            <ul class="search-history-list" role="list">
+              <li
                 v-for="q in searchHistory"
                 :key="q"
-                class="search-history-pill"
-                @click="searchQuery = q; void handleSearch(q)"
+                class="search-history-item"
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" stroke-width="2"
-                  stroke-linecap="round" stroke-linejoin="round"
-                  style="opacity:0.5; flex-shrink:0">
-                  <polyline points="12 8 12 12 14 14"/>
-                  <path d="M3.05 11A9 9 0 1 0 4 6.1"/>
-                  <polyline points="3 3 3 7 7 7"/>
-                </svg>
-                {{ q }}
-              </button>
-            </div>
+                <button
+                  type="button"
+                  class="search-history-run"
+                  @click="searchQuery = q; void handleSearch(q)"
+                >
+                  <svg
+                    class="search-history-run-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="12 8 12 12 14 14"/>
+                    <path d="M3.05 11A9 9 0 1 0 4 6.1"/>
+                    <polyline points="3 3 3 7 7 7"/>
+                  </svg>
+                  <span class="search-history-query-text">{{ q }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="search-history-remove"
+                  title="Удалить из истории"
+                  aria-label="Удалить запрос из истории"
+                  @click="handleRemoveSearchQuery(q)"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M18 6L6 18M6 6l12 12"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+              </li>
+            </ul>
           </div>
 
           <Results
