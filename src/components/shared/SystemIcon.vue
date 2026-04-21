@@ -65,27 +65,20 @@ defineProps({
     <circle cx="16.5" cy="8.5" r="3.5"/>
     <circle cx="12" cy="17" r="3.5"/>
   </svg>
+  <!-- Spectrum-style bars — reads clearly at small sizes on all platforms (vs. slider UI mistaken for a coffin). -->
   <svg
     v-else-if="name === 'sliders'"
     :width="size"
     :height="size"
     viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
+    fill="currentColor"
     aria-hidden="true"
   >
-    <line x1="4" y1="21" x2="4" y2="14"/>
-    <line x1="4" y1="10" x2="4" y2="3"/>
-    <line x1="12" y1="21" x2="12" y2="12"/>
-    <line x1="12" y1="8" x2="12" y2="3"/>
-    <line x1="20" y1="21" x2="20" y2="16"/>
-    <line x1="20" y1="12" x2="20" y2="3"/>
-    <line x1="1" y1="14" x2="7" y2="14"/>
-    <line x1="9" y1="8" x2="15" y2="8"/>
-    <line x1="17" y1="16" x2="23" y2="16"/>
+    <rect x="2" y="13" width="3.5" height="7" rx="1.5"/>
+    <rect x="6.5" y="9" width="3.5" height="11" rx="1.5"/>
+    <rect x="11" y="5" width="3.5" height="15" rx="1.5"/>
+    <rect x="15.5" y="11" width="3.5" height="9" rx="1.5"/>
+    <rect x="20" y="7" width="3.5" height="13" rx="1.5"/>
   </svg>
   <svg
     v-else-if="name === 'trash'"
