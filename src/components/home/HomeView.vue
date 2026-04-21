@@ -143,22 +143,25 @@ onUnmounted(() => {
                   </div>
                 </div>
               </button>
-              <button
-                type="button"
-                class="home-card-remove"
-                title="Убрать из недавних"
-                aria-label="Убрать из недавних"
-                @click="emit('remove-recent', item)"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M18 6L6 18M6 6l12 12"
-                    stroke="currentColor"
-                    stroke-width="2.25"
-                    stroke-linecap="round"
-                  />
-                </svg>
-              </button>
+              <!-- Зона только в правом верхнем углу: крестик не перекрывает выпадающий поиск и виден по hover -->
+              <div class="home-card-remove-corner">
+                <button
+                  type="button"
+                  class="home-card-remove"
+                  title="Убрать из недавних"
+                  aria-label="Убрать из недавних"
+                  @click.stop="emit('remove-recent', item)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M18 6L6 18M6 6l12 12"
+                      stroke="currentColor"
+                      stroke-width="2.25"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
             </div>
             <button
               type="button"
@@ -890,6 +893,7 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   margin-bottom: 8px;
+  isolation: isolate;
 }
 .home-card-open {
   display: block;
@@ -910,11 +914,21 @@ onUnmounted(() => {
   padding: 0 4px 6px;
   border-radius: 0 0 8px 8px;
 }
-.home-card-remove {
+.home-card-remove-corner {
   position: absolute;
-  top: 5px;
-  right: 5px;
-  z-index: 4;
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 5px;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+.home-card-remove {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -927,15 +941,30 @@ onUnmounted(() => {
   color: #fff;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  transition: background 0.15s, transform 0.12s;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, background 0.15s, transform 0.12s;
+}
+.home-card-remove-corner:hover .home-card-remove,
+.home-card-remove-corner:focus-within .home-card-remove {
+  opacity: 1;
+  pointer-events: auto;
 }
 .home-card-remove:hover {
   background: rgba(180, 40, 50, 0.92);
   transform: scale(1.06);
 }
 .home-card-remove:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+@media (hover: none) {
+  .home-card-remove {
+    opacity: 0.9;
+    pointer-events: auto;
+  }
 }
 .home-card-cover {
   position: relative;

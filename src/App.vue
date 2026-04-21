@@ -478,8 +478,8 @@ onMounted(async () => {
   } catch { /* no Tauri API */ }
 });
 // ── View ──────────────────────────────────────────────────────────────────────
-const view       = ref("home");  // "home" | "search" | "likes" | "settings" | "playlist"
-const returnView = ref("search");
+const view       = ref("home");  // "home" | "likes" | "settings" | "playlist"
+const returnView = ref("home");
 
 // ── Recent History ────────────────────────────────────────────────────────────
 const recentHistory = ref(loadRecentHistory());
@@ -657,6 +657,8 @@ const loading = computed(() => searchLoadingRt.value || searchLoadingSlsk.value)
 const hasSearchResults = computed(
   () => searchAlbumResults.value.length > 0 || searchTrackResults.value.length > 0,
 );
+/** Пользователь отправил непустой запрос с главной — показываем выдачу, а не только «Недавно». */
+const homeSearchActive = ref(false);
 const error   = ref(null);
 /** Счётчик запросов: старый поиск не сбрасывает спиннер, если уже запущен новый. */
 let searchRequestSeq = 0;
@@ -904,7 +906,7 @@ const nowPlayingIdxForTorrentView = computed(() => {
 const mainRef = ref(null);
 
 const navCanGoBack = computed(() => {
-  if (view.value !== "search") return false;
+  if (view.value !== "home") return false;
   if (torrentFilesBeforeAlbumPreview.value) return true;
   if (backStack.value.length > 0) return true;
   return !!selected.value;
@@ -968,6 +970,7 @@ function handleLogout(evt) {
   rtLoggedIn.value   = false;
   rtUsername.value   = null;
   rtAvatarUrl.value  = null;
+  homeSearchActive.value = false;
   searchAlbumResults.value = [];
   searchTrackResults.value = [];
   selected.value     = null;
@@ -1011,6 +1014,7 @@ function finalizeCombinedSearch(seqActive, queryNorm) {
 
 async function handleSearch(query) {
   if (!query?.trim()) {
+    homeSearchActive.value = false;
     slskPeerBrowseUser.value = null;
     searchAlbumResults.value = [];
     searchTrackResults.value = [];
@@ -1021,6 +1025,7 @@ async function handleSearch(query) {
     files.value = [];
     return;
   }
+  homeSearchActive.value = true;
   const q = query.trim();
   const qn = q.toLowerCase();
   if (slskPeerBrowseUser.value) {
@@ -1035,7 +1040,7 @@ async function handleSearch(query) {
   selected.value     = null;
   files.value        = [];
   torrentCover.value = null;
-  view.value         = "search";
+  view.value         = "home";
 
   searchHistory.value = addToSearchHistory(q);
   searchResultsEpoch.value += 1;
@@ -1244,7 +1249,7 @@ async function submitMagnetLink() {
   torrentMagnet.value = "";
   torrentCover.value = null;
   loadingFiles.value = true;
-  view.value = "search";
+  view.value = "home";
   error.value = null;
 
   try {
@@ -1815,7 +1820,7 @@ async function handleOpenTorrentFromLike(like) {
     fromLikes: true, artist: m ? m[1].trim() : "",
   };
   returnView.value    = view.value === "playlist" ? "playlist" : "likes";
-  view.value          = "search";
+  view.value          = "home";
   selected.value      = torrent;
   torrentCover.value  = null;
 
@@ -1951,7 +1956,7 @@ async function handleNavigateSoulseekPeer(username) {
   if (!u) return;
   slskPeerBrowseUser.value = u;
   searchQuery.value = u;
-  view.value = "search";
+  view.value = "home";
   selected.value = null;
   files.value = [];
   torrentMagnet.value = "";
@@ -2125,7 +2130,7 @@ function handleOpenTorrentFromPlayer(track) {
     return;
   }
   if (selected.value?.id === track.torrentId) {
-    view.value = "search";
+    view.value = "home";
     if (!torrentFilesBeforeAlbumPreview.value) {
       _applyAlbumScopeForTrack(track.fileIdx, track.albumDirPath ?? null);
     }
@@ -2140,8 +2145,8 @@ function handleOpenTorrentFromPlayer(track) {
   }
   torrentFilesBeforeAlbumPreview.value = null;
   torrentSelectedBeforeAlbumPreview.value = null;
-  view.value = "search";
-  returnView.value = "search";
+  view.value = "home";
+  returnView.value = "home";
   selected.value = {
     id: track.torrentId,
     name: track.torrentName,
@@ -2190,7 +2195,7 @@ function handleOpenTorrentFromPlayer(track) {
 
 /**
  * Open a torrent by source and ID from a neegde:// deep link.
- * Navigates to search view, loads files from Rutracker.
+ * Navigates to home, loads files from Rutracker.
  * @param {string} source - e.g. "rutracker"
  * @param {string} torrentId
  */
@@ -2199,8 +2204,8 @@ async function openTorrentByDeepLink(source, torrentId) {
   backStack.value = [];
   torrentFilesBeforeAlbumPreview.value = null;
   torrentSelectedBeforeAlbumPreview.value = null;
-  view.value = "search";
-  returnView.value = "search";
+  view.value = "home";
+  returnView.value = "home";
   selected.value = { id: torrentId, name: "", source, seeders: "?", size: 0, category: "—", added: "—" };
   files.value = [];
   torrentCover.value = null;
@@ -2316,7 +2321,7 @@ function handleOpenRecent(item) {
   searchQuery.value = "";
   searchAlbumResults.value = [];
   searchTrackResults.value = [];
-  view.value = "search";
+  view.value = "home";
   void handleSelect({
     id: item.id,
     name: item.name,
@@ -2339,12 +2344,36 @@ function handleRemoveSearchQuery(q) {
 function navToSearch() {
   forwardStack.value = [];
   backStack.value = [];
-  view.value          = "search";
+  view.value          = "home";
   selected.value      = null;
   files.value         = [];
   torrentMagnet.value = "";
   torrentCover.value  = null;
   error.value         = null;
+  if (mainRef.value) mainRef.value.scrollTo(0, 0);
+}
+
+/**
+ * Sidebar home button: switches to home; if already on home, clears search results, query,
+ * open torrent, and nav stacks (habitual «clean home»).
+ */
+function handleSidebarHome() {
+  if (view.value !== "home") {
+    view.value = "home";
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+    return;
+  }
+  if (!homeSearchActive.value && !selected.value) {
+    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+    return;
+  }
+  searchQuery.value = "";
+  void handleSearch("");
+  torrentMagnet.value = "";
+  torrentCover.value = null;
+  forwardStack.value = [];
+  backStack.value = [];
+  if (mainRef.value) mainRef.value.scrollTo(0, 0);
 }
 
 function handleBack() {
@@ -2394,10 +2423,10 @@ function handleBack() {
       torrentCover.value = entry.cover;
       torrentFilesBeforeAlbumPreview.value = entry.torrentFilesBeforeAlbumPreview;
       torrentSelectedBeforeAlbumPreview.value = entry.torrentSelectedBeforeAlbumPreview;
-      view.value = "search";
+      view.value = "home";
     } else if (entry.type === "likes") {
       view.value = "likes";
-      returnView.value = "search";
+      returnView.value = "home";
       selected.value = null;
       files.value = [];
       torrentMagnet.value = "";
@@ -2407,7 +2436,7 @@ function handleBack() {
     } else if (entry.type === "playlist" && entry.playlistId) {
       currentPlaylistId.value = entry.playlistId;
       view.value = "playlist";
-      returnView.value = "search";
+      returnView.value = "home";
       selected.value = null;
       files.value = [];
       torrentMagnet.value = "";
@@ -2443,10 +2472,10 @@ function handleBack() {
   torrentSelectedBeforeAlbumPreview.value = null;
   if (returnView.value === "likes") {
     view.value = "likes";
-    returnView.value = "search";
+    returnView.value = "home";
   } else if (returnView.value === "playlist") {
     view.value = "playlist";
-    returnView.value = "search";
+    returnView.value = "home";
   }
 }
 
@@ -2461,7 +2490,7 @@ function handleForwardNav() {
     torrentFilesBeforeAlbumPreview.value = snap.fullFiles;
     torrentSelectedBeforeAlbumPreview.value = snap.fullSelected;
   } else if (snap.type === "torrent") {
-    view.value = "search";
+    view.value = "home";
     if (snap.restoreLikesView) {
       returnView.value = "likes";
     }
@@ -2543,7 +2572,7 @@ function onMouseSideButtonUp(e) {
         <!-- Home -->
         <button
           :class="['source-btn', view === 'home' ? 'active' : '']"
-          @click="view = 'home'"
+          @click="handleSidebarHome"
         >
           <span class="source-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -2554,22 +2583,6 @@ function onMouseSideButtonUp(e) {
             </svg>
           </span>
           Главная
-        </button>
-
-        <!-- Search -->
-        <button
-          :class="['source-btn search-nav-btn', view === 'search' ? 'active' : '']"
-          @click="navToSearch"
-        >
-          <span class="source-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"/>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-          </span>
-          Поиск
         </button>
 
         <!-- Library -->
@@ -2647,46 +2660,116 @@ function onMouseSideButtonUp(e) {
     <!-- ── Main ────────────────────────────────────────────────────── -->
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
-        <div v-if="view === 'search'" class="main-toolbar">
-          <div class="main-toolbar-row">
-            <div class="main-toolbar-search">
-              <SearchBar
-                v-model="searchQuery"
-                :loading="loading"
-                :show-categories="false"
-                @search="handleSearch"
-              />
+        <!-- Home: поиск + недавнее + выдача / раздача -->
+        <template v-if="view === 'home'">
+          <div class="main-toolbar">
+            <div class="main-toolbar-row">
+              <div class="main-toolbar-search">
+                <SearchBar
+                  v-model="searchQuery"
+                  :loading="loading"
+                  :show-categories="false"
+                  :history="searchHistory"
+                  @search="handleSearch"
+                  @remove-history="handleRemoveSearchQuery"
+                />
+              </div>
+              <button
+                type="button"
+                class="toolbar-magnet-btn"
+                title="Открыть раздачу по magnet-ссылке"
+                :disabled="loadingFiles"
+                @click="magnetPanelOpen = true"
+              >
+                По ссылке
+              </button>
             </div>
-            <button
-              type="button"
-              class="toolbar-magnet-btn"
-              title="Открыть раздачу по magnet-ссылке"
-              :disabled="loadingFiles"
-              @click="magnetPanelOpen = true"
-            >
-              По ссылке
-            </button>
           </div>
-        </div>
 
-        <MagnetLinkDialog
-          v-model:open="magnetPanelOpen"
-          v-model:draft="magnetDraft"
-          :error="magnetError"
-          :resolving="loadingFiles && magnetPanelOpen"
-          @submit="submitMagnetLink"
-          @close="closeMagnetPanel"
-        />
+          <MagnetLinkDialog
+            v-model:open="magnetPanelOpen"
+            v-model:draft="magnetDraft"
+            :error="magnetError"
+            :resolving="loadingFiles && magnetPanelOpen"
+            @submit="submitMagnetLink"
+            @close="closeMagnetPanel"
+          />
 
-        <!-- Home view -->
-        <HomeView
-          v-if="view === 'home'"
-          :recent-history="recentHistory"
-          @open-recent="handleOpenRecent"
-          @remove-recent="handleRemoveFromRecent"
-          @go-to-search="navToSearch"
-          @search-query="(q) => { searchQuery = q; view = 'search'; void handleSearch(q); }"
-        />
+          <HomeView
+            v-show="!homeSearchActive"
+            :recent-history="recentHistory"
+            @open-recent="handleOpenRecent"
+            @remove-recent="handleRemoveFromRecent"
+            @go-to-search="navToSearch"
+            @search-query="(q) => { searchQuery = q; void handleSearch(q); }"
+          />
+
+          <p v-if="error && !loading" class="error-msg">{{ error }}</p>
+
+          <!-- Onboarding: nudge to settings if not connected -->
+          <div
+            v-if="!restoringSession && !rtLoggedIn && !slskConnected && !hasSearchResults && !selected && !loading && !homeSearchActive"
+            class="onboarding"
+          >
+            <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
+              <div class="onboarding-icon" aria-hidden="true">
+                <SystemIcon name="link" :size="28" />
+              </div>
+              <div class="onboarding-body">
+                <div class="onboarding-title">Подключите источники поиска</div>
+                <div class="onboarding-desc">
+                  <strong style="color:var(--text)">Rutracker</strong> — альбомы и раздачи.
+                  <strong style="color:var(--text)">SoulSeek</strong> — отдельные треки.
+                  Настройки открываются здесь или в боковой панели.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <Results
+            v-if="!selected && homeSearchActive"
+            :search-epoch="searchResultsEpoch"
+            :album-results="searchAlbumResults"
+            :track-results="searchTrackResults"
+            :slsk-peer-filter="slskPeerBrowseUser"
+            :loading-albums="searchLoadingRt"
+            :loading-tracks="searchLoadingSlsk"
+            :rt-logged-in="rtLoggedIn"
+            :slsk-connected="slskConnected"
+            :rt-error="searchRtError"
+            :slsk-error="searchSlskError"
+            :selected-id="null"
+            @select="handleSelect"
+            @play-slsk-track="handlePlaySlskTrack"
+            @like-slsk-track="handleLikeSlskTrack"
+            @open-slsk-source="handleOpenSoulseekSourceFromResults"
+            @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
+            @add-to-playlist-slsk="handleShowAddToPlaylist(soulseekSearchResultToPlaylistTrack($event))"
+          />
+
+          <TorrentView
+            v-if="selected"
+            :torrent="selected"
+            :files="files"
+            :loading="loadingFiles"
+            :magnet="torrentMagnet"
+            :cover="torrentCover"
+            :now-playing-idx="nowPlayingIdxForTorrentView"
+            :player-playing="playerPlaying"
+            :likes="likes"
+            @play="handlePlay"
+            @play-all="handlePlayAll"
+            @play-album="handlePlayAlbum"
+            @download-album="handleDownloadAlbum"
+            @download="handleDownloadTrack"
+            @download-all="handleDownloadAll"
+            @toggle-like="handleToggleLike"
+            @open-album-preview="handleOpenAlbumPreview"
+            @add-to-playlist="handleShowAddToPlaylist"
+            @add-to-queue="handleAddToQueueFromTorrent"
+            @open-torrent-source="handleOpenTorrentSourceFromView"
+          />
+        </template>
 
         <!-- Likes view -->
         <KeepAlive>
@@ -2747,130 +2830,6 @@ function onMouseSideButtonUp(e) {
           @add-to-queue="handleAddToQueueFromPlaylistTrack"
           @add-to-playlist="handleShowAddToPlaylist($event)"
         />
-
-        <!-- Search view -->
-        <template v-if="view !== 'likes' && view !== 'settings' && view !== 'home' && view !== 'playlist'">
-          <p v-if="error && !loading" class="error-msg">{{ error }}</p>
-
-          <!-- Onboarding: nudge to settings if not connected -->
-          <div
-            v-if="!restoringSession && !rtLoggedIn && !slskConnected && !hasSearchResults && !selected && !loading"
-            class="onboarding"
-          >
-            <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
-              <div class="onboarding-icon" aria-hidden="true">
-                <SystemIcon name="link" :size="28" />
-              </div>
-              <div class="onboarding-body">
-                <div class="onboarding-title">Подключите источники поиска</div>
-                <div class="onboarding-desc">
-                  <strong style="color:var(--text)">Rutracker</strong> — альбомы и раздачи.
-                  <strong style="color:var(--text)">SoulSeek</strong> — отдельные треки.
-                  Настройки открываются здесь или в боковой панели.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Recent search queries -->
-          <div
-            v-if="!selected && !hasSearchResults && !loading && searchHistory.length"
-            class="search-history-wrap"
-          >
-            <div class="search-history-label">Недавние запросы</div>
-            <ul class="search-history-list" role="list">
-              <li
-                v-for="q in searchHistory"
-                :key="q"
-                class="search-history-item"
-              >
-                <button
-                  type="button"
-                  class="search-history-run"
-                  @click="searchQuery = q; void handleSearch(q)"
-                >
-                  <svg
-                    class="search-history-run-icon"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <polyline points="12 8 12 12 14 14"/>
-                    <path d="M3.05 11A9 9 0 1 0 4 6.1"/>
-                    <polyline points="3 3 3 7 7 7"/>
-                  </svg>
-                  <span class="search-history-query-text">{{ q }}</span>
-                </button>
-                <button
-                  type="button"
-                  class="search-history-remove"
-                  title="Удалить из истории"
-                  aria-label="Удалить запрос из истории"
-                  @click="handleRemoveSearchQuery(q)"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path
-                      d="M18 6L6 18M6 6l12 12"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-              </li>
-            </ul>
-          </div>
-
-          <Results
-            v-if="!selected && hasSearchResults"
-            :search-epoch="searchResultsEpoch"
-            :album-results="searchAlbumResults"
-            :track-results="searchTrackResults"
-            :slsk-peer-filter="slskPeerBrowseUser"
-            :loading-albums="searchLoadingRt"
-            :loading-tracks="searchLoadingSlsk"
-            :rt-logged-in="rtLoggedIn"
-            :slsk-connected="slskConnected"
-            :rt-error="searchRtError"
-            :slsk-error="searchSlskError"
-            :selected-id="null"
-            @select="handleSelect"
-            @play-slsk-track="handlePlaySlskTrack"
-            @like-slsk-track="handleLikeSlskTrack"
-            @open-slsk-source="handleOpenSoulseekSourceFromResults"
-            @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
-            @add-to-playlist-slsk="handleShowAddToPlaylist(soulseekSearchResultToPlaylistTrack($event))"
-          />
-
-          <TorrentView
-            v-if="selected"
-            :torrent="selected"
-            :files="files"
-            :loading="loadingFiles"
-            :magnet="torrentMagnet"
-            :cover="torrentCover"
-            :now-playing-idx="nowPlayingIdxForTorrentView"
-            :player-playing="playerPlaying"
-            :likes="likes"
-            @play="handlePlay"
-            @play-all="handlePlayAll"
-            @play-album="handlePlayAlbum"
-            @download-album="handleDownloadAlbum"
-            @download="handleDownloadTrack"
-            @download-all="handleDownloadAll"
-            @toggle-like="handleToggleLike"
-            @open-album-preview="handleOpenAlbumPreview"
-            @add-to-playlist="handleShowAddToPlaylist"
-            @add-to-queue="handleAddToQueueFromTorrent"
-            @open-torrent-source="handleOpenTorrentSourceFromView"
-          />
-        </template>
 
       </div>
     </div>

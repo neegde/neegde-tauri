@@ -789,7 +789,9 @@ body {
   width: 100%;
   box-sizing: border-box;
   position: relative;
-  z-index: 2;
+  /* Выше карточек «Недавно слушали», чтобы выпадающая история запросов не перекрывалась */
+  z-index: 40;
+  isolation: isolate;
 }
 .main-toolbar-search {
   flex: 1;
