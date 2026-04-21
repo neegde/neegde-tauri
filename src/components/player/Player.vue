@@ -39,6 +39,7 @@ import { syncDiscordPresence, clearDiscordPresence } from "../../discordPresence
 import { enrichTrackMeta } from "../../audio/metadataEnrich.js";
 import { slskMeta } from "../../soulseek/slskMetaStore.js";
 import { getSlskCoverReactive, getSlskCoverDataUrl } from "../../soulseek/coverCache.js";
+import TrackContextMenu from "../shared/TrackContextMenu.vue";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -79,9 +80,45 @@ const emit = defineEmits([
   "open-torrent",
   "queue-jump",
   "queue-remove",
+  "queue-add-to-playlist",
   "cycle-repeat",
   "toggle-shuffle",
 ]);
+
+const QUEUE_CTX_ACTIONS = [
+  { id: "playlist", label: "В плейлист", icon: "playlist" },
+];
+
+const queueCtxOpen = ref(false);
+const queueCtxX = ref(0);
+const queueCtxY = ref(0);
+/** @type {import('vue').Ref<number | null>} */
+const queueCtxIdx = ref(null);
+
+/**
+ * @param {MouseEvent} e
+ * @param {number} idx
+ * @returns {void}
+ */
+function openQueueCtx(e, idx) {
+  e.preventDefault();
+  queueCtxX.value = e.clientX;
+  queueCtxY.value = e.clientY;
+  queueCtxIdx.value = idx;
+  queueCtxOpen.value = true;
+}
+
+/**
+ * @param {string} id
+ * @returns {void}
+ */
+function onQueueCtxAction(id) {
+  const idx = queueCtxIdx.value;
+  if (idx == null || id !== "playlist") return;
+  const q = props.playbackQueue?.[idx];
+  if (!q) return;
+  emit("queue-add-to-playlist", q);
+}
 
 /** Same key as Results `slskMeta` — artist/title/coverUrl from filename + iTunes, matches track list. */
 const soulseekSearchMeta = computed(() => {
@@ -1772,6 +1809,7 @@ onUnmounted(() => {
                   v-for="(q, idx) in playbackQueue"
                   :key="idx + '-' + queueTrackKey(q)"
                   :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                  @contextmenu.prevent="openQueueCtx($event, idx)"
                 >
                   <button
                     type="button"
@@ -1958,6 +1996,7 @@ onUnmounted(() => {
                   v-for="(q, idx) in playbackQueue"
                   :key="idx + '-' + queueTrackKey(q)"
                   :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                  @contextmenu.prevent="openQueueCtx($event, idx)"
                 >
                   <button
                     type="button"
@@ -1985,6 +2024,14 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
+
+    <TrackContextMenu
+      v-model:open="queueCtxOpen"
+      :x="queueCtxX"
+      :y="queueCtxY"
+      :actions="QUEUE_CTX_ACTIONS"
+      @action="onQueueCtxAction"
+    />
 
     <PlayerVisualizerModal
       :open="vizOpen"

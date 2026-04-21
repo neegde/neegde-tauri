@@ -12,7 +12,7 @@ const props = defineProps({
   enriched: { type: Object, default: null }, // { artist, title, coverUrl? }
 });
 
-const emit = defineEmits(["play", "download", "like", "open-source"]);
+const emit = defineEmits(["play", "download", "like", "open-source", "add-to-playlist"]);
 
 // ── Context menu ─────────────────────────────────────────────────────────────
 const ctxOpen = ref(false);
@@ -26,6 +26,7 @@ const SLSK_CTX_ACTIONS = [
   { id: "download", label: "Скачать",     icon: "download", disabled: true },
   { id: "divider" },
   { id: "like",     label: "В избранное", icon: "heart"    },
+  { id: "playlist", label: "В плейлист",  icon: "playlist" },
 ];
 
 function onContextMenu(e) {
@@ -39,6 +40,7 @@ function onCtxAction(id) {
   if (id === "play")     emit("play",     props.track);
   if (id === "download") emit("download", props.track);
   if (id === "like")     emit("like",     props.track);
+  if (id === "playlist") emit("add-to-playlist", props.track);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

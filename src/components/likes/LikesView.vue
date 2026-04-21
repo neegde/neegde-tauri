@@ -27,6 +27,7 @@ const emit = defineEmits([
   "open-track-source",
   "download",
   "add-to-queue",
+  "add-to-playlist",
 ]);
 
 const ctxOpen = ref(false);
@@ -55,6 +56,7 @@ function onCtxAction(id) {
   const like = ctxLike.value;
   if (!like) return;
   if (id === "queue") emit("add-to-queue", like);
+  if (id === "playlist") emit("add-to-playlist", like);
   if (id === "source") emit("open-track-source", like);
 }
 
@@ -65,6 +67,7 @@ const likesCtxActions = computed(() => {
     like.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
   return [
     { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
     { id: "divider" },
     { id: "source", label: srcLabel, icon: "source" },
   ];

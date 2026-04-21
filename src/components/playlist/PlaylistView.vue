@@ -17,6 +17,7 @@ const emit = defineEmits([
   "delete",
   "rename",         // newName
   "add-to-queue",
+  "add-to-playlist",
   "open-track-source",
 ]);
 
@@ -71,6 +72,7 @@ const playlistCtxActions = computed(() => {
     t.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
   return [
     { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
     { id: "divider" },
     { id: "source", label: srcLabel, icon: "source" },
   ];
@@ -83,6 +85,7 @@ function onCtxAction(id) {
   const t = ctxTrack.value;
   if (!t) return;
   if (id === "queue") emit("add-to-queue", t);
+  if (id === "playlist") emit("add-to-playlist", { ...t });
   if (id === "source") emit("open-track-source", t);
 }
 </script>

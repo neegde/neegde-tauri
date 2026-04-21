@@ -33,6 +33,7 @@ const emit = defineEmits([
   "like-slsk-track",
   "open-slsk-source",
   "clear-slsk-peer-filter",
+  "add-to-playlist-slsk",
 ]);
 
 const INITIAL_BATCH = 40;
@@ -440,6 +441,7 @@ watch(
           @download="emit('download-slsk-track', $event)"
           @like="emit('like-slsk-track', $event)"
           @open-source="emit('open-slsk-source', $event)"
+          @add-to-playlist="emit('add-to-playlist-slsk', $event)"
         />
       </div>
       <div ref="sentinelTrack" />

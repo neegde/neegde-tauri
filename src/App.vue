@@ -538,6 +538,7 @@ function handleRemoveTrackFromPlaylist(id, { magnet, fileIdx }) {
 }
 
 function handleShowAddToPlaylist(track) {
+  if (!track) return;
   addToPlaylistTrack.value = track;
   addToPlaylistModal.value = true;
 }
@@ -564,16 +565,25 @@ function handlePlayPlaylist(startIdx) {
   const pl = currentPlaylist.value;
   if (!pl?.tracks?.length) return;
   allowPlayerAutoplay();
-  queue.value = pl.tracks.map((t) => ({
-    magnet: t.magnet,
-    fileIdx: t.fileIdx,
-    fileName: t.fileName,
-    torrentName: t.torrentName,
-    torrentId: t.torrentId,
-    source: t.source,
-    artist: t.artist ?? null,
-    coverFileIdx: t.coverFileIdx ?? null,
-  }));
+  queue.value = pl.tracks.map((t) => {
+    const row = {
+      magnet: t.magnet,
+      fileIdx: t.fileIdx,
+      fileName: t.fileName,
+      torrentName: t.torrentName,
+      torrentId: t.torrentId,
+      source: t.source,
+      artist: t.artist ?? null,
+      coverFileIdx: t.coverFileIdx ?? null,
+      albumDirPath: t.albumDirPath ?? null,
+    };
+    if (t.source === "soulseek" && t.slskUsername && t.slskFilepath) {
+      row.slskUsername = t.slskUsername;
+      row.slskFilepath = t.slskFilepath;
+      row.slskFilesize = t.slskFilesize ?? 0;
+    }
+    return row;
+  });
   queuePos.value = startIdx ?? 0;
 }
 
@@ -1429,6 +1439,100 @@ function soulseekSearchResultToLike(track) {
   };
 }
 
+/**
+ * Payload for `addTrackToPlaylist` from a SoulSeek search result row.
+ *
+ * Args:
+ *     track: Flat search result with `slsk_username`, `slsk_filepath`, optional `id`.
+ *
+ * Returns:
+ *     Object accepted by `addTrackToPlaylist` / playlist modal.
+ */
+function soulseekSearchResultToPlaylistTrack(track) {
+  const filepath = (track.slsk_filepath ?? track.slsk_tracks?.[0]?.slsk_filepath ?? "").replace(/\\/g, "/");
+  const username = track.slsk_username ?? track.slsk_tracks?.[0]?.slsk_username ?? "";
+  const slskFilepath = track.slsk_filepath ?? track.slsk_tracks?.[0]?.slsk_filepath ?? filepath;
+  const filename = filepath.split("/").pop() || track.name || "track";
+  return {
+    magnet: "",
+    fileIdx: 0,
+    fileName: filepath || filename,
+    torrentName: filename,
+    torrentId: String(track.id ?? ""),
+    source: "soulseek",
+    artist: track.artist ?? null,
+    coverFileIdx: null,
+    slskUsername: username,
+    slskFilepath,
+    slskFilesize: track.size ?? track.slsk_tracks?.[0]?.size ?? 0,
+  };
+}
+
+/**
+ * Payload for `addTrackToPlaylist` from a liked track row.
+ *
+ * Args:
+ *     like: Track like object.
+ *
+ * Returns:
+ *     Object accepted by `addTrackToPlaylist`.
+ */
+function playlistTrackFromLike(like) {
+  const base = {
+    magnet: like.magnet ?? "",
+    fileIdx: like.fileIdx,
+    fileName: like.fileName,
+    torrentName: like.torrentName,
+    torrentId: like.torrentId,
+    source: like.source,
+    artist: like.artist ?? null,
+    coverFileIdx: trackCoverFileIdxForLike(like, likes.value),
+    albumDirPath: like.albumDirPath ?? null,
+  };
+  if (like.source === "soulseek" && like.slskUsername && like.slskFilepath) {
+    return {
+      ...base,
+      slskUsername: like.slskUsername,
+      slskFilepath: like.slskFilepath,
+      slskFilesize: like.slskFilesize ?? 0,
+    };
+  }
+  return base;
+}
+
+/**
+ * Payload for `addTrackToPlaylist` from a queue item (`makeQueueItem` shape).
+ *
+ * Args:
+ *     q: Queue row from App playback queue.
+ *
+ * Returns:
+ *     Object accepted by `addTrackToPlaylist`.
+ */
+function queueItemToPlaylistTrack(q) {
+  if (!q) return null;
+  const base = {
+    magnet: q.magnet ?? "",
+    fileIdx: q.fileIdx,
+    fileName: q.fileName,
+    torrentName: q.torrentName,
+    torrentId: q.torrentId,
+    source: q.source,
+    artist: q.artist ?? null,
+    coverFileIdx: q.coverFileIdx ?? null,
+    albumDirPath: q.albumDirPath ?? null,
+  };
+  if (q.source === "soulseek" && q.slskUsername && q.slskFilepath) {
+    return {
+      ...base,
+      slskUsername: q.slskUsername,
+      slskFilepath: q.slskFilepath,
+      slskFilesize: q.slskFilesize ?? 0,
+    };
+  }
+  return base;
+}
+
 function handleLikeSlskTrack(track) {
   handleToggleLike(soulseekSearchResultToLike(track));
 }
@@ -1594,7 +1698,7 @@ function handleAddToQueueFromLike(like) {
  * @returns {void}
  */
 function handleAddToQueueFromPlaylistTrack(track) {
-  appendToQueue({
+  const item = {
     magnet: track.magnet,
     fileIdx: track.fileIdx,
     fileName: trackDisplayBasename(track.fileName),
@@ -1605,7 +1709,13 @@ function handleAddToQueueFromPlaylistTrack(track) {
     coverFileIdx: track.coverFileIdx ?? null,
     albumDirPath: track.albumDirPath ?? null,
     seeders: track.seeders ?? null,
-  });
+  };
+  if (track.source === "soulseek" && track.slskUsername && track.slskFilepath) {
+    item.slskUsername = track.slskUsername;
+    item.slskFilepath = track.slskFilepath;
+    item.slskFilesize = track.slskFilesize ?? 0;
+  }
+  appendToQueue(item);
 }
 
 /**
@@ -2592,6 +2702,7 @@ function onMouseSideButtonUp(e) {
             @open-track-source="handleOpenTrackSource"
             @download="handleDownloadTrackFromLike"
             @add-to-queue="handleAddToQueueFromLike"
+            @add-to-playlist="handleShowAddToPlaylist(playlistTrackFromLike($event))"
           />
         </KeepAlive>
 
@@ -2634,6 +2745,7 @@ function onMouseSideButtonUp(e) {
           @delete="handleDeletePlaylist(currentPlaylistId)"
           @rename="handleRenamePlaylist(currentPlaylistId, $event)"
           @add-to-queue="handleAddToQueueFromPlaylistTrack"
+          @add-to-playlist="handleShowAddToPlaylist($event)"
         />
 
         <!-- Search view -->
@@ -2733,6 +2845,7 @@ function onMouseSideButtonUp(e) {
             @like-slsk-track="handleLikeSlskTrack"
             @open-slsk-source="handleOpenSoulseekSourceFromResults"
             @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
+            @add-to-playlist-slsk="handleShowAddToPlaylist(soulseekSearchResultToPlaylistTrack($event))"
           />
 
           <TorrentView
@@ -2787,6 +2900,7 @@ function onMouseSideButtonUp(e) {
       @open-torrent="handleOpenTorrentFromPlayer"
       @queue-jump="handleQueueJump"
       @queue-remove="handleQueueRemove"
+      @queue-add-to-playlist="handleShowAddToPlaylist(queueItemToPlaylistTrack($event))"
     />
 
     <AppSplash :visible="holdSplashForReview || restoringSession" />
