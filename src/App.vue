@@ -380,12 +380,6 @@ function applyEffectiveTheme(mode) {
 
 const restoringSession = ref(true);
 
-/**
- * When true, splash stays on screen for layout review (app still boots underneath).
- * Set to false for normal startup.
- */
-const holdSplashForReview = false;
-
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
 const RESTORE_UI_MAX_MS = 5_000;
 
@@ -2956,7 +2950,7 @@ function onMouseSideButtonUp(e) {
       @queue-download="handleDownloadFromQueue"
     />
 
-    <AppSplash :visible="holdSplashForReview || restoringSession" />
+    <AppSplash :visible="restoringSession" />
 
     <AchievementToast
       v-model:open="achievementToastOpen"

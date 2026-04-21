@@ -1,20 +1,37 @@
 <script setup>
-import { ref, watch, onUnmounted } from "vue";
+import { computed, ref, watch, onUnmounted } from "vue";
 
 const props = defineProps({
   visible: { type: Boolean, default: true },
 });
 
-const YEP_IWT_AVATAR =
-  "https://avatars.githubusercontent.com/u/53908805?v=4&s=96";
+const QUESTION_TEXT = "Где слушаешь?";
 
 const REPLY_TEXT = "neegde.ru";
 
+const SPLASH_TYPE_START_MS = 320;
+
+const SPLASH_TYPE_CHAR_MS = 42;
+
+const SPLASH_TYPE_LINE_GAP_MS = 140;
+
+const questionText = ref("");
+
 const devReply = ref("");
-const showLoadingTyping = ref(false);
+
+const showTypingIndicator = ref(false);
+
+// Second row: only after question is done and reply has started (no empty box).
+const replyBubbleVisible = computed(
+  () =>
+    questionText.value.length >= QUESTION_TEXT.length && devReply.value.length > 0
+);
 
 let typewriterChain = null;
 
+/**
+ * Clears any scheduled typewriter step.
+ */
 function clearTypewriter() {
   if (typewriterChain != null) {
     clearTimeout(typewriterChain);
@@ -22,30 +39,51 @@ function clearTypewriter() {
   }
 }
 
+/**
+ * Types the question, then the reply; then shows the typing dots until splash hides.
+ */
 function runTypewriter() {
   clearTypewriter();
+  questionText.value = "";
   devReply.value = "";
-  showLoadingTyping.value = false;
-  let i = 0;
-  const step = () => {
-    if (i < REPLY_TEXT.length) {
-      devReply.value = REPLY_TEXT.slice(0, i + 1);
-      i += 1;
-      typewriterChain = window.setTimeout(step, 70);
-    } else {
-      showLoadingTyping.value = true;
-      typewriterChain = null;
-    }
-  };
-  typewriterChain = window.setTimeout(step, 550);
+  showTypingIndicator.value = false;
+
+  /**
+   * Schedules progressive typing of `full` into `targetRef`, then calls `onComplete`.
+   */
+  function typeLine(full, targetRef, pauseMs, onComplete) {
+    typewriterChain = window.setTimeout(() => {
+      let i = 0;
+      const step = () => {
+        if (i < full.length) {
+          targetRef.value = full.slice(0, i + 1);
+          i += 1;
+          typewriterChain = window.setTimeout(step, SPLASH_TYPE_CHAR_MS);
+        } else {
+          typewriterChain = null;
+          if (onComplete) {
+            onComplete();
+          }
+        }
+      };
+      step();
+    }, pauseMs);
+  }
+
+  typeLine(QUESTION_TEXT, questionText, SPLASH_TYPE_START_MS, () => {
+    typeLine(REPLY_TEXT, devReply, SPLASH_TYPE_LINE_GAP_MS, () => {
+      showTypingIndicator.value = true;
+    });
+  });
 }
 
 watch(
   () => props.visible,
   (v) => {
     clearTypewriter();
+    questionText.value = "";
     devReply.value = "";
-    showLoadingTyping.value = false;
+    showTypingIndicator.value = false;
     if (v) {
       runTypewriter();
     }
@@ -74,20 +112,17 @@ onUnmounted(() => {
             <div class="app-splash-chat-inner">
               <div class="msg msg--b">
                 <div class="msg-bubble">
-                  <p>Где слушаешь?</p>
+                  <p>
+                    {{ questionText }}<span
+                      v-show="questionText.length < QUESTION_TEXT.length"
+                      class="msg-caret msg-caret--question"
+                      aria-hidden="true"
+                    />
+                  </p>
                 </div>
-                <span class="msg-av msg-av--accent" aria-hidden="true" />
               </div>
 
-              <div class="msg msg--a">
-                <span class="msg-av msg-av--photo" aria-hidden="true">
-                  <img
-                    class="msg-av-img"
-                    :src="YEP_IWT_AVATAR"
-                    alt=""
-                    decoding="async"
-                  />
-                </span>
+              <div v-show="replyBubbleVisible" class="msg msg--a">
                 <div class="msg-bubble">
                   <p>
                     <span class="msg-brand">{{ devReply }}</span>
@@ -101,19 +136,11 @@ onUnmounted(() => {
               </div>
 
               <div
-                v-show="showLoadingTyping"
+                v-show="showTypingIndicator"
                 class="msg msg--typing"
                 aria-hidden="true"
               >
-                <span class="msg-av msg-av--photo">
-                  <img
-                    class="msg-av-img"
-                    :src="YEP_IWT_AVATAR"
-                    alt=""
-                    decoding="async"
-                  />
-                </span>
-                <div class="typing" title="Загрузка">
+                <div class="typing typing-messenger" title="Загрузка">
                   <span class="typing-dot" />
                   <span class="typing-dot" />
                   <span class="typing-dot" />
@@ -193,16 +220,10 @@ onUnmounted(() => {
   align-items: flex-end;
   gap: clamp(8px, 1.6vmin, 16px);
   max-width: 100%;
-  opacity: 0;
-  transform: translateY(12px);
-  animation: msg-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .msg--typing {
   align-self: flex-start;
-  opacity: 1;
-  transform: none;
-  animation: none;
 }
 
 .msg--a {
@@ -215,44 +236,8 @@ onUnmounted(() => {
   flex-direction: row-reverse;
 }
 
-.msg:nth-child(1) {
-  animation-delay: 0.06s;
-}
-
-.msg:nth-child(2) {
-  animation-delay: 0.12s;
-}
-
-.msg-av {
-  flex-shrink: 0;
-  width: clamp(52px, 9vmin, 92px);
-  height: clamp(52px, 9vmin, 92px);
-  border-radius: 50%;
-  background: var(--surface-h);
-  border: 1px solid var(--border);
-}
-
-.msg-av--accent {
-  background: rgba(var(--accent-rgb), 0.12);
-  border-color: rgba(var(--accent-rgb), 0.28);
-  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.06) inset;
-}
-
-.msg-av--photo {
-  padding: 0;
-  overflow: hidden;
-}
-
-.msg-av-img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 50%;
-}
-
 .msg-bubble {
-  max-width: min(100%, calc(100% - 3.5rem));
+  max-width: 100%;
   padding: clamp(16px, 2.2vmin, 28px) clamp(20px, 3vmin, 40px);
   border-radius: clamp(18px, 2.8vmin, 28px);
   border: 1px solid var(--border);
@@ -303,30 +288,51 @@ onUnmounted(() => {
   animation: caret-blink 0.9s step-end infinite;
 }
 
+.msg-caret--question {
+  background: var(--text);
+  opacity: 0.85;
+}
+
 .typing {
   display: inline-flex;
   align-items: center;
-  gap: clamp(8px, 1.4vmin, 14px);
-  padding: clamp(14px, 2.2vmin, 26px) clamp(18px, 3vmin, 36px);
-  border-radius: clamp(18px, 3vmin, 30px);
-  border: 1px dashed rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.22);
+  gap: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Incoming bubble + three dots, messenger-style wave. */
+.typing-messenger {
+  align-items: center;
+  justify-content: center;
+  gap: clamp(5px, 0.85vmin, 8px);
+  min-width: clamp(56px, 12vmin, 76px);
+  min-height: clamp(38px, 6vmin, 48px);
+  padding: clamp(10px, 1.6vmin, 14px) clamp(14px, 2.2vmin, 18px);
+  border-radius: clamp(16px, 2.5vmin, 22px);
+  border-bottom-left-radius: clamp(4px, 0.7vmin, 8px);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
 }
 
 .typing-dot {
-  width: clamp(10px, 1.6vmin, 16px);
-  height: clamp(10px, 1.6vmin, 16px);
+  display: block;
+  width: clamp(7px, 1.15vmin, 10px);
+  height: clamp(7px, 1.15vmin, 10px);
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--muted2);
-  animation: typing-dot 1.05s ease-in-out infinite;
+  animation: typing-dot-bounce 1.35s ease-in-out infinite;
 }
 
 .typing-dot:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: 0.18s;
 }
 
 .typing-dot:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: 0.36s;
 }
 
 .app-splash-fade-enter-active .app-splash-panel,
@@ -340,53 +346,41 @@ onUnmounted(() => {
   transform: translateY(10px) scale(0.99);
 }
 
-@keyframes msg-in {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @keyframes caret-blink {
   0%,
   50% {
     opacity: 1;
   }
+
   51%,
   100% {
     opacity: 0;
   }
 }
 
-@keyframes typing-dot {
+@keyframes typing-dot-bounce {
   0%,
-  70%,
+  66%,
   100% {
-    opacity: 0.25;
     transform: translateY(0);
+    opacity: 0.55;
   }
 
-  35% {
+  33% {
+    transform: translateY(-6px);
     opacity: 1;
-    transform: translateY(-4px);
-    background: var(--accent-h);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .msg {
+  .msg-caret {
     animation: none;
-    opacity: 1;
-    transform: none;
   }
 
   .typing-dot {
     animation: none;
     opacity: 0.7;
-  }
-
-  .msg-caret {
-    animation: none;
+    transform: none;
   }
 }
 </style>
