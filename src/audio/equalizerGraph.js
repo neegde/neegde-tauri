@@ -1,8 +1,10 @@
 import { EQ_BANDS } from "./equalizerConfig.js";
 
 let audioContext = null;
-/** @type {{ audio: HTMLMediaElement, source: MediaElementAudioSourceNode, filters: BiquadFilterNode[], outputGain: GainNode } | null} */
+/** @type {{ audio: HTMLMediaElement, source: MediaElementAudioSourceNode, filters: BiquadFilterNode[], outputGain: GainNode, analyser: AnalyserNode } | null} */
 let active = null;
+
+const VIS_FFT_SIZE = 2048;
 
 export function getEqualizerAudioContext() {
   return audioContext;
@@ -56,9 +58,15 @@ export function ensureEqualizer(audio, gainsDb) {
   const outputGain = ctx.createGain();
   outputGain.gain.value = 1;
   node.connect(outputGain);
-  outputGain.connect(ctx.destination);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = VIS_FFT_SIZE;
+  analyser.smoothingTimeConstant = 0.75;
+  analyser.minDecibels = -85;
+  analyser.maxDecibels = -12;
+  outputGain.connect(analyser);
+  analyser.connect(ctx.destination);
 
-  active = { audio, source, filters, ctx, outputGain };
+  active = { audio, source, filters, ctx, outputGain, analyser };
   return active;
 }
 
@@ -89,10 +97,21 @@ export function destroyEqualizer() {
     active.source.disconnect();
     for (const f of active.filters) f.disconnect();
     active.outputGain?.disconnect();
+    active.analyser?.disconnect();
   } catch {
     /* элемент уже уничтожен */
   }
   active = null;
+}
+
+/**
+ * Returns the shared analyser after the EQ chain, or null when no graph is active.
+ *
+ * Returns:
+ *     AnalyserNode or null.
+ */
+export function getVisualizerAnalyser() {
+  return active?.analyser ?? null;
 }
 
 export async function resumeEqualizerContext() {

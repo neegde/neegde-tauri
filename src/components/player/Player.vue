@@ -2,6 +2,7 @@
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
+import PlayerVisualizerModal from "./PlayerVisualizerModal.vue";
 import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
 import {
   trackDisplayBasename,
@@ -21,6 +22,7 @@ import {
   setEqualizerOutputGain,
 } from "../../audio/equalizerGraph.js";
 import { eqBandsDb } from "../../audio/equalizerState.js";
+import { setVisualizerBroadcastPlaying } from "../../audio/visualizerBroadcast.js";
 import {
   setMediaSessionApi,
   installMediaSessionHandlers,
@@ -225,6 +227,15 @@ function onVolumeWheel(e) {
 const enrichedMeta = ref(null);
 
 const playing = ref(false);
+
+watch(
+  playing,
+  (v) => {
+    setVisualizerBroadcastPlaying(v);
+  },
+  { immediate: true },
+);
+
 const current = ref(0);
 const duration = ref(0);
 const src = ref("");
@@ -257,6 +268,8 @@ let unlistenPrepareProgress = () => {};
 const statusMenuOpen = ref(false);
 /** Панель списка очереди. */
 const queuePanelOpen = ref(false);
+/** Окно визуализации (Web Audio). */
+const vizOpen = ref(false);
 
 /** URL из `torrent_prefetch_next_track` (другой торрент), пока не переключились на этот трек. */
 const prefetchedStream = ref({ url: "", forKey: "" });
@@ -1705,6 +1718,22 @@ onUnmounted(() => {
 
       <!-- Right: queue + volume -->
       <div class="player-right">
+        <button
+          type="button"
+          class="player-queue-btn"
+          :class="{ 'player-queue-btn--open': vizOpen }"
+          title="Визуализация (как в Winamp)"
+          aria-label="Открыть визуализацию"
+          @click.stop="vizOpen = true"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 18V12"/>
+            <path d="M8 18V8"/>
+            <path d="M12 18V14"/>
+            <path d="M16 18v-7"/>
+            <path d="M20 18V5"/>
+          </svg>
+        </button>
         <div v-if="queueLen > 0" class="player-queue-wrap" @click.stop>
           <button
             type="button"
@@ -1947,6 +1976,12 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
+
+    <PlayerVisualizerModal
+      :open="vizOpen"
+      :playing="playing"
+      @close="vizOpen = false"
+    />
   </div>
 </template>
 
