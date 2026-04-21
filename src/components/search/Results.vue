@@ -145,7 +145,8 @@ watch(
 const activeTab = ref("tracks");
 
 /**
- * Picks a sensible default tab after new search data (prefer tracks when both exist).
+ * Picks default tab for the current search: when Rutracker + SoulSeek are both in use,
+ * keeps the tracks tab (including while SoulSeek results are still loading after albums appear).
  *
  * Returns:
  *     void
@@ -153,14 +154,22 @@ const activeTab = ref("tracks");
 function syncDefaultSearchTab() {
   const na = albumPlayable.value.length;
   const nt = trackPlayable.value.length;
+  const combinedSources = props.rtLoggedIn && props.slskConnected;
   if (nt > 0 && na === 0) activeTab.value = "tracks";
-  else if (na > 0 && nt === 0) activeTab.value = "albums";
-  else if (na > 0 && nt > 0) activeTab.value = "tracks";
-  else activeTab.value = "albums";
+  else if (na > 0 && nt === 0) {
+    activeTab.value = combinedSources ? "tracks" : "albums";
+  } else if (na > 0 && nt > 0) activeTab.value = "tracks";
+  else activeTab.value = props.slskConnected ? "tracks" : "albums";
 }
 
 watch(
-  () => props.searchEpoch,
+  () => [
+    props.searchEpoch,
+    albumPlayable.value.length,
+    trackPlayable.value.length,
+    props.rtLoggedIn,
+    props.slskConnected,
+  ],
   () => nextTick(syncDefaultSearchTab),
   { immediate: true },
 );
