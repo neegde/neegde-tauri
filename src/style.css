@@ -230,6 +230,37 @@ body {
 }
 .main-content:has(.likes-view) { padding-top: 0; }
 
+/* Переключение экранов в основной колонке (главная / лайки / настройки / плейлист) */
+.main-view-surface {
+  width: 100%;
+}
+.main-view-enter-active,
+.main-view-leave-active {
+  transition:
+    opacity 0.11s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.12s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.main-view-enter-from,
+.main-view-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.main-view-enter-to,
+.main-view-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .main-view-enter-active,
+  .main-view-leave-active {
+    transition: opacity 0.08s ease;
+  }
+  .main-view-enter-from,
+  .main-view-leave-to {
+    transform: none;
+  }
+}
+
 /* ── Search ───────────────────────────────────────────────────────────── */
 .search-form { margin-bottom: 28px; }
 .search-input-wrap {
@@ -372,6 +403,7 @@ body {
   position: absolute;
   bottom: 8px;
   right: 8px;
+  z-index: 2;
   width: 46px; height: 46px;
   background: var(--accent);
   border-radius: 50%;

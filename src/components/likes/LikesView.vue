@@ -316,14 +316,14 @@ function likeTrackTooltip(like) {
           :key="like.id"
           class="album-card"
           :title="like.torrentName"
-          @click="emit('open-torrent', like)"
         >
-          <div class="album-art">
+          <div class="album-art" @click="emit('open-torrent', like)">
             <img
               v-if="like.source === 'rutracker' && getCoverReactive(String(like.torrentId))"
               :src="getCoverReactive(String(like.torrentId))"
               class="album-art-img"
               alt=""
+              draggable="false"
             />
             <svg v-else class="album-art-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M9 18V5l12-2v13"/>
@@ -331,6 +331,7 @@ function likeTrackTooltip(like) {
               <circle cx="18" cy="16" r="3"/>
             </svg>
             <button
+              type="button"
               class="album-art-play"
               title="Открыть раздачу"
               @click.stop="emit('open-torrent', like)"
@@ -340,8 +341,8 @@ function likeTrackTooltip(like) {
               </svg>
             </button>
           </div>
-          <div class="album-name">{{ like.torrentName }}</div>
-          <div class="album-meta likes-album-artist">
+          <div class="album-name" @click="emit('open-torrent', like)">{{ like.torrentName }}</div>
+          <div class="album-meta likes-album-artist" @click="emit('open-torrent', like)">
             <span class="likes-track-sub">{{
               extractTrackArtist(like.torrentName, null, null, like.magnet ?? null)
             }}</span>
@@ -359,9 +360,8 @@ function likeTrackTooltip(like) {
           :key="like.id"
           class="album-card"
           :title="like.albumName || like.torrentName"
-          @click="emit('open-torrent', like)"
         >
-          <div class="album-art">
+          <div class="album-art" @click="emit('open-torrent', like)">
             <CoverThumb
               :torrent-id="like.torrentId"
               :source="like.source"
@@ -370,6 +370,7 @@ function likeTrackTooltip(like) {
               fill
             />
             <button
+              type="button"
               class="album-art-play"
               title="Слушать"
               @click.stop="emit('play-album', like)"
@@ -379,8 +380,8 @@ function likeTrackTooltip(like) {
               </svg>
             </button>
           </div>
-          <div class="album-name">{{ like.albumName || like.torrentName }}</div>
-          <div class="album-meta likes-album-artist">
+          <div class="album-name" @click="emit('open-torrent', like)">{{ like.albumName || like.torrentName }}</div>
+          <div class="album-meta likes-album-artist" @click="emit('open-torrent', like)">
             <span class="likes-track-sub">{{
               extractTrackArtist(like.torrentName, like.dirPath ?? null, null, like.magnet ?? null)
             }}</span>

@@ -1041,7 +1041,7 @@ async function confirmResetAchievements() {
     <!-- ── Кэш: быстрая очистка (вне «задротов») ─────────────────── -->
     <div class="settings-section">
       <div class="settings-section-label">Кэш</div>
-      <div class="settings-card settings-card--cache-quick">
+      <div class="settings-card">
         <div class="settings-card-header">
           <div class="settings-card-icon settings-card-icon--app">
             <SystemIcon name="trash" :size="22" />
@@ -1059,7 +1059,7 @@ async function confirmResetAchievements() {
           <div class="cache-quick-actions">
             <button
               type="button"
-              class="nerd-btn-danger cache-quick-btn"
+              class="ach-btn ach-btn--primary cache-quick-btn"
               :disabled="cacheClearBusy || cacheSaveBusy"
               @click="confirmClearStreaming"
             >
@@ -1068,7 +1068,7 @@ async function confirmResetAchievements() {
             </button>
             <button
               type="button"
-              class="nerd-btn-danger nerd-btn-danger--ghost cache-quick-btn"
+              class="ach-btn ach-btn--danger cache-quick-btn"
               :disabled="cacheClearBusy || cacheSaveBusy"
               @click="confirmClearCoverTorrents"
             >
@@ -1846,10 +1846,7 @@ async function confirmResetAchievements() {
 
 .nerd-card { margin-top: 0; }
 
-/* Быстрая очистка кэша (основные настройки) */
-.settings-card--cache-quick {
-  border-left: 3px solid var(--accent);
-}
+/* Быстрая очистка кэша — те же карточка и кнопки, что в остальных секциях настроек */
 .cache-quick-desc {
   margin-bottom: 4px;
 }
@@ -1868,6 +1865,15 @@ async function confirmResetAchievements() {
 .cache-quick-btn {
   flex: 1;
   min-width: min(100%, 240px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.cache-quick-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .nerd-merge-label {

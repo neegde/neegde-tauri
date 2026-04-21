@@ -1,5 +1,5 @@
 <script setup>
-import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { appDebugLog, appDebugClickDetail } from "./appDebugLog.js";
 import {
@@ -917,6 +917,12 @@ watch(
   (newId) => { if (newId && mainRef.value) mainRef.value.scrollTo(0, 0); }
 );
 
+watch(view, () => {
+  nextTick(() => {
+    mainRef.value?.scrollTo?.(0, 0);
+  });
+});
+
 // ── SoulSeek login handlers ───────────────────────────────────────────────────
 
 async function handleSoulseekLogin(username, password) {
@@ -989,6 +995,24 @@ function handleLogout(evt) {
  *     seqActive: Active search id; stale calls are ignored.
  *     queryNorm: Lowercase trimmed query used in the LRU cache key.
  */
+/**
+ * Resets mixed-search UI before opening a torrent from library (likes / recent) on home.
+ *
+ * Does not clear `selected` or files. Bumps `searchRequestSeq` so stale search callbacks
+ * do not run after navigation.
+ */
+function resetSearchStateForHomeLibraryNav() {
+  homeSearchActive.value = false;
+  slskPeerBrowseUser.value = null;
+  searchAlbumResults.value = [];
+  searchTrackResults.value = [];
+  searchRtError.value = null;
+  searchSlskError.value = null;
+  error.value = null;
+  searchQuery.value = "";
+  searchRequestSeq += 1;
+}
+
 function finalizeCombinedSearch(seqActive, queryNorm) {
   if (seqActive !== searchRequestSeq) return;
   if (searchLoadingRt.value || searchLoadingSlsk.value) return;
@@ -1802,6 +1826,7 @@ async function handleOpenTorrentFromLike(like) {
     }
     return;
   }
+  resetSearchStateForHomeLibraryNav();
   forwardStack.value = [];
   if (selected.value) {
     backStack.value.push(snapshotTorrentForBack());
@@ -1813,8 +1838,9 @@ async function handleOpenTorrentFromLike(like) {
   torrentFilesBeforeAlbumPreview.value = null;
   torrentSelectedBeforeAlbumPreview.value = null;
   const m = like.torrentName?.match(/^(.+?)\s+[-–—]\s+/);
+  const tid = like.torrentId != null && like.torrentId !== "" ? String(like.torrentId) : String(like.id ?? "");
   const torrent = {
-    id: like.torrentId,
+    id: tid,
     name: like.type === "album" ? (like.albumName || like.torrentName) : like.torrentName,
     source: like.source, seeders: "?", size: 0, category: "—", added: "—",
     fromLikes: true, artist: m ? m[1].trim() : "",
@@ -1836,7 +1862,7 @@ async function handleOpenTorrentFromLike(like) {
   loadingFiles.value  = true;
   torrentMagnet.value = like.magnet ?? "";
   try {
-    const details = await getTorrentDetails(like.torrentId);
+    const details = await getTorrentDetails(tid);
     torrentMagnet.value = details.magnet ?? like.magnet ?? "";
     torrentCover.value  = details.cover_data_url ?? null;
     files.value = details.files.map((f, i) => ({
@@ -2314,16 +2340,14 @@ function handlePrev() {
 }
 
 function handleOpenRecent(item) {
-  // Reset selected before calling handleSelect to avoid the deselect branch
-  // (if this torrent was already open, handleSelect would deselect it instead).
+  // Полный сброс режима поиска как при пустой строке, но без handleSearch(""):
+  // тот выставляет selected/files в null и снова «выкидывает» на главную уже после открытия раздачи.
+  resetSearchStateForHomeLibraryNav();
   selected.value = null;
   files.value = [];
-  searchQuery.value = "";
-  searchAlbumResults.value = [];
-  searchTrackResults.value = [];
   view.value = "home";
   void handleSelect({
-    id: item.id,
+    id: String(item.id),
     name: item.name,
     source: item.source ?? "rutracker",
     seeders: "?",
@@ -2660,8 +2684,9 @@ function onMouseSideButtonUp(e) {
     <!-- ── Main ────────────────────────────────────────────────────── -->
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
+        <Transition name="main-view">
         <!-- Home: поиск + недавнее + выдача / раздача -->
-        <template v-if="view === 'home'">
+        <div v-if="view === 'home'" key="home" class="main-view-surface">
           <div class="main-toolbar">
             <div class="main-toolbar-row">
               <div class="main-toolbar-search">
@@ -2696,7 +2721,7 @@ function onMouseSideButtonUp(e) {
           />
 
           <HomeView
-            v-show="!homeSearchActive"
+            v-show="!homeSearchActive && !selected"
             :recent-history="recentHistory"
             @open-recent="handleOpenRecent"
             @remove-recent="handleRemoveFromRecent"
@@ -2769,67 +2794,72 @@ function onMouseSideButtonUp(e) {
             @add-to-queue="handleAddToQueueFromTorrent"
             @open-torrent-source="handleOpenTorrentSourceFromView"
           />
-        </template>
+        </div>
 
-        <!-- Likes view -->
-        <KeepAlive>
-          <LikesView
-            v-if="view === 'likes'"
-            :likes="Object.values(likes)"
+        <div v-else-if="view === 'likes'" key="likes" class="main-view-surface">
+          <KeepAlive>
+            <LikesView
+              :likes="Object.values(likes)"
+              :now-playing="nowPlayingMatchForLikes"
+              :player-playing="playerPlaying"
+              @toggle-like="handleToggleLike"
+              @play="handlePlayFromLike"
+              @play-album="handlePlayAlbumFromLike"
+              @open-torrent="handleOpenTorrentFromLike"
+              @open-track-source="handleOpenTrackSource"
+              @download="handleDownloadTrackFromLike"
+              @add-to-queue="handleAddToQueueFromLike"
+              @add-to-playlist="handleShowAddToPlaylist(playlistTrackFromLike($event))"
+            />
+          </KeepAlive>
+        </div>
+
+        <div v-else-if="view === 'settings'" key="settings" class="main-view-surface">
+          <KeepAlive>
+            <SettingsView
+              :rt-logged-in="rtLoggedIn"
+              :rt-username="rtUsername"
+              :rt-avatar-url="rtAvatarUrl"
+              :restoring-session="restoringSession"
+              :theme="theme"
+              :app-debug-enabled="appDebugEnabled"
+              :achievements-opt-in="achievementsOptIn"
+              :achievements-unlocked="achievementsState.unlocked"
+              :slsk-connected="slskConnected"
+              :slsk-username="slskUsername"
+              :slsk-logging-in="slskLoggingIn"
+              :slsk-login-error="slskLoginError"
+              @login="handleLogin"
+              @logout="handleLogout"
+              @theme-change="handleThemeChange"
+              @update:app-debug-enabled="appDebugEnabled = $event"
+              @achievements-opt-in-change="handleAchievementsOptInChange"
+              @achievements-reset="handleAchievementsReset"
+              @slsk-login="handleSoulseekLogin"
+              @slsk-logout="handleSoulseekLogout"
+            />
+          </KeepAlive>
+        </div>
+
+        <div
+          v-else-if="view === 'playlist' && currentPlaylist"
+          :key="'pl-' + currentPlaylistId"
+          class="main-view-surface"
+        >
+          <PlaylistView
+            :playlist="currentPlaylist"
             :now-playing="nowPlayingMatchForLikes"
             :player-playing="playerPlaying"
-            @toggle-like="handleToggleLike"
-            @play="handlePlayFromLike"
-            @play-album="handlePlayAlbumFromLike"
-            @open-torrent="handleOpenTorrentFromLike"
+            @play="handlePlayPlaylist"
             @open-track-source="handleOpenTrackSource"
-            @download="handleDownloadTrackFromLike"
-            @add-to-queue="handleAddToQueueFromLike"
-            @add-to-playlist="handleShowAddToPlaylist(playlistTrackFromLike($event))"
+            @remove-track="handleRemoveTrackFromPlaylist(currentPlaylistId, $event)"
+            @delete="handleDeletePlaylist(currentPlaylistId)"
+            @rename="handleRenamePlaylist(currentPlaylistId, $event)"
+            @add-to-queue="handleAddToQueueFromPlaylistTrack"
+            @add-to-playlist="handleShowAddToPlaylist($event)"
           />
-        </KeepAlive>
-
-        <!-- Settings view -->
-        <KeepAlive>
-          <SettingsView
-            v-if="view === 'settings'"
-            :rt-logged-in="rtLoggedIn"
-            :rt-username="rtUsername"
-            :rt-avatar-url="rtAvatarUrl"
-            :restoring-session="restoringSession"
-            :theme="theme"
-            :app-debug-enabled="appDebugEnabled"
-            :achievements-opt-in="achievementsOptIn"
-            :achievements-unlocked="achievementsState.unlocked"
-            :slsk-connected="slskConnected"
-            :slsk-username="slskUsername"
-            :slsk-logging-in="slskLoggingIn"
-            :slsk-login-error="slskLoginError"
-            @login="handleLogin"
-            @logout="handleLogout"
-            @theme-change="handleThemeChange"
-            @update:app-debug-enabled="appDebugEnabled = $event"
-            @achievements-opt-in-change="handleAchievementsOptInChange"
-            @achievements-reset="handleAchievementsReset"
-            @slsk-login="handleSoulseekLogin"
-            @slsk-logout="handleSoulseekLogout"
-          />
-        </KeepAlive>
-
-        <!-- Playlist view -->
-        <PlaylistView
-          v-if="view === 'playlist' && currentPlaylist"
-          :playlist="currentPlaylist"
-          :now-playing="nowPlayingMatchForLikes"
-          :player-playing="playerPlaying"
-          @play="handlePlayPlaylist"
-          @open-track-source="handleOpenTrackSource"
-          @remove-track="handleRemoveTrackFromPlaylist(currentPlaylistId, $event)"
-          @delete="handleDeletePlaylist(currentPlaylistId)"
-          @rename="handleRenamePlaylist(currentPlaylistId, $event)"
-          @add-to-queue="handleAddToQueueFromPlaylistTrack"
-          @add-to-playlist="handleShowAddToPlaylist($event)"
-        />
+        </div>
+        </Transition>
 
       </div>
     </div>

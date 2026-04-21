@@ -39,8 +39,8 @@ function onPresetSelect(ev) {
     </p>
 
     <div class="eq-toolbar">
-      <div class="eq-preset-field">
-        <label class="eq-preset-label" for="eq-preset-select">Пресет</label>
+      <label class="eq-preset-label" for="eq-preset-select">Пресет</label>
+      <div class="eq-preset-controls">
         <select
           id="eq-preset-select"
           class="login-input eq-preset-select"
@@ -53,14 +53,14 @@ function onPresetSelect(ev) {
           </option>
           <option value="__custom__">Свой профиль</option>
         </select>
+        <button
+          type="button"
+          class="eq-reset"
+          @click="resetEqFlat"
+        >
+          Сбросить
+        </button>
       </div>
-      <button
-        type="button"
-        class="eq-reset"
-        @click="resetEqFlat"
-      >
-        Сбросить
-      </button>
     </div>
 
     <div class="eq-sliders" role="group" aria-label="Полосы эквалайзера">
@@ -106,16 +106,17 @@ function onPresetSelect(ev) {
 }
 
 .eq-toolbar {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
-  align-items: end;
-}
-
-.eq-preset-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+}
+
+/** Одна строка: stretch даёт одинаковую высоту строки; нативный <select> на разных ОС по-разному рисуется внутри бокса. */
+.eq-preset-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -128,9 +129,15 @@ function onPresetSelect(ev) {
 }
 
 .eq-preset-select {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
   cursor: pointer;
+  box-sizing: border-box;
+  min-height: var(--eq-preset-control-h, 40px);
+  padding: 0 28px 0 12px;
+  line-height: 1.25;
+  align-self: stretch;
 }
 .eq-preset-select option {
   background: var(--bg, #141210);
@@ -140,7 +147,13 @@ function onPresetSelect(ev) {
 .eq-reset {
   font-size: 12px;
   font-weight: 600;
-  padding: 8px 12px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: var(--eq-preset-control-h, 40px);
+  padding: 0 12px;
   border-radius: 8px;
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
   background: transparent;
@@ -148,7 +161,6 @@ function onPresetSelect(ev) {
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
   white-space: nowrap;
-  align-self: end;
 }
 .eq-reset:hover {
   color: var(--text);

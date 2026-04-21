@@ -926,7 +926,8 @@ onUnmounted(() => {
   justify-content: flex-end;
   padding: 5px;
   box-sizing: border-box;
-  pointer-events: auto;
+  /* Иначе весь квадрат 44×44 перехватывает клики: обложка под ним не открывается */
+  pointer-events: none;
 }
 .home-card-remove {
   display: flex;
@@ -945,7 +946,7 @@ onUnmounted(() => {
   pointer-events: none;
   transition: opacity 0.15s, background 0.15s, transform 0.12s;
 }
-.home-card-remove-corner:hover .home-card-remove,
+.home-card-cover-wrap:hover .home-card-remove,
 .home-card-remove-corner:focus-within .home-card-remove {
   opacity: 1;
   pointer-events: auto;

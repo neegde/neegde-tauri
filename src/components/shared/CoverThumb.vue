@@ -139,6 +139,7 @@ onUnmounted(disconnectObserver);
       :src="coverUrl"
       :class="fill ? 'album-art-img' : 'cover-thumb-img'"
       alt=""
+      draggable="false"
       @error="coverErr = true; appDebugLog('cover', `CoverThumb <img> onerror — cover rendered but browser rejected it torrentId=${props.torrentId} coverFileIdx=${props.coverFileIdx}`)"
     />
     <svg v-else class="cover-thumb-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
