@@ -160,6 +160,11 @@ impl MagnetInner {
 pub struct TorrentImageState {
     session: Arc<Mutex<Option<Arc<Session>>>>,
     base_dir: Option<std::path::PathBuf>,
+    /// Path to the vozduxan streaming cache (same dir VozduxanStreamState uses).
+    /// When a cover image was already downloaded by the audio streaming session
+    /// it can be read directly from disk, avoiding a second BitTorrent connection
+    /// to the same swarm.
+    vozduxan_storage: Option<std::path::PathBuf>,
     magnet_states: Arc<Mutex<HashMap<String, Arc<Mutex<MagnetInner>>>>>,
     data_url_cache: Arc<Mutex<HashMap<(String, usize), String>>>,
     debug_log: Arc<AppDebugLog>,
@@ -172,9 +177,18 @@ impl TorrentImageState {
             let _ = std::fs::create_dir_all(&p);
             p
         });
+        let vozduxan_storage = app.path().app_data_dir().ok().map(|d| {
+            let label = if cfg!(debug_assertions) {
+                "vozduxan_streams_dev"
+            } else {
+                "vozduxan_streams"
+            };
+            d.join(label)
+        });
         Self {
             session: Arc::new(Mutex::new(None)),
             base_dir,
+            vozduxan_storage,
             magnet_states: Arc::new(Mutex::new(HashMap::new())),
             data_url_cache: Arc::new(Mutex::new(HashMap::new())),
             debug_log,
@@ -328,21 +342,54 @@ impl TorrentImageState {
         handle: &ManagedTorrentHandle,
         file_idx: usize,
     ) -> Option<String> {
-        let mime = handle
+        // Metadata is already available (wait_until_initialized was called).
+        // Extract relative_filename for both MIME detection and disk shortcut.
+        let (mime, rel_path) = handle
             .with_metadata(|meta| {
-                meta.file_infos
-                    .get(file_idx)
-                    .and_then(|fi| fi.relative_filename.extension())
+                let fi = meta.file_infos.get(file_idx)?;
+                let ext = fi.relative_filename
+                    .extension()
                     .and_then(|e| e.to_str())
-                    .map(|ext| match ext.to_ascii_lowercase().as_str() {
-                        "png" => "image/png",
-                        "webp" => "image/webp",
-                        _ => "image/jpeg",
-                    })
-                    .unwrap_or("image/jpeg")
-                    .to_string()
+                    .unwrap_or("");
+                let mime = match ext.to_ascii_lowercase().as_str() {
+                    "png"  => "image/png",
+                    "webp" => "image/webp",
+                    _      => "image/jpeg",
+                };
+                Some((mime.to_string(), fi.relative_filename.clone()))
             })
-            .unwrap_or_else(|_| "image/jpeg".to_string());
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| ("image/jpeg".to_string(), std::path::PathBuf::new()));
+
+        /* ── Disk shortcut ────────────────────────────────────────────────
+         * vozduxan (libtorrent) and this librqbit session both download to
+         * separate directories.  If vozduxan already has the image file on
+         * disk (from a previous or current streaming session of the same
+         * album), reading it directly avoids a second BitTorrent connection
+         * to the same swarm — seeders often rate-limit per-IP slots, so two
+         * concurrent connections can slow down audio piece delivery.        */
+        if !rel_path.as_os_str().is_empty() {
+            if let Some(ref base) = self.vozduxan_storage {
+                let full_path = base.join(&rel_path);
+                if full_path.exists() {
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) if !bytes.is_empty() && bytes.len() <= MAX_IMAGE_BYTES => {
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            self.dlog(format!(
+                                "torrent cover: disk shortcut — read from vozduxan cache \
+                                 file_idx={file_idx} size={}B path={}",
+                                bytes.len(),
+                                full_path.display(),
+                            ));
+                            return Some(format!("data:{mime};base64,{b64}"));
+                        }
+                        Ok(_) => {} // empty or oversized — fall through to BitTorrent
+                        Err(_) => {} // permission error or race — fall through
+                    }
+                }
+            }
+        }
 
         let stream_result = handle.clone().stream(file_idx);
         let mut stream = match stream_result {
@@ -377,10 +424,7 @@ impl TorrentImageState {
                 match stream.read(&mut buf[pos..]).await {
                     Ok(0) => break,
                     Ok(n) => pos += n,
-                    Err(e) => {
-                        eprintln!("[cover] read error at pos={pos}/{total}: {e}");
-                        return None;
-                    }
+                    Err(_) => return None,
                 }
             }
             if pos == 0 { None } else { Some(buf[..pos].to_vec()) }

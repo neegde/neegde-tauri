@@ -1,5 +1,6 @@
 <script setup>
 import { watch, onMounted, onUnmounted } from "vue";
+import SystemIcon from "./SystemIcon.vue";
 
 const props = defineProps({
   open: Boolean,
@@ -51,7 +52,7 @@ onUnmounted(() => {
         @click.self="close"
       >
         <button type="button" class="cover-lb-close" aria-label="Закрыть" @click="close">
-          ×
+          <SystemIcon name="close" :size="22" />
         </button>
         <div class="cover-lb-frame" :class="{ 'cover-lb-frame--large': large }" @click.stop>
           <img
@@ -91,8 +92,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
-  font-size: 26px;
-  line-height: 1;
+  line-height: 0;
   cursor: pointer;
   display: flex;
   align-items: center;

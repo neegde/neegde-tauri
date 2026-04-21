@@ -58,6 +58,9 @@ struct SessionMeta {
     username: Option<String>,
     /// base64 data: URL — cached so the WebView never needs Rutracker cookies.
     avatar_data_url: Option<String>,
+    /// Mirror base URL used at login (`LoginResult`); cookies are scoped to that host.
+    /// Restore must probe this URL, not whatever mirror the UI picked for “auto” mode.
+    login_mirror: Option<String>,
 }
 
 fn load_meta(path: &Option<PathBuf>) -> SessionMeta {
@@ -219,8 +222,7 @@ impl RutrackerState {
         let loaded_proxy = load_http_proxy_url(&proxy_path);
         let client = match build_reqwest_client(Arc::clone(&cookie_store), loaded_proxy.as_deref()) {
             Ok(c) => c,
-            Err(e) => {
-                eprintln!("[neegde] invalid saved HTTP proxy, using direct connection: {}", e);
+            Err(_) => {
                 build_reqwest_client(Arc::clone(&cookie_store), None)
                     .expect("reqwest client init failed")
             }
@@ -475,6 +477,7 @@ pub async fn rutracker_login(
         state.persist(&SessionMeta {
             username: Some(username.clone()),
             avatar_data_url: avatar_data_url.clone(),
+            login_mirror: Some(base.clone()),
         });
 
         let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
@@ -549,7 +552,14 @@ pub async fn rutracker_restore_session(
     }
 
     let client = state.http_client()?;
-    let base = mirror.trim_end_matches('/').to_string();
+    let meta = load_meta(&state.meta_path);
+    let from_ui = mirror.trim().trim_end_matches('/').to_string();
+    let base = meta
+        .login_mirror
+        .as_ref()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(from_ui);
 
     // Light healthcheck: try loading the forum index
     let resp = client
@@ -558,7 +568,7 @@ pub async fn rutracker_restore_session(
         .await
         .map_err(|e| format!("Сетевая ошибка: {}", e))?;
 
-    if resp.url().to_string().contains("/login.php") {
+    if resp.url().path().contains("login") {
         // Session expired — wipe files
         state.wipe();
         return Ok(LoginStatus {
@@ -568,9 +578,44 @@ pub async fn rutracker_restore_session(
         });
     }
 
-    // Session is valid — restore from saved meta (no extra network requests)
-    let meta = load_meta(&state.meta_path);
+    // Tracker search page: same auth barrier as `search_music` — index alone can load for guests.
+    let resp_t = client
+        .get(format!("{}/forum/tracker.php", base))
+        .query(&[("nm", ".")])
+        .send()
+        .await
+        .map_err(|e| format!("Сетевая ошибка: {}", e))?;
 
+    if resp_t.url().path().contains("login") {
+        state.wipe();
+        return Ok(LoginStatus {
+            logged_in: false,
+            username: None,
+            avatar_url: None,
+        });
+    }
+
+    let bytes = resp_t
+        .bytes()
+        .await
+        .map_err(|e| format!("Ошибка чтения ответа трекера: {}", e))?;
+    let html_track = if std::str::from_utf8(&bytes).is_ok() {
+        String::from_utf8(bytes.to_vec()).unwrap()
+    } else {
+        let (cow, _, _) = WINDOWS_1251.decode(&bytes);
+        cow.into_owned()
+    };
+
+    if html_track.contains(r#"name="login_username""#) {
+        state.wipe();
+        return Ok(LoginStatus {
+            logged_in: false,
+            username: None,
+            avatar_url: None,
+        });
+    }
+
+    // Index + tracker both indicate an authenticated session — restore from saved meta
     let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
     inner.logged_in = true;
     inner.username = meta.username.clone();
@@ -779,6 +824,24 @@ pub async fn rutracker_get_torrent_details(
         state.write_cover(&details.id, data_url);
     }
     Ok(details)
+}
+
+/// True if the topic’s `.torrent` lists at least one file with an extension the player supports.
+#[tauri::command]
+pub async fn rutracker_topic_has_playable_audio(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+    topic_id: String,
+) -> Result<bool, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Err("Необходимо войти в Rutracker".into());
+        }
+    }
+    let base = mirror.trim_end_matches('/').to_string();
+    let client = state.http_client()?;
+    topic::topic_has_playable_audio(&client, &base, &topic_id).await
 }
 
 /// Download `.torrent` for a topic (for streaming without magnet metadata resolution).

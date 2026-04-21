@@ -2,11 +2,18 @@
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
+import PlayerVisualizerModal from "./PlayerVisualizerModal.vue";
 import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
-import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
+import {
+  trackDisplayBasename,
+  extractTrackArtist,
+  isYearLike,
+  parseArtistTitleFromTrackFilename,
+} from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
+  vozduxanStreamStats,
 } from "../../torrent/torrentSession.js";
 import {
   ensureEqualizer,
@@ -16,6 +23,7 @@ import {
   setEqualizerOutputGain,
 } from "../../audio/equalizerGraph.js";
 import { eqBandsDb } from "../../audio/equalizerState.js";
+import { setVisualizerBroadcastPlaying } from "../../audio/visualizerBroadcast.js";
 import {
   setMediaSessionApi,
   installMediaSessionHandlers,
@@ -29,6 +37,9 @@ import {
 import { appDebugLog } from "../../appDebugLog.js";
 import { syncDiscordPresence, clearDiscordPresence } from "../../discordPresence.js";
 import { enrichTrackMeta } from "../../audio/metadataEnrich.js";
+import { slskMeta } from "../../soulseek/slskMetaStore.js";
+import { getSlskCoverReactive, getSlskCoverDataUrl } from "../../soulseek/coverCache.js";
+import TrackContextMenu from "../shared/TrackContextMenu.vue";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -69,19 +80,116 @@ const emit = defineEmits([
   "open-torrent",
   "queue-jump",
   "queue-remove",
+  "queue-add-to-playlist",
+  "queue-download",
   "cycle-repeat",
   "toggle-shuffle",
 ]);
 
-const currentArtist = computed(() =>
-  enrichedMeta.value?.artist ||
-  extractTrackArtist(props.track?.torrentName, props.track?.albumDirPath, props.track?.artist, props.track?.magnet) ||
-  ""
-);
+const queueCtxOpen = ref(false);
+const queueCtxX = ref(0);
+const queueCtxY = ref(0);
+/** @type {import('vue').Ref<number | null>} */
+const queueCtxIdx = ref(null);
 
-const displayTitle = computed(
-  () => enrichedMeta.value?.title || trackDisplayBasename(props.track?.fileName ?? "")
-);
+/**
+ * @param {MouseEvent} e
+ * @param {number} idx
+ * @returns {void}
+ */
+function openQueueCtx(e, idx) {
+  e.preventDefault();
+  queueCtxX.value = e.clientX;
+  queueCtxY.value = e.clientY;
+  queueCtxIdx.value = idx;
+  queueCtxOpen.value = true;
+}
+
+const queueCtxActions = computed(() => {
+  const idx = queueCtxIdx.value;
+  const q = idx != null ? props.playbackQueue?.[idx] : null;
+  const canDownload =
+    !!q &&
+    String(q.magnet ?? "").trim().length > 0 &&
+    q.fileIdx != null &&
+    Number.isFinite(Number(q.fileIdx));
+  return [
+    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload },
+    { id: "divider" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
+  ];
+});
+
+/**
+ * @param {string} id
+ * @returns {void}
+ */
+function onQueueCtxAction(id) {
+  const idx = queueCtxIdx.value;
+  if (idx == null) return;
+  const q = props.playbackQueue?.[idx];
+  if (!q) return;
+  if (id === "playlist") emit("queue-add-to-playlist", q);
+  if (id === "download") {
+    if (
+      !String(q.magnet ?? "").trim() ||
+      q.fileIdx == null ||
+      !Number.isFinite(Number(q.fileIdx))
+    ) {
+      return;
+    }
+    emit("queue-download", q);
+  }
+}
+
+/** Same key as Results `slskMeta` — artist/title/coverUrl from filename + iTunes, matches track list. */
+const soulseekSearchMeta = computed(() => {
+  const t = props.track;
+  if (!t || t.source !== "soulseek" || t.slskMetaTrackId == null || t.slskMetaTrackId === "") {
+    return null;
+  }
+  return slskMeta.get(t.slskMetaTrackId) ?? null;
+});
+
+const currentArtist = computed(() => {
+  const t = props.track;
+  if (soulseekSearchMeta.value?.artist) return soulseekSearchMeta.value.artist;
+  if (enrichedMeta.value?.artist && !isYearLike(String(enrichedMeta.value.artist).trim())) {
+    return enrichedMeta.value.artist;
+  }
+  const parsed = parseArtistTitleFromTrackFilename(t?.fileName ?? "");
+  if (parsed.artist) return parsed.artist;
+  return (
+    extractTrackArtist(t?.torrentName, t?.albumDirPath, t?.artist, t?.magnet) || ""
+  );
+});
+
+/** Matches `likeTrackLines` / Results rows: prefer split «Artist — Title» from filename when present. */
+const displayTitle = computed(() => {
+  const t = props.track;
+  if (soulseekSearchMeta.value?.title) return soulseekSearchMeta.value.title;
+  if (enrichedMeta.value?.title) return enrichedMeta.value.title;
+  const path = t?.fileName ?? "";
+  const { artist, title } = parseArtistTitleFromTrackFilename(path);
+  if (artist) return title;
+  return trackDisplayBasename(path);
+});
+
+const playerCoverOverride = computed(() => {
+  const e = enrichedMeta.value?.coverUrl;
+  if (e) return e;
+  const t = props.track;
+  if (!t || t.source !== "soulseek") return "";
+  const sm = soulseekSearchMeta.value;
+  if (sm?.coverUrl) return sm.coverUrl;
+  const u = t.slskFolderCoverUsername;
+  const p = t.slskFolderCoverFilepath;
+  if (u && p) {
+    const folder = getSlskCoverReactive(u, p);
+    if (folder) return folder;
+  }
+  return "";
+});
 
 function onArtistClick() {
   const a = currentArtist.value;
@@ -91,7 +199,7 @@ function onArtistClick() {
 function onTrackClick() {
   const t = props.track;
   if (!t) return;
-  emit("open-torrent", {
+  const payload = {
     torrentId: t.torrentId,
     torrentName: t.torrentName,
     source: t.source,
@@ -100,7 +208,12 @@ function onTrackClick() {
     seeders: t.seeders ?? null,
     fileIdx: t.fileIdx,
     albumDirPath: t.albumDirPath ?? null,
-  });
+  };
+  if (t.source === "soulseek" && t.slskUsername) {
+    payload.slskUsername = t.slskUsername;
+    payload.slskFilepath = t.slskFilepath ?? null;
+  }
+  emit("open-torrent", payload);
 }
 
 function loadSavedVolume() {
@@ -115,7 +228,7 @@ function loadSavedVolume() {
   }
 }
 
-const hasTrack = computed(() => Boolean(props.track?.magnet));
+const hasTrack = computed(() => trackHasPlaybackIdentity(props.track));
 
 const currentLikeId = computed(() => {
   const t = props.track;
@@ -132,18 +245,28 @@ function toggleCurrentLike() {
   const t = props.track;
   const id = currentLikeId.value;
   if (!t || !id) return;
-  emit("toggle-like", {
+  const base = {
     id,
     type: "track",
     torrentId: t.torrentId,
     torrentName: t.torrentName,
     source: t.source,
-    magnet: t.magnet,
+    magnet: t.magnet ?? "",
     fileIdx: t.fileIdx,
     fileName: t.fileName,
     coverFileIdx: t.coverFileIdx ?? null,
     coverFile: null,
-  });
+  };
+  if (t.source === "soulseek" && t.slskUsername && t.slskFilepath) {
+    emit("toggle-like", {
+      ...base,
+      slskUsername: t.slskUsername,
+      slskFilepath: t.slskFilepath,
+      slskFilesize: t.slskFilesize ?? 0,
+    });
+    return;
+  }
+  emit("toggle-like", base);
 }
 
 const audioRef = ref(null);
@@ -172,6 +295,15 @@ function onVolumeWheel(e) {
 const enrichedMeta = ref(null);
 
 const playing = ref(false);
+
+watch(
+  playing,
+  (v) => {
+    setVisualizerBroadcastPlaying(v);
+  },
+  { immediate: true },
+);
+
 const current = ref(0);
 const duration = ref(0);
 const src = ref("");
@@ -182,8 +314,13 @@ const bufferedPercent = ref(0);
 const loadCancelledByUser = ref(false);
 /** Watchdog: превращает бесконечный buffering после piece-timeout в явный error. */
 let bufferingWatchdogTimer = null;
-/** Чуть больше vozduxan PIECE_TIMEOUT_MS (20 000 мс). */
-const BUFFERING_WATCHDOG_MS = 25_000;
+/** Чуть больше vozduxan PIECE_TIMEOUT_MS (180 000 мс) — не должен опережать таймаут C++. */
+const BUFFERING_WATCHDOG_MS = 185_000;
+/** Статистика скачивания во время buffering фазы: { download_rate, num_peers } или null. */
+const streamDownloadStats = ref(null);
+let statsPollingTimer = null;
+/** История статистики для sparkline-графика: [{rate, peers}], макс. 40 точек */
+const statsHistory = ref([]);
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
 const prepareAttempt = ref(0);
 /** Matches the in-flight / active prepare — suppresses duplicate watch runs for the same track. */
@@ -199,6 +336,8 @@ let unlistenPrepareProgress = () => {};
 const statusMenuOpen = ref(false);
 /** Панель списка очереди. */
 const queuePanelOpen = ref(false);
+/** Окно визуализации (Web Audio). */
+const vizOpen = ref(false);
 
 /** URL из `torrent_prefetch_next_track` (другой торрент), пока не переключились на этот трек. */
 const prefetchedStream = ref({ url: "", forKey: "" });
@@ -209,20 +348,52 @@ let prefetchInFlight = false;
 let secondPrefetchInFlight = false;
 let secondPrefetchDoneFingerprint = "";
 
-const PREFETCH_MIN_SEC = 10;
-const PREFETCH_MIN_RATIO = 0.12;
+/** For cross-torrent next track, wait a bit longer to avoid wasted bandwidth on quick skips. */
+const PREFETCH_MIN_SEC = 4;
+const PREFETCH_MIN_RATIO = 0.08;
+/**
+ * Same-torrent next track: start prefetch almost immediately.
+ * Adjusting piece priorities is virtually free since metadata is already loaded.
+ */
+const PREFETCH_MIN_SEC_SAME_TORRENT = 1.5;
+const PREFETCH_MIN_RATIO_SAME_TORRENT = 0.04;
+
+/**
+ * Returns whether a queue item can be opened for playback (torrent or SoulSeek).
+ *
+ * Args:
+ *     t: Queue item or null.
+ *
+ * Returns:
+ *     True when `streamUrl` can be invoked for this item.
+ */
+function trackHasPlaybackIdentity(t) {
+  if (!t) return false;
+  if (t.source === "soulseek") {
+    return Boolean(t.slskUsername && t.slskFilepath);
+  }
+  return Boolean(t.magnet);
+}
 
 /**
  * Stable key for matching a queue item to a prepared stream URL.
  *
  * Args:
- *     t: Queue item with magnet and fileIdx.
+ *     t: Queue item with magnet and fileIdx (or SoulSeek peer file fields).
  *
  * Returns:
  *     String key or empty when invalid.
  */
 function queueTrackKey(t) {
-  if (!t?.magnet || t.fileIdx == null || t.fileIdx === "") return "";
+  if (!t) return "";
+  if (t.source === "soulseek") {
+    if (!t.slskUsername || !t.slskFilepath) return "";
+    const raw = t.fileIdx;
+    const n =
+      raw != null && raw !== "" && Number.isFinite(Number(raw)) ? Number(raw) : 0;
+    return `slsk\0${t.slskUsername}\0${t.slskFilepath}\0${n}`;
+  }
+  if (!t.magnet || t.fileIdx == null || t.fileIdx === "") return "";
   const n = Number(t.fileIdx);
   if (!Number.isFinite(n)) return "";
   return `${t.magnet}\0${n}`;
@@ -312,13 +483,57 @@ const streamDotClass = computed(() => {
   return prepareDotClass.value;
 });
 
+function fmtRate(bytesPerSec) {
+  if (bytesPerSec >= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} МБ/с`;
+  if (bytesPerSec >= 1024)      return `${Math.round(bytesPerSec / 1024)} КБ/с`;
+  return `${bytesPerSec} Б/с`;
+}
+
+/** Активный источников сейчас */
+const currentPeers = computed(() => {
+  const stats = streamDownloadStats.value;
+  if (stats) return stats.num_peers ?? 0;
+  const p = lastPrepareProgress.value;
+  return (p?.peersLive ?? 0);
+});
+
+/** Текущая скорость потока в байт/с */
+const currentRate = computed(() => {
+  const stats = streamDownloadStats.value;
+  if (stats?.download_rate > 0) return stats.download_rate;
+  const p = lastPrepareProgress.value;
+  return (p?.downloadMbps ?? 0) > 0 ? Math.round(p.downloadMbps * 1_000_000) : 0;
+});
+
+/** Sparkline: SVG polyline points из истории скорости */
+const sparklineData = computed(() => {
+  const h = statsHistory.value;
+  if (h.length < 2) return { points: "", max: 0 };
+  const W = 180, H = 36;
+  const rates = h.map(x => x.rate);
+  const maxR = Math.max(...rates, 1);
+  const pts = rates.map((r, i) => {
+    const x = (i / (rates.length - 1)) * W;
+    const y = H - (r / maxR) * H;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return { points: pts, max: maxR };
+});
+
 /** Одна фраза-заголовок для pop-up. */
 const streamStatusHeadline = computed(() => {
   switch (streamPhase.value) {
-    case "preparing": return "Подготовка потока";
-    case "buffering":  return "Буферизация";
-    case "ready":      return "Стрим активен";
-    default:           return "";
+    case "preparing": return "Поиск источников";
+    case "buffering": {
+      const r = currentRate.value;
+      if (r > 0) return fmtRate(r);
+      return currentPeers.value > 0 ? "Синхронизация" : "Поиск источников";
+    }
+    case "ready": {
+      const r = currentRate.value;
+      return r > 0 ? fmtRate(r) : "Прямой эфир";
+    }
+    default: return "";
   }
 });
 
@@ -328,33 +543,24 @@ const streamStatusBody = computed(() => {
   const msg = (p?.message ?? "").toLowerCase();
 
   if (streamPhase.value === "ready") {
-    const live = p?.peersLive ?? 0;
-    return live > 0
-      ? `Трек воспроизводится через торрент-сеть · ${live} источн.`
-      : "Трек воспроизводится через торрент-сеть";
+    const peers = currentPeers.value;
+    return peers > 0
+      ? `Воспроизводится · ${peers} источн. в сети`
+      : "Воспроизводится из торрент-сети";
   }
-  if (msg.includes("metadata") || msg.includes("resolv")) return "Получение информации о файле…";
-  if (msg.includes("buffer"))                              return "Загрузка начала трека…";
-  if (msg.includes("ready"))                               return "Трек готов к воспроизведению";
-  return "Поиск источников в сети…";
-});
-
-/** Строки с данными в таблице pop-up. */
-const streamStatusRows = computed(() => {
-  const p = lastPrepareProgress.value;
-  if (!p) return [];
-  const rows = [];
-  if ((p.peersLive ?? 0) > 0)
-    rows.push({ label: "Подключено источников", value: String(p.peersLive) });
-  const pending = (p.peersConnecting ?? 0) + (p.peersQueued ?? 0);
-  if (pending > 0)
-    rows.push({ label: "Подключается", value: String(pending) });
-  if ((p.downloadMbps ?? 0) > 0.001)
-    rows.push({ label: "Скорость загрузки", value: `${p.downloadMbps.toFixed(2)} МБ/с` });
-  const seeds = props.track?.seeders;
-  if (seeds != null && Number.isFinite(Number(seeds)))
-    rows.push({ label: "Раздающих", value: String(Number(seeds)) });
-  return rows;
+  if (streamPhase.value === "buffering") {
+    const stats = streamDownloadStats.value;
+    if (!stats) return "Ожидание от источников…";
+    if (stats.num_peers === 0) return "Ищем источники в сети…";
+    const rate = stats.download_rate;
+    return rate > 0
+      ? `${stats.num_peers} источн. · ${fmtRate(rate)}`
+      : `Подключено ${stats.num_peers} источн.`;
+  }
+  if (msg.includes("metadata") || msg.includes("resolv")) return "Получаем информацию о треке…";
+  if (msg.includes("buffer"))  return "Синхронизация с источниками…";
+  if (msg.includes("ready"))   return "Источник готов";
+  return "Ищем источники в сети…";
 });
 
 watch(
@@ -427,6 +633,7 @@ function onPlayButtonClick() {
 function togglePlay() {
   if (!hasTrack.value) return;
   if (props.suppressAutoplay && !src.value) {
+    void appDebugLog("player", `togglePlay: suppressed — emitting request-stream fileIdx=${props.track?.fileIdx}`);
     emit("request-stream");
     return;
   }
@@ -558,7 +765,14 @@ watch(playing, (v) => {
 
 watch(streamPhase, (phase, prev) => {
   void appDebugLog("player", `streamPhase: ${prev} → ${phase} — "${props.track?.fileName?.slice?.(0,60)}" fileIdx=${props.track?.fileIdx}`);
-  if (phase !== "buffering") clearBufferingWatchdog();
+  if (phase !== "buffering") {
+    clearBufferingWatchdog();
+    if (phase !== "ready") stopStatsPolling();
+  }
+  if (phase === "ready" && prev === "buffering") {
+    // Continue polling after buffering so the chart stays alive during playback
+    startStatsPolling();
+  }
 });
 
 watchEffect(() => {
@@ -602,31 +816,72 @@ watchEffect(() => {
   });
 });
 
+/**
+ * Merges SoulSeek search metadata with MusicBrainz for Media Session / OS "now playing".
+ *
+ * Args:
+ *     t: Current queue item or null.
+ *
+ * Returns:
+ *     Object suitable as second arg to syncMediaSessionMetadata, or null.
+ */
+function buildSessionEnriched(t) {
+  if (!t || t.source !== "soulseek" || t.slskMetaTrackId == null || t.slskMetaTrackId === "") {
+    return null;
+  }
+  const sm = slskMeta.get(t.slskMetaTrackId);
+  if (!sm) return null;
+  return {
+    artist: sm.artist,
+    title: sm.title,
+    album: sm.albumUrl ?? "",
+    coverUrl: sm.coverUrl ?? null,
+  };
+}
+
 watch(
   () => props.track,
   (t) => {
     enrichedMeta.value = null;
-    if (!t?.magnet) {
+    if (!trackHasPlaybackIdentity(t)) {
       clearMediaSessionPresentation();
       return;
     }
-    void syncMediaSessionMetadata(t);
-    // Fire iTunes enrichment in background — does NOT block playback
-    const artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
-    const titleLocal = trackDisplayBasename(t.fileName);
+    if (t.source === "soulseek") {
+      const u = t.slskFolderCoverUsername;
+      const p = t.slskFolderCoverFilepath;
+      if (u && p && !getSlskCoverReactive(u, p)) {
+        void getSlskCoverDataUrl(u, p, t.slskFolderCoverSize ?? 0);
+      }
+    }
+    void syncMediaSessionMetadata(t, buildSessionEnriched(t));
+    // MusicBrainz enrichment in background — does NOT block playback
+    let artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
+    let titleLocal = trackDisplayBasename(t.fileName);
+    const sm0 = t.slskMetaTrackId ? slskMeta.get(t.slskMetaTrackId) : null;
+    if (sm0?.artist && sm0?.title) {
+      artistLocal = sm0.artist;
+      titleLocal = sm0.title;
+    } else {
+      const parsed = parseArtistTitleFromTrackFilename(t.fileName || t.torrentName || "");
+      if (parsed.artist) {
+        artistLocal = parsed.artist;
+        titleLocal = parsed.title;
+      }
+    }
     enrichTrackMeta(artistLocal, titleLocal, (meta) => {
       if (props.track !== t) return; // track changed while request was in flight
       enrichedMeta.value = meta;
-      void syncMediaSessionMetadata(t, meta);
+      void syncMediaSessionMetadata(t, { ...buildSessionEnriched(t), ...meta });
     });
   },
   { immediate: true }
 );
 
 watch(
-  () => [playing.value, duration.value, current.value, props.track?.magnet],
+  () => [playing.value, duration.value, current.value, queueTrackKey(props.track)],
   () => {
-    if (!props.track?.magnet || streamPhase.value === "error") return;
+    if (!trackHasPlaybackIdentity(props.track) || streamPhase.value === "error") return;
     const d = duration.value;
     const p = current.value;
     if (!Number.isFinite(d) || d <= 0) return;
@@ -637,10 +892,10 @@ watch(
 
 function discordPresencePayload() {
   const t = props.track;
-  if (!t?.magnet) return null;
+  if (!trackHasPlaybackIdentity(t)) return null;
   return {
-    title: trackDisplayBasename(t.fileName) || "Трек",
-    subtitle: extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet),
+    title: displayTitle.value || "Трек",
+    subtitle: currentArtist.value || "",
     playing: playing.value,
     positionSec: Number.isFinite(current.value) ? current.value : null,
     durationSec:
@@ -656,7 +911,7 @@ watch(
   () => [props.track, playing.value, streamPhase.value],
   () => {
     const t = props.track;
-    if (!t?.magnet) {
+    if (!trackHasPlaybackIdentity(t)) {
       void clearDiscordPresence();
       return;
     }
@@ -677,9 +932,9 @@ watch(
 );
 
 watch(
-  () => [current.value, duration.value, playing.value, props.track?.magnet, streamPhase.value],
+  () => [current.value, duration.value, playing.value, queueTrackKey(props.track), streamPhase.value],
   () => {
-    if (!props.track?.magnet || streamPhase.value === "error" || !playing.value) return;
+    if (!trackHasPlaybackIdentity(props.track) || streamPhase.value === "error" || !playing.value) return;
     const now = Date.now();
     if (now - discordPresenceLastSyncMs < DISCORD_PRESENCE_PROGRESS_MIN_MS) return;
     const p = discordPresencePayload();
@@ -788,6 +1043,7 @@ function onAudioStalled() {
 
 function startBufferingWatchdog() {
   clearBufferingWatchdog();
+  startStatsPolling();
   const watchdogStartTime = audioRef.value?.currentTime ?? 0;
   void appDebugLog("player", `audio: buffering watchdog started (${BUFFERING_WATCHDOG_MS}ms) — "${props.track?.fileName?.slice?.(0,60)}"`);
   bufferingWatchdogTimer = setTimeout(() => {
@@ -812,6 +1068,33 @@ function clearBufferingWatchdog() {
     clearTimeout(bufferingWatchdogTimer);
     bufferingWatchdogTimer = null;
   }
+}
+
+function startStatsPolling() {
+  stopStatsPolling();
+  async function poll() {
+    if (streamPhase.value !== "buffering" && streamPhase.value !== "ready") return;
+    const stats = await vozduxanStreamStats(src.value);
+    if (streamPhase.value === "buffering" || streamPhase.value === "ready") {
+      streamDownloadStats.value = stats;
+      if (stats) {
+        const h = statsHistory.value;
+        h.push({ rate: stats.download_rate ?? 0, peers: stats.num_peers ?? 0 });
+        if (h.length > 40) h.splice(0, h.length - 40);
+      }
+    }
+    statsPollingTimer = setTimeout(poll, 1000);
+  }
+  statsPollingTimer = setTimeout(poll, 600);
+}
+
+function stopStatsPolling() {
+  if (statsPollingTimer !== null) {
+    clearTimeout(statsPollingTimer);
+    statsPollingTimer = null;
+  }
+  streamDownloadStats.value = null;
+  statsHistory.value = [];
 }
 
 let bufferPollRaf = 0;
@@ -842,13 +1125,18 @@ function bufferPollTick() {
  */
 async function maybeTriggerPrefetch() {
   if (!props.nextTrack || !props.track) return;
+  // SoulSeek tracks don't use torrent prefetch
+  if (props.track?.source === "soulseek" || props.nextTrack?.source === "soulseek") return;
   if (!playing.value) return;
   if (streamPhase.value !== "ready") return;
   if (isLoading.value) return;
   const d = duration.value;
   const c = current.value;
   if (!Number.isFinite(d) || d <= 0) return;
-  if (c < PREFETCH_MIN_SEC && c / d < PREFETCH_MIN_RATIO) return;
+  const sameTorrent = props.track?.magnet === props.nextTrack?.magnet;
+  const minSec   = sameTorrent ? PREFETCH_MIN_SEC_SAME_TORRENT   : PREFETCH_MIN_SEC;
+  const minRatio = sameTorrent ? PREFETCH_MIN_RATIO_SAME_TORRENT : PREFETCH_MIN_RATIO;
+  if (c < minSec && c / d < minRatio) return;
 
   // Don't start a new prefetch if there's already a ready URL for the next track.
   // Starting a new prefetch would call torrent_prefetch_next_track, which releases the old
@@ -921,7 +1209,7 @@ watch(
     streamPhase.value,
     isLoading.value,
     props.nextTrack,
-    props.track?.magnet,
+    queueTrackKey(props.track),
     props.track?.fileIdx,
   ],
   () => {
@@ -946,7 +1234,9 @@ watch(
     const t = props.track;
     const magnet = t?.magnet;
     const fileIdx = t?.fileIdx;
-    if (!t || !magnet) {
+    void appDebugLog("player", `stream-watch: fired — fileIdx=${fileIdx ?? "—"} hasMagnet=${!!magnet} suppressed=${suppressed} phase=${streamPhase.value} activeSig="${activeStreamPrepareSig.value?.slice(0,30)}"`);
+    const isSoulseek = t?.source === "soulseek";
+    if (!t || (!magnet && !isSoulseek)) {
       activeStreamPrepareSig.value = "";
       stopBufferPoll();
       prepareProgress.value = null;
@@ -986,6 +1276,7 @@ watch(
       streamPhase.value !== "idle" &&
       streamPhase.value !== "error"
     ) {
+      void appDebugLog("player", `stream-watch: skipped (dup) — sig="${prepareSig.slice(0,30)}" phase=${streamPhase.value}`);
       return;
     }
     activeStreamPrepareSig.value = prepareSig;
@@ -1021,6 +1312,9 @@ watch(
         nextSrc = await streamUrl(magnet, fileIdxNorm, {
           source: props.track?.source,
           torrentId: props.track?.torrentId,
+          slskUsername: props.track?.slskUsername,
+          slskFilepath: props.track?.slskFilepath,
+          slskFilesize: props.track?.slskFilesize,
         });
       }
       void appDebugLog("player", nextSrc
@@ -1249,6 +1543,7 @@ onUnmounted(() => {
           :source="track.source"
           :magnet="track.magnet"
           :cover-file-idx="track.coverFileIdx ?? null"
+          :override-cover-url="playerCoverOverride"
           :size="56"
           :radius="4"
           fallback="♪"
@@ -1335,13 +1630,56 @@ onUnmounted(() => {
 
             <Transition name="status-menu">
               <div v-if="statusMenuOpen" class="stream-status-panel" role="dialog" aria-label="Статус стрима">
-                <div class="status-headline">{{ streamStatusHeadline }}</div>
-                <div class="status-body">{{ streamStatusBody }}</div>
-                <div v-if="streamStatusRows.length" class="status-rows">
-                  <div v-for="row in streamStatusRows" :key="row.label" class="status-row">
-                    <span class="status-label">{{ row.label }}</span>
-                    <span class="status-val">{{ row.value }}</span>
-                  </div>
+                <!-- Верхняя строка: фаза + скорость -->
+                <div class="sp-top">
+                  <span class="sp-phase-dot" :class="`sp-phase-dot--${streamPhase}`" />
+                  <span class="sp-headline">{{ streamStatusHeadline }}</span>
+                  <span v-if="currentPeers > 0" class="sp-peers-badge">
+                    {{ currentPeers }} <span class="sp-peers-label">источн.</span>
+                  </span>
+                </div>
+
+                <!-- Тело: краткое описание -->
+                <div class="sp-body">{{ streamStatusBody }}</div>
+
+                <!-- Sparkline: история скорости -->
+                <div v-if="sparklineData.points" class="sp-chart">
+                  <svg viewBox="0 0 180 36" preserveAspectRatio="none" class="sp-svg">
+                    <!-- Заливка под линией -->
+                    <defs>
+                      <linearGradient id="sp-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"/>
+                        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+                      </linearGradient>
+                    </defs>
+                    <polygon
+                      :points="`0,36 ${sparklineData.points} 180,36`"
+                      fill="url(#sp-grad)"
+                    />
+                    <polyline
+                      :points="sparklineData.points"
+                      fill="none"
+                      stroke="var(--accent)"
+                      stroke-width="1.5"
+                      stroke-linejoin="round"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  <div class="sp-chart-peak">{{ fmtRate(sparklineData.max) }}</div>
+                </div>
+
+                <!-- Пиры: анимированные точки -->
+                <div v-if="currentPeers > 0 || isLoading" class="sp-peer-row">
+                  <span
+                    v-for="i in Math.min(currentPeers, 12)"
+                    :key="i"
+                    class="sp-peer-dot"
+                    :style="{ animationDelay: `${((i * 137) % 1000) / 1000}s` }"
+                  />
+                  <span v-if="currentPeers > 12" class="sp-peers-more">+{{ currentPeers - 12 }}</span>
+                  <span v-else-if="currentPeers === 0 && isLoading" class="sp-searching-dots">
+                    <span /><span /><span />
+                  </span>
                 </div>
               </div>
             </Transition>
@@ -1448,6 +1786,22 @@ onUnmounted(() => {
 
       <!-- Right: queue + volume -->
       <div class="player-right">
+        <button
+          type="button"
+          class="player-queue-btn"
+          :class="{ 'player-queue-btn--open': vizOpen }"
+          title="Визуализация (как в Winamp)"
+          aria-label="Открыть визуализацию"
+          @click.stop="vizOpen = true"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 18V12"/>
+            <path d="M8 18V8"/>
+            <path d="M12 18V14"/>
+            <path d="M16 18v-7"/>
+            <path d="M20 18V5"/>
+          </svg>
+        </button>
         <div v-if="queueLen > 0" class="player-queue-wrap" @click.stop>
           <button
             type="button"
@@ -1475,8 +1829,9 @@ onUnmounted(() => {
               <ul class="player-queue-list">
                 <li
                   v-for="(q, idx) in playbackQueue"
-                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :key="idx + '-' + queueTrackKey(q)"
                   :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                  @contextmenu.prevent="openQueueCtx($event, idx)"
                 >
                   <button
                     type="button"
@@ -1661,8 +2016,9 @@ onUnmounted(() => {
               <ul class="player-queue-list">
                 <li
                   v-for="(q, idx) in playbackQueue"
-                  :key="idx + '-' + q.magnet + '-' + q.fileIdx"
+                  :key="idx + '-' + queueTrackKey(q)"
                   :class="['player-queue-item', idx === queueIndex ? 'player-queue-item--current' : '']"
+                  @contextmenu.prevent="openQueueCtx($event, idx)"
                 >
                   <button
                     type="button"
@@ -1690,6 +2046,20 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
+
+    <TrackContextMenu
+      v-model:open="queueCtxOpen"
+      :x="queueCtxX"
+      :y="queueCtxY"
+      :actions="queueCtxActions"
+      @action="onQueueCtxAction"
+    />
+
+    <PlayerVisualizerModal
+      :open="vizOpen"
+      :playing="playing"
+      @close="vizOpen = false"
+    />
   </div>
 </template>
 
@@ -1928,70 +2298,183 @@ onUnmounted(() => {
   animation: dot-pulse 1.4s ease-in-out infinite;
 }
 
-/* ── Pop-up панель ───────────────────── */
+/* ══════════════════════════════════════════
+   Stream status pop-up — redesigned
+   ══════════════════════════════════════════ */
 .stream-status-panel {
   position: absolute;
   left: 50%;
   bottom: calc(100% + 10px);
   transform: translateX(-50%);
   z-index: 80;
-  min-width: 220px;
-  max-width: min(90vw, 320px);
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: rgba(22, 20, 18, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  width: 220px;
+  padding: 11px 13px 12px;
+  border-radius: 12px;
+  background: rgba(18, 16, 14, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255,255,255,0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   text-align: left;
   pointer-events: auto;
 }
 
-.status-headline {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: rgba(240, 236, 232, 0.5);
+/* Top row: dot + headline + peers badge */
+.sp-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 4px;
 }
-.status-body {
+.sp-phase-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.3);
+}
+.sp-phase-dot--buffering,
+.sp-phase-dot--preparing {
+  background: var(--accent);
+  animation: sp-dot-pulse 1.6s ease-in-out infinite;
+}
+.sp-phase-dot--ready { background: var(--accent); animation: none; }
+@keyframes sp-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+
+.sp-headline {
+  flex: 1;
   font-size: 13px;
-  font-weight: 500;
-  color: #f0ece8;
-  line-height: 1.4;
-  margin-bottom: 8px;
-}
-.status-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 8px;
-  margin-top: 4px;
-}
-.status-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 11.5px;
-  line-height: 1.4;
-}
-.status-label {
-  color: rgba(240, 236, 232, 0.5);
-  white-space: nowrap;
-}
-.status-val {
+  font-weight: 600;
   color: #f0ece8;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-peers-badge {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--accent);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sp-peers-label { color: rgba(255,255,255,0.4); }
+
+/* Body text */
+.sp-body {
+  font-size: 11.5px;
+  color: rgba(240, 236, 232, 0.5);
+  line-height: 1.35;
+  margin-bottom: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sparkline chart */
+.sp-chart {
+  position: relative;
+  margin-bottom: 10px;
+}
+.sp-svg {
+  display: block;
+  width: 100%;
+  height: 36px;
+  overflow: visible;
+}
+.sp-chart-peak {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 9px;
+  color: rgba(255,255,255,0.25);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Peer dots row */
+.sp-peer-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 10px;
+}
+.sp-peer-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
+  animation: sp-peer-blink 2.4s ease-in-out infinite;
+}
+@keyframes sp-peer-blink {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%       { opacity: 0.25; transform: scale(0.6); }
+}
+.sp-peers-more {
+  font-size: 10px;
+  color: rgba(255,255,255,0.35);
+}
+
+/* Searching animation (no peers yet) */
+.sp-searching-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sp-searching-dots span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  animation: sp-search 1.2s ease-in-out infinite;
+}
+.sp-searching-dots span:nth-child(2) { animation-delay: 0.2s; }
+.sp-searching-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes sp-search {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+  40%            { transform: scale(1); opacity: 0.8; }
 }
 
 /* ── Анимация появления pop-up ─────────── */
 .status-menu-enter-active { transition: opacity 0.14s ease, transform 0.14s ease; }
 .status-menu-leave-active { transition: opacity 0.1s ease, transform 0.1s ease; }
-.status-menu-enter-from  { opacity: 0; transform: translateX(-50%) translateY(4px); }
-.status-menu-leave-to    { opacity: 0; transform: translateX(-50%) translateY(4px); }
+.status-menu-enter-from  { opacity: 0; transform: translateX(-50%) translateY(5px); }
+.status-menu-leave-to    { opacity: 0; transform: translateX(-50%) translateY(5px); }
+
+/* ── Light theme overrides ─────────────── */
+[data-theme="light"] .stream-status-panel {
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.15), 0 0 0 0.5px rgba(0,0,0,0.05);
+}
+[data-theme="light"] .sp-headline {
+  color: #1a1814;
+}
+[data-theme="light"] .sp-peers-label {
+  color: rgba(0, 0, 0, 0.4);
+}
+[data-theme="light"] .sp-body {
+  color: rgba(30, 25, 20, 0.5);
+}
+[data-theme="light"] .sp-phase-dot {
+  background: rgba(0, 0, 0, 0.25);
+}
+[data-theme="light"] .sp-chart-peak {
+  color: rgba(0, 0, 0, 0.3);
+}
+[data-theme="light"] .sp-peers-more {
+  color: rgba(0, 0, 0, 0.35);
+}
+[data-theme="light"] .sp-searching-dots span {
+  background: rgba(0, 0, 0, 0.25);
+}
 
 .player-like-btn {
   flex-shrink: 0;

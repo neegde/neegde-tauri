@@ -4,7 +4,12 @@ import CoverThumb from "../shared/CoverThumb.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import { trackCoverFileIdxForLike } from "../../library/likesCover.js";
-import { trackDisplayBasename, audioFormatLabel } from "../../lib/utils.js";
+import {
+  trackDisplayBasename,
+  audioFormatLabel,
+  parseArtistTitleFromTrackFilename,
+  extractTrackArtist,
+} from "../../lib/utils.js";
 import { getCoverReactive } from "../../rutracker/search.js";
 
 const props = defineProps({
@@ -14,7 +19,16 @@ const props = defineProps({
   playerPlaying: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(["toggle-like", "play", "play-album", "open-torrent", "download", "add-to-queue"]);
+const emit = defineEmits([
+  "toggle-like",
+  "play",
+  "play-album",
+  "open-torrent",
+  "open-track-source",
+  "download",
+  "add-to-queue",
+  "add-to-playlist",
+]);
 
 const ctxOpen = ref(false);
 const ctxX = ref(0);
@@ -38,9 +52,32 @@ function openTrackCtx(e, like) {
 /**
  * @returns {void}
  */
-function onCtxAddToQueue() {
-  if (ctxLike.value) emit("add-to-queue", ctxLike.value);
+function onCtxAction(id) {
+  const like = ctxLike.value;
+  if (!like) return;
+  if (id === "queue") emit("add-to-queue", like);
+  if (id === "playlist") emit("add-to-playlist", like);
+  if (id === "download") emit("download", like);
+  if (id === "source") emit("open-track-source", like);
 }
+
+const likesCtxActions = computed(() => {
+  const like = ctxLike.value;
+  if (!like) return [];
+  const srcLabel =
+    like.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
+  const canDownload =
+    (like.source === "soulseek"
+      ? String(like.slskUsername ?? "").trim().length > 0 && String(like.slskFilepath ?? "").trim().length > 0
+      : String(like.magnet ?? "").trim().length > 0 && like.fileIdx != null && Number.isFinite(Number(like.fileIdx)));
+  return [
+    { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
+    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload },
+    { id: "divider" },
+    { id: "source", label: srcLabel, icon: "source" },
+  ];
+});
 
 const tab = ref("tracks");
 
@@ -50,15 +87,39 @@ const albums = computed(() =>
 const tracks = computed(() =>
   props.likes.filter((l) => l.type === "track").sort((a, b) => b.addedAt - a.addedAt)
 );
+
+/**
+ * Title and subtitle lines for a liked track row (title first, artist second).
+ *
+ * Args:
+ *     like: Liked track row.
+ *
+ * Returns:
+ *     `{ title, subtitle }`. Subtitle is empty when no second line should show.
+ */
+function likeTrackLines(like) {
+  const { artist, title } = parseArtistTitleFromTrackFilename(like.fileName);
+  const primary = artist ? title : trackDisplayBasename(like.fileName);
+  let subtitle = "";
+  if (artist) subtitle = artist;
+  else if (like.source === "rutracker") {
+    subtitle =
+      extractTrackArtist(
+        like.torrentName,
+        like.albumDirPath ?? null,
+        null,
+        like.magnet ?? null,
+      ) || "";
+  }
+  return { title: primary, subtitle };
+}
+
+/** Each track with precomputed { title, subtitle } for the list row. */
+const tracksWithLines = computed(() => tracks.value.map((like) => ({ like, lines: likeTrackLines(like) })));
 const torrents = computed(() =>
   props.likes.filter((l) => l.type === "torrent").sort((a, b) => b.addedAt - a.addedAt)
 );
 
-
-function extractArtist(torrentName) {
-  const m = torrentName?.match(/^(.+?)\s+[-–—]\s+/);
-  return m ? m[1].trim() : torrentName ?? "";
-}
 
 function tracksLabel(n) {
   return `${n} ${n === 1 ? "трек" : n < 5 ? "трека" : "треков"}`;
@@ -72,7 +133,15 @@ function torrentsLabel(n) {
 
 function isNowPlayingTrack(like) {
   const np = props.nowPlaying;
-  if (!np || !like?.magnet) return false;
+  if (!np || !like) return false;
+  if (like.source === "soulseek" || np.source === "soulseek") {
+    if (like.source !== "soulseek" || np.source !== "soulseek") return false;
+    return (
+      String(like.slskUsername) === String(np.slskUsername) &&
+      String(like.slskFilepath) === String(np.slskFilepath)
+    );
+  }
+  if (!like.magnet) return false;
   return (
     String(like.magnet) === String(np.magnet) &&
     Number(like.fileIdx) === Number(np.fileIdx)
@@ -86,6 +155,30 @@ function likesTrackRowClass(like) {
 
 function trackCoverFileIdx(like) {
   return trackCoverFileIdxForLike(like, props.likes);
+}
+
+/**
+ * Tooltip for the track title: basename, optional format, source-specific line.
+ *
+ * Args:
+ *     like: Liked track row.
+ *
+ * Returns:
+ *     Multiline string for the native `title` attribute.
+ */
+function likeTrackTooltip(like) {
+  const name = trackDisplayBasename(like.fileName);
+  const fmt = audioFormatLabel(like.filePath || like.fileName);
+  const lines = [name];
+  if (fmt && fmt !== "AUDIO") lines.push(`Формат: ${fmt}`);
+  if (like.source === "soulseek") {
+    lines.push("SoulSeek");
+    if (like.slskUsername) lines.push(like.slskUsername);
+  } else {
+    lines.push("RuTracker");
+    if (like.torrentName) lines.push(like.torrentName);
+  }
+  return lines.join("\n");
 }
 </script>
 
@@ -141,14 +234,14 @@ function trackCoverFileIdx(like) {
           <span class="likes-th-actions-head" aria-hidden="true" />
         </div>
         <div
-          v-for="(like, i) in tracks"
-          :key="like.id"
-          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(like)]"
-          @click="emit('play', like)"
-          @contextmenu.prevent="openTrackCtx($event, like)"
+          v-for="(row, i) in tracksWithLines"
+          :key="row.like.id"
+          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(row.like)]"
+          @click="emit('play', row.like)"
+          @contextmenu.prevent="openTrackCtx($event, row.like)"
         >
           <div class="track-num">
-            <PlayingIndicator v-if="isNowPlayingTrack(like)" :live="playerPlaying" />
+            <PlayingIndicator v-if="isNowPlayingTrack(row.like)" :live="playerPlaying" />
             <template v-else>
               <span class="track-num-val">{{ i + 1 }}</span>
               <span class="track-num-icon">
@@ -159,27 +252,36 @@ function trackCoverFileIdx(like) {
             </template>
           </div>
           <div class="likes-track-main">
-            <CoverThumb
-              :torrent-id="like.torrentId"
-              :source="like.source"
-              :magnet="like.magnet"
-              :cover-file-idx="trackCoverFileIdx(like)"
-              :size="40"
-              :radius="4"
-            />
+            <div
+              class="likes-thumb-frame"
+              :class="row.like.source === 'soulseek' ? 'likes-thumb-frame--slsk' : 'likes-thumb-frame--rt'"
+              :title="row.like.source === 'soulseek' ? 'SoulSeek' : 'RuTracker'"
+            >
+              <CoverThumb
+                :torrent-id="row.like.torrentId"
+                :source="row.like.source"
+                :magnet="row.like.magnet"
+                :cover-file-idx="trackCoverFileIdx(row.like)"
+                :size="40"
+                :radius="4"
+              />
+            </div>
             <div class="track-info">
               <div class="track-name-wrap">
-                <div class="track-name">{{ trackDisplayBasename(like.fileName) }}</div>
-                <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(like.filePath || like.fileName)}`">{{ audioFormatLabel(like.filePath || like.fileName) }}</span>
+                <div class="track-name" :title="likeTrackTooltip(row.like)">{{ row.lines.title }}</div>
               </div>
-              <button class="likes-track-sub" @click.stop="emit('open-torrent', like)">{{ like.torrentName }}</button>
+              <button
+                v-if="row.lines.subtitle"
+                class="likes-track-sub"
+                @click.stop="emit('open-torrent', row.like)"
+              >{{ row.lines.subtitle }}</button>
             </div>
           </div>
           <div class="track-actions">
             <button
               class="track-btn like-btn liked"
               title="Убрать лайк"
-              @click.stop="emit('toggle-like', like)"
+              @click.stop="emit('toggle-like', row.like)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -188,13 +290,24 @@ function trackCoverFileIdx(like) {
             <button
               class="track-btn dl"
               title="Скачать"
-              @click.stop="emit('download', like)"
-            >↓</button>
+              @click.stop="emit('download', row.like)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v13M5 14l7 7 7-7"/>
+                <line x1="3" y1="21" x2="21" y2="21"/>
+              </svg>
+            </button>
             <button
               class="track-btn"
               title="Перейти к раздаче"
-              @click.stop="emit('open-torrent', like)"
-            >↗</button>
+              @click.stop="emit('open-torrent', row.like)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
           </div>
         </div>
       </template>
@@ -209,14 +322,14 @@ function trackCoverFileIdx(like) {
           :key="like.id"
           class="album-card"
           :title="like.torrentName"
-          @click="emit('open-torrent', like)"
         >
-          <div class="album-art">
+          <div class="album-art" @click="emit('open-torrent', like)">
             <img
               v-if="like.source === 'rutracker' && getCoverReactive(String(like.torrentId))"
               :src="getCoverReactive(String(like.torrentId))"
               class="album-art-img"
               alt=""
+              draggable="false"
             />
             <svg v-else class="album-art-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M9 18V5l12-2v13"/>
@@ -224,6 +337,7 @@ function trackCoverFileIdx(like) {
               <circle cx="18" cy="16" r="3"/>
             </svg>
             <button
+              type="button"
               class="album-art-play"
               title="Открыть раздачу"
               @click.stop="emit('open-torrent', like)"
@@ -233,9 +347,11 @@ function trackCoverFileIdx(like) {
               </svg>
             </button>
           </div>
-          <div class="album-name">{{ like.torrentName }}</div>
-          <div class="album-meta likes-album-artist">
-            <span class="likes-track-sub">{{ extractArtist(like.torrentName) }}</span>
+          <div class="album-name" @click="emit('open-torrent', like)">{{ like.torrentName }}</div>
+          <div class="album-meta likes-album-artist" @click="emit('open-torrent', like)">
+            <span class="likes-track-sub">{{
+              extractTrackArtist(like.torrentName, null, null, like.magnet ?? null)
+            }}</span>
           </div>
         </div>
       </div>
@@ -250,9 +366,8 @@ function trackCoverFileIdx(like) {
           :key="like.id"
           class="album-card"
           :title="like.albumName || like.torrentName"
-          @click="emit('open-torrent', like)"
         >
-          <div class="album-art">
+          <div class="album-art" @click="emit('open-torrent', like)">
             <CoverThumb
               :torrent-id="like.torrentId"
               :source="like.source"
@@ -261,6 +376,7 @@ function trackCoverFileIdx(like) {
               fill
             />
             <button
+              type="button"
               class="album-art-play"
               title="Слушать"
               @click.stop="emit('play-album', like)"
@@ -270,9 +386,11 @@ function trackCoverFileIdx(like) {
               </svg>
             </button>
           </div>
-          <div class="album-name">{{ like.albumName || like.torrentName }}</div>
-          <div class="album-meta likes-album-artist">
-            <span class="likes-track-sub">{{ extractArtist(like.torrentName) }}</span>
+          <div class="album-name" @click="emit('open-torrent', like)">{{ like.albumName || like.torrentName }}</div>
+          <div class="album-meta likes-album-artist" @click="emit('open-torrent', like)">
+            <span class="likes-track-sub">{{
+              extractTrackArtist(like.torrentName, like.dirPath ?? null, null, like.magnet ?? null)
+            }}</span>
           </div>
         </div>
       </div>
@@ -282,7 +400,8 @@ function trackCoverFileIdx(like) {
       v-model:open="ctxOpen"
       :x="ctxX"
       :y="ctxY"
-      @action="onCtxAddToQueue"
+      :actions="likesCtxActions"
+      @action="onCtxAction"
     />
   </div>
 </template>

@@ -12,11 +12,15 @@ const props = defineProps({
 });
 
 const emit = defineEmits([
-  "play",           // startIdx
-  "remove-track",   // { magnet, fileIdx }
+  "play",              // startIdx
+  "remove-track",      // { magnet, fileIdx }
   "delete",
-  "rename",         // newName
+  "rename",            // newName
   "add-to-queue",
+  "add-to-playlist",
+  "open-track-source",
+  "download-track",
+  "download-playlist", // all downloadable tracks
 ]);
 
 // ── Rename ────────────────────────────────────────────────────────────────────
@@ -63,11 +67,34 @@ function openTrackCtx(e, track) {
   ctxOpen.value = true;
 }
 
+const playlistCtxActions = computed(() => {
+  if (!ctxTrack.value) return [];
+  const t = ctxTrack.value;
+  const srcLabel =
+    t.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
+  const canDownload =
+    (t.source === "soulseek"
+      ? String(t.slskUsername ?? "").trim().length > 0 && String(t.slskFilepath ?? "").trim().length > 0
+      : String(t.magnet ?? "").trim().length > 0 && t.fileIdx != null && Number.isFinite(Number(t.fileIdx)));
+  return [
+    { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
+    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload },
+    { id: "divider" },
+    { id: "source", label: srcLabel, icon: "source" },
+  ];
+});
+
 /**
  * @returns {void}
  */
-function onCtxAddToQueue() {
-  if (ctxTrack.value) emit("add-to-queue", ctxTrack.value);
+function onCtxAction(id) {
+  const t = ctxTrack.value;
+  if (!t) return;
+  if (id === "queue") emit("add-to-queue", t);
+  if (id === "playlist") emit("add-to-playlist", { ...t });
+  if (id === "download") emit("download-track", t);
+  if (id === "source") emit("open-track-source", t);
 }
 </script>
 
@@ -132,6 +159,21 @@ function onCtxAddToQueue() {
             </svg>
             Слушать
           </button>
+          <button
+            v-if="trackCount"
+            class="pl-download-all-btn"
+            title="Скачать все треки"
+            @click="emit('download-playlist')"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Скачать всё
+          </button>
           <button class="pl-rename-btn" @click="startRename" title="Переименовать">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" stroke-width="2"
@@ -158,7 +200,15 @@ function onCtxAddToQueue() {
     <!-- Empty -->
     <div v-if="!trackCount" class="pl-empty">
       <p>Плейлист пустой</p>
-      <p class="pl-empty-hint">Добавляйте треки через кнопку ⊕ в списке раздачи</p>
+      <p class="pl-empty-hint">
+        Добавляйте треки через кнопку
+        <span class="pl-empty-hint-plus" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </span>
+        в списке раздачи
+      </p>
     </div>
 
     <!-- Track list -->
@@ -216,7 +266,8 @@ function onCtxAddToQueue() {
       v-model:open="ctxOpen"
       :x="ctxX"
       :y="ctxY"
-      @action="onCtxAddToQueue"
+      :actions="playlistCtxActions"
+      @action="onCtxAction"
     />
   </div>
 </template>
@@ -312,6 +363,24 @@ function onCtxAddToQueue() {
   transition: background 0.15s;
 }
 .pl-play-btn:hover { background: var(--accent-h); }
+.pl-download-all-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 500px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pl-download-all-btn:hover {
+  border-color: rgba(255,255,255,0.4);
+  background: rgba(255,255,255,0.05);
+}
 .pl-rename-btn,
 .pl-delete-btn {
   background: none;
@@ -335,6 +404,15 @@ function onCtxAddToQueue() {
 }
 .pl-empty p { margin: 0; }
 .pl-empty-hint { font-size: 13px; margin-top: 8px !important; }
+.pl-empty-hint-plus {
+  display: inline-flex;
+  vertical-align: middle;
+  margin: 0 2px;
+  color: var(--accent);
+  line-height: 0;
+  position: relative;
+  top: 1px;
+}
 
 /* ── Track list ── */
 .pl-tracklist-head {

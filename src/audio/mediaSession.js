@@ -1,6 +1,7 @@
 import { peekTorrentImage, getTorrentImageDataUrl } from "../torrent/torrentImageCache.js";
 import { peekRutrackerCover, getRutrackerCoverDataUrl } from "../rutracker/search.js";
 import { trackDisplayBasename, extractTrackArtist } from "../lib/utils.js";
+import { getSlskCoverReactive, getSlskCoverDataUrl } from "../soulseek/coverCache.js";
 
 /** Обновляется из плеера — обработчики всегда вызывают актуальные действия. */
 let api = {
@@ -120,6 +121,16 @@ export function clearMediaSessionHandlers() {
 }
 
 async function resolveCoverDataUrl(track) {
+  if (track?.source === "soulseek") {
+    const u = track.slskFolderCoverUsername;
+    const p = track.slskFolderCoverFilepath;
+    if (u && p) {
+      const hit = getSlskCoverReactive(u, p);
+      if (hit) return hit;
+      return await getSlskCoverDataUrl(u, p, track.slskFolderCoverSize ?? 0);
+    }
+    return null;
+  }
   if (!track?.magnet) return null;
   const idx = track.coverFileIdx;
   if (idx != null && Number.isFinite(Number(idx))) {
@@ -154,11 +165,12 @@ async function resolveCoverDataUrl(track) {
  */
 export async function syncMediaSessionMetadata(track, enriched = null) {
   if (typeof navigator === "undefined" || !navigator.mediaSession) return;
-  if (!track?.magnet) {
+  const soulseek = String(track?.source || "") === "soulseek";
+  if (!track?.magnet && !soulseek) {
     navigator.mediaSession.metadata = null;
     return;
   }
-  const keyAtStart = trackKey(track);
+  const keyAtStart = soulseek ? `slsk\0${track.slskFilepath}` : trackKey(track);
   const title = enriched?.title || trackDisplayBasename(track.fileName) || "Трек";
   const artist = enriched?.artist || extractTrackArtist(track.torrentName, track.albumDirPath, track.artist, track.magnet);
   const album = enriched?.album || artist;
@@ -169,10 +181,10 @@ export async function syncMediaSessionMetadata(track, enriched = null) {
     artwork: [],
   });
   reaffirmTrackSkipHandlers();
-  // Prefer iTunes cover URL (direct HTTPS, no Rust round-trip), fall back to torrent/rutracker cover
+  // Prefer enriched cover URL (HTTPS / data:), fall back to torrent / rutracker / SoulSeek folder
   let art = enriched?.coverUrl ?? null;
   if (!art) art = await resolveCoverDataUrl(track);
-  if (trackKey(track) !== keyAtStart) return;
+  if ((soulseek ? `slsk\0${track.slskFilepath}` : trackKey(track)) !== keyAtStart) return;
   if (!art) return;
   try {
     navigator.mediaSession.metadata = new MediaMetadata({

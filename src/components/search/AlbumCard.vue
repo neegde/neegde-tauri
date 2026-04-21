@@ -1,6 +1,11 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, prefetchTorrentDetails } from "../../rutracker/search.js";
+import {
+  getSlskCoverDataUrl,
+  peekSlskCover,
+  getSlskCoverReactive,
+} from "../../soulseek/coverCache.js";
 import { dominantFormatFromName } from "../../lib/utils.js";
 
 const props = defineProps({
@@ -11,10 +16,25 @@ const props = defineProps({
 const emit = defineEmits(["select"]);
 
 const seeds = Number(props.torrent.seeders) || 0;
-const formatLabel = computed(() => dominantFormatFromName(props.torrent?.name));
+const formatLabel = computed(() => {
+  if (props.torrent?.source === "soulseek") {
+    // Extract format from category like "MP3 320 kbps" → "MP3 320"
+    const cat = props.torrent?.category ?? "";
+    const m = cat.match(/^(\w+)\s+(\d+)/);
+    if (m) return `${m[1]} ${m[2]}`;
+    return cat || null;
+  }
+  return dominantFormatFromName(props.torrent?.name);
+});
+const isSoulseek = computed(() => props.torrent?.source === "soulseek");
+const slskTrackCount = computed(() => props.torrent?.slsk_tracks?.length ?? 0);
 
 function seedsLabel(n) {
   return `${n} сид${n === 1 ? "" : n < 5 ? "а" : "ов"}`;
+}
+
+function tracksLabel(n) {
+  return `${n} ${n === 1 ? "трек" : n < 5 ? "трека" : "треков"}`;
 }
 
 const cardRef = ref(null);
@@ -26,12 +46,23 @@ let observer = null;
  * regardless of which code path stored the cover.
  */
 const coverUrl = computed(() => {
+  if (props.torrent?.source === "soulseek") {
+    const u = props.torrent?.slsk_cover_username;
+    const p = props.torrent?.slsk_cover_filepath;
+    if (!u || !p) return null;
+    return getSlskCoverReactive(u, p);
+  }
   if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return null;
   return getCoverReactive(String(props.torrent.id));
 });
 
 // Reset error state when torrent changes
-watch(() => [props.torrent?.id, props.torrent?.source], () => { coverErr.value = false; });
+watch(
+  () => [props.torrent?.id, props.torrent?.source, props.torrent?.slsk_cover_filepath],
+  () => {
+    coverErr.value = false;
+  },
+);
 
 function disconnectObserver() {
   if (observer) {
@@ -43,6 +74,25 @@ function disconnectObserver() {
 function setupCoverObserver() {
   disconnectObserver();
   coverErr.value = false;
+  if (props.torrent?.source === "soulseek") {
+    if (!props.torrent?.slsk_cover_filepath || !props.torrent?.slsk_cover_username) return;
+    const u = props.torrent.slsk_cover_username;
+    const p = props.torrent.slsk_cover_filepath;
+    const sz = props.torrent.slsk_cover_size ?? 0;
+    if (peekSlskCover(u, p) !== undefined) return;
+    observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        disconnectObserver();
+        void getSlskCoverDataUrl(u, p, sz).catch(() => {});
+      },
+      { rootMargin: "400px" },
+    );
+    const el = cardRef.value;
+    if (el) observer.observe(el);
+    return;
+  }
+
   if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
 
   const topicId = String(props.torrent.id);
@@ -76,7 +126,17 @@ let hoverTimer = null;
 
 function onMouseenter() {
   if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
-  hoverTimer = setTimeout(() => prefetchTorrentDetails(String(props.torrent.id)), 300);
+  hoverTimer = setTimeout(() => prefetchTorrentDetails(String(props.torrent?.id)), 300);
+}
+
+function onMouseenterSlsk() {
+  if (props.torrent?.source !== "soulseek" || !props.torrent?.slsk_cover_filepath) return;
+  const u = props.torrent?.slsk_cover_username;
+  const p = props.torrent?.slsk_cover_filepath;
+  const sz = props.torrent?.slsk_cover_size ?? 0;
+  if (!u || !p) return;
+  if (peekSlskCover(u, p) !== undefined) return;
+  void getSlskCoverDataUrl(u, p, sz).catch(() => {});
 }
 
 function onMouseleave() {
@@ -85,7 +145,7 @@ function onMouseleave() {
 }
 
 watch(
-  () => [props.torrent?.id, props.torrent?.source],
+  () => [props.torrent?.id, props.torrent?.source, props.torrent?.slsk_cover_filepath],
   () => setupCoverObserver()
 );
 
@@ -97,7 +157,7 @@ watch(
     :class="['album-card', selected ? 'selected' : '']"
     :title="torrent.name"
     @click="emit('select', torrent)"
-    @mouseenter="onMouseenter"
+    @mouseenter="isSoulseek ? onMouseenterSlsk() : onMouseenter()"
     @mouseleave="onMouseleave"
   >
     <div class="album-art">
@@ -126,7 +186,10 @@ watch(
     </div>
     <div class="album-name">{{ torrent.name }}</div>
     <div class="album-meta">
-      <span :class="['album-seeds', seeds > 0 ? 'seeds-ok' : 'seeds-dead']">
+      <span v-if="isSoulseek" class="album-seeds seeds-ok slsk-track-count">
+        {{ slskTrackCount > 1 ? tracksLabel(slskTrackCount) : torrent.category }}
+      </span>
+      <span v-else :class="['album-seeds', seeds > 0 ? 'seeds-ok' : 'seeds-dead']">
         {{ seedsLabel(seeds) }}
       </span>
     </div>

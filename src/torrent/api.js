@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 import { getMirror } from "../rutracker/config.js";
 import { appDebugLog } from "../appDebugLog.js";
+import { soulseekPrepareStream } from "../soulseek/api.js";
 
 /**
  * Resolves torrent file list from a magnet URI (DHT/trackers). Same row shape as Rutracker details.files.
@@ -99,10 +100,32 @@ function _cachedTorrentFileB64(tid) {
  * @param {{ source?: string, torrentId?: string | number }} [opts]
  */
 export async function streamUrl(magnet, fileIdx, opts = {}) {
+  const src = opts.source != null ? String(opts.source) : "";
+
+  // ── SoulSeek: bypass torrent streaming entirely ───────────────────────────
+  if (src === "soulseek") {
+    const { slskUsername, slskFilepath, slskFilesize } = opts;
+    if (!slskUsername || !slskFilepath) {
+      void appDebugLog("stream", `streamUrl: soulseek missing slskUsername/slskFilepath`);
+      return "";
+    }
+    void appDebugLog("stream", `streamUrl: soulseek — user=${slskUsername} file=${slskFilepath}`);
+    const t0 = Date.now();
+    let ready;
+    try {
+      ready = await soulseekPrepareStream(slskUsername, slskFilepath, slskFilesize ?? 0);
+    } catch (e) {
+      void appDebugLog("stream", `streamUrl: soulseek FAILED — ${String(e)} took=${Date.now()-t0}ms`);
+      throw e;
+    }
+    void appDebugLog("stream", `streamUrl: soulseek OK — url=${ready?.url} took=${Date.now()-t0}ms`);
+    return ready?.url ?? "";
+  }
+
+  // ── BitTorrent path (Rutracker / magnet) ──────────────────────────────────
   if (!magnet || fileIdx == null || fileIdx < 0) return "";
   const m = enrichMagnetWithOpenTrackers(magnet);
   let torrentFileB64 = null;
-  const src = opts.source != null ? String(opts.source) : "";
   const tid = opts.torrentId != null ? String(opts.torrentId) : "";
   if (src === "rutracker" && tid !== "") {
     torrentFileB64 = await _cachedTorrentFileB64(tid);

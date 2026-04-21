@@ -15,6 +15,7 @@ import {
   MAX_TORRENT_COVER_BYTES,
   enrichMagnetWithOpenTrackers,
   extractTrackArtist,
+  isYearLike,
   stripMetaTags,
   parseAudioTrackPrefix,
   isDiscMarker,
@@ -56,6 +57,7 @@ const emit = defineEmits([
   "open-album-preview",
   "add-to-playlist",
   "add-to-queue",
+  "open-torrent-source",
 ]);
 
 const ctxOpen = ref(false);
@@ -79,8 +81,36 @@ function openTrackCtx(e, origIdx) {
 /**
  * @returns {void}
  */
-function onCtxAddToQueue() {
-  if (ctxOrigIdx.value != null) emit("add-to-queue", ctxOrigIdx.value);
+const torrentCtxActions = computed(() => {
+  const srcLabel =
+    props.torrent?.source === "soulseek"
+      ? "Источник (SoulSeek)"
+      : "Источник (Torrent)";
+  return [
+    { id: "source", label: srcLabel, icon: "source" },
+    { id: "divider" },
+    { id: "play", label: "Слушать", icon: "play" },
+    { id: "download", label: "Скачать", icon: "download" },
+    { id: "divider" },
+    { id: "like", label: "В избранное", icon: "heart" },
+    { id: "queue", label: "В очередь", icon: "queue" },
+    { id: "playlist", label: "В плейлист", icon: "playlist" },
+  ];
+});
+
+function onCtxAction(id) {
+  if (id === "source") {
+    emit("open-torrent-source", ctxOrigIdx.value);
+    return;
+  }
+  const origIdx = ctxOrigIdx.value;
+  if (origIdx == null) return;
+  if (id === "play")     emit("play", origIdx);
+  if (id === "download") emit("download", origIdx);
+  if (id === "queue")    emit("add-to-queue", origIdx);
+  const f = (props.files ?? []).find((f) => f.origIdx === origIdx);
+  if (id === "playlist" && f) emit("add-to-playlist", makePlaylistTrack(props.torrent, props.magnet, f));
+  if (id === "like"     && f) emit("toggle-like",     makeTrackLike(props.torrent, props.magnet, f));
 }
 
 // ── View mode ────────────────────────────────────────────────────────────────
@@ -201,8 +231,10 @@ function makeTrackLike(torrent, magnet, f) {
   let coverFileIdx = null;
   /** Как у лайка альбома — чтобы во вкладке «Треки» брать тот же origIdx, что и для coverFile в торренте. */
   let coverFile = null;
+  let albumDirPath = null;
   for (const a of albums.value) {
     if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
+      albumDirPath = a.dirPath ?? null;
       const cf = a.coverFile;
       if (cf) {
         coverFileIdx = cf.origIdx ?? null;
@@ -224,6 +256,7 @@ function makeTrackLike(torrent, magnet, f) {
     magnet,
     fileIdx: f.origIdx,
     fileName: f.path,
+    albumDirPath,
     coverFileIdx,
     coverFile,
   };
@@ -237,7 +270,7 @@ function makePlaylistTrack(torrent, magnet, f) {
       break;
     }
   }
-  return {
+  const row = {
     magnet,
     fileIdx: f.origIdx,
     fileName: f.path,
@@ -247,6 +280,12 @@ function makePlaylistTrack(torrent, magnet, f) {
     artist: torrent?.artist ?? null,
     coverFileIdx,
   };
+  if (torrent?.source === "soulseek") {
+    row.slskUsername = f.slskUsername ?? torrent.slsk_username ?? null;
+    row.slskFilepath = f.slskFilepath ?? f.path ?? null;
+    row.slskFilesize = f.slskFilesize ?? f.size ?? 0;
+  }
+  return row;
 }
 
 function makeAlbumLike(torrent, magnet, album, displayName) {
@@ -302,7 +341,9 @@ const albumHeroTitle = computed(
 const albumHeroArtist = computed(() => {
   const album0 = albums.value[0];
   const enriched = enrichedAlbumData.value.get(album0?.dirPath ?? "");
-  if (enriched?.artist) return enriched.artist;
+  if (enriched?.artist && !isYearLike(String(enriched.artist).trim())) {
+    return enriched.artist;
+  }
   const artist = extractTrackArtist(props.torrent?.name, album0?.dirPath ?? null, props.torrent?.artist ?? null, props.magnet);
   return artist || "Неизвестный исполнитель";
 });
@@ -416,6 +457,8 @@ watch(
             :cover-file="singleAlbumWrap.raw.coverFile"
             :label="albumHeroTitle"
             :cover="cover"
+            :torrent-id="torrent?.id"
+            :source="torrent?.source"
           />
         </div>
         <div class="album-hero-text">
@@ -473,7 +516,10 @@ watch(
           title="Скачать альбом"
           @click="emit('download-album', singleAlbumWrap.raw.audioFiles, singleAlbumWrap.displayName)"
         >
-          ↓
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v13M5 14l7 7 7-7"/>
+            <line x1="3" y1="21" x2="21" y2="21"/>
+          </svg>
         </button>
         <button
           type="button"
@@ -544,7 +590,12 @@ watch(
                   <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                 </svg>
               </button>
-              <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
+              <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3v13M5 14l7 7 7-7"/>
+                  <line x1="3" y1="21" x2="21" y2="21"/>
+                </svg>
+              </button>
               <button class="track-btn add-to-pl" title="В плейлист" @click.stop="emit('add-to-playlist', makePlaylistTrack(torrent, magnet, f))">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -594,7 +645,11 @@ watch(
 
     <div v-if="!loading && totalAudio > 0" class="album-actions">
       <button class="btn-dl-all" @click="emit('download-all')">
-        ↓&nbsp; Скачать всё ({{ totalAudio }})
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v13M5 14l7 7 7-7"/>
+          <line x1="3" y1="21" x2="21" y2="21"/>
+        </svg>
+        Скачать всё ({{ totalAudio }})
       </button>
       <button
         :class="['track-btn', 'like-btn', likes?.[torrentLikeId(torrent)] ? 'liked' : '']"
@@ -666,6 +721,8 @@ watch(
               :label="wrap.displayName"
               :cover="cover"
               :enlargeable="false"
+              :torrent-id="torrent?.id"
+              :source="torrent?.source"
             />
           </div>
           <div class="album-section-info">
@@ -690,7 +747,12 @@ watch(
               <polygon points="5,3 19,12 5,21"/>
             </svg>
           </button>
-          <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles, wrap.displayName)">↓</button>
+          <button class="btn-dl-album" title="Скачать альбом" @click="emit('download-album', wrap.raw.audioFiles, wrap.displayName)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v13M5 14l7 7 7-7"/>
+              <line x1="3" y1="21" x2="21" y2="21"/>
+            </svg>
+          </button>
         </div>
 
         <div class="tracklist-header">
@@ -745,7 +807,12 @@ watch(
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
               </svg>
             </button>
-            <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">↓</button>
+            <button class="track-btn dl" title="Скачать" @click.stop="emit('download', f.origIdx, f.path)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v13M5 14l7 7 7-7"/>
+                <line x1="3" y1="21" x2="21" y2="21"/>
+              </svg>
+            </button>
             <button class="track-btn add-to-pl" title="В плейлист" @click.stop="emit('add-to-playlist', makePlaylistTrack(torrent, magnet, f))">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -772,6 +839,8 @@ watch(
               :label="wrap.displayName"
               :cover="cover"
               :enlargeable="false"
+              :torrent-id="torrent?.id"
+              :source="torrent?.source"
             />
             <div class="gallery-card-overlay">
               <button
@@ -796,7 +865,8 @@ watch(
       v-model:open="ctxOpen"
       :x="ctxX"
       :y="ctxY"
-      @action="onCtxAddToQueue"
+      :actions="torrentCtxActions"
+      @action="onCtxAction"
     />
   </div>
 </template>

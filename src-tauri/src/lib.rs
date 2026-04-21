@@ -6,6 +6,7 @@ mod cover_art;
 mod discord_presence;
 mod nerd_stats;
 mod rutracker;
+mod soulseek;
 mod torrent_image;
 mod torrent_stream;
 
@@ -32,13 +33,7 @@ use discord_presence::DiscordPresenceState;
 fn raise_nofile_limit() {
     #[cfg(unix)]
     {
-        match rlimit::increase_nofile_limit(65_536) {
-            Ok(n) => {
-                #[cfg(debug_assertions)]
-                eprintln!("[neegde] RLIMIT_NOFILE soft limit: {n}");
-            }
-            Err(e) => eprintln!("[neegde] could not raise RLIMIT_NOFILE: {e}"),
-        }
+        let _ = rlimit::increase_nofile_limit(65_536);
     }
 }
 
@@ -118,7 +113,18 @@ async fn fetch_album_cover(
 pub fn run() {
     raise_nofile_limit();
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    #[cfg(not(mobile))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }));
+    }
+
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -130,6 +136,7 @@ pub fn run() {
         })
         .setup(|app| {
             app.manage(rutracker::RutrackerState::new(app.handle()));
+            app.manage(soulseek::SoulSeekState::new());
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
                 NonZeroUsize::new(200).unwrap(),
             )));
@@ -212,6 +219,7 @@ pub fn run() {
             rutracker::rutracker_search,
             rutracker::rutracker_get_cover,
             rutracker::rutracker_get_torrent_details,
+            rutracker::rutracker_topic_has_playable_audio,
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
             rutracker::rutracker_get_http_proxy,
@@ -225,6 +233,7 @@ pub fn run() {
             vozduxan_stream::torrent_dispose_preview,
             vozduxan_stream::torrent_release_stream,
             vozduxan_stream::vozduxan_notify_position,
+            vozduxan_stream::vozduxan_stream_stats,
             // ── Export: full-download to user library (librqbit) ─────────
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,
@@ -242,6 +251,19 @@ pub fn run() {
             torrent_stream::debug_api::app_debug_push,
             discord_presence::discord_presence_sync,
             discord_presence::discord_presence_clear,
+            // ── SoulSeek ───────────────────────────────────────────────────────
+            soulseek::soulseek_login,
+            soulseek::soulseek_logout,
+            soulseek::soulseek_status,
+            soulseek::soulseek_search,
+            soulseek::soulseek_prepare_stream,
+            soulseek::soulseek_cover_preview,
+            soulseek::soulseek_release_stream,
+            soulseek::soulseek_save_credentials,
+            soulseek::soulseek_load_credentials,
+            soulseek::soulseek_clear_saved_credentials,
+            soulseek::soulseek_export_file,
+            soulseek::soulseek_export_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

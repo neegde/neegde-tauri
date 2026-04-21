@@ -1,6 +1,6 @@
 {
   "name": "neegde",
-  "version": "0.1.7.3",
+  "version": "0.1.8",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/neegde/neegde-tauri.git"

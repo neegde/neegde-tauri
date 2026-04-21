@@ -43,27 +43,17 @@ async fn search_release(client: &Client, artist: &str, album: &str) -> Option<St
         .await
     {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("[cover/musicbrainz] HTTP request failed: {e}");
-            return None;
-        }
+        Err(_) => return None,
     };
 
     if !resp.status().is_success() {
-        eprintln!("[cover/musicbrainz] search returned HTTP {}", resp.status());
         return None;
     }
 
     let data: MbSearchResult = match resp.json().await {
         Ok(d) => d,
-        Err(e) => {
-            eprintln!("[cover/musicbrainz] JSON parse failed: {e}");
-            return None;
-        }
+        Err(_) => return None,
     };
-    if data.releases.is_empty() {
-        eprintln!("[cover/musicbrainz] no releases found for query: {query}");
-    }
     data.releases.into_iter().next().map(|r| r.id)
 }
 
@@ -78,14 +68,10 @@ async fn fetch_caa_front(client: &Client, mbid: &str) -> Option<String> {
         .await
     {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("[cover/caa] HTTP request failed for mbid={mbid}: {e}");
-            return None;
-        }
+        Err(_) => return None,
     };
 
     if !resp.status().is_success() {
-        eprintln!("[cover/caa] returned HTTP {} for mbid={mbid}", resp.status());
         return None;
     }
 
@@ -99,17 +85,9 @@ async fn fetch_caa_front(client: &Client, mbid: &str) -> Option<String> {
 
     let bytes = match resp.bytes().await {
         Ok(b) => b,
-        Err(e) => {
-            eprintln!("[cover/caa] failed to read body for mbid={mbid}: {e}");
-            return None;
-        }
+        Err(_) => return None,
     };
-    if bytes.is_empty() {
-        eprintln!("[cover/caa] empty response body for mbid={mbid}");
-        return None;
-    }
-    if bytes.len() > MAX_IMAGE_BYTES {
-        eprintln!("[cover/caa] image too large ({}B) for mbid={mbid}", bytes.len());
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
         return None;
     }
 

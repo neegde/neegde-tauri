@@ -1,12 +1,12 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import {
   isImage,
   basename,
   MAX_TORRENT_COVER_BYTES,
-  enrichMagnetWithOpenTrackers,
 } from "../../lib/utils.js";
+import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
+import { torrentFileB64ForTrack } from "../../torrent/api.js";
 import CoverLightbox from "../shared/CoverLightbox.vue";
 
 const props = defineProps({
@@ -17,18 +17,18 @@ const props = defineProps({
   cover:     { type: String, default: null },
   /** Клик по обложке — просмотр крупно (в галерее останавливает всплытие к карточке). */
   enlargeable: { type: Boolean, default: true },
+  /** torrentId + source — нужны для загрузки .torrent-файла (быстрый путь без DHT). */
+  torrentId: { type: [String, Number], default: null },
+  source:    { type: String, default: "rutracker" },
 });
 
 const lightboxOpen = ref(false);
 
 const rootRef = ref(null);
-/** From BitTorrent fetch — when set, replaces post cover preview. */
-const torrentCover = ref(null);
-const imgLoaded     = ref(false);
-const imgFailed     = ref(false);
-const fetching      = ref(false);
+const imgLoaded = ref(false);
+const imgFailed = ref(false);
+const fetching  = ref(false);
 
-let loadGen = 0;
 let observer = null;
 
 function disconnectObserver() {
@@ -48,6 +48,16 @@ const needsTorrentFetch = computed(() => {
     f.size > 0 &&
     f.size <= MAX_TORRENT_COVER_BYTES
   );
+});
+
+/**
+ * Reactive — reads from the shared torrentImageCache so CoverThumb and AlbumFolderCover
+ * share the same result without a second BitTorrent connection.
+ */
+const torrentCover = computed(() => {
+  const f = props.coverFile;
+  if (!needsTorrentFetch.value || !f) return null;
+  return peekTorrentImage(props.magnet, f.origIdx) ?? null;
 });
 
 const displaySrc = computed(() => {
@@ -70,41 +80,30 @@ watch(displaySrc, () => {
 });
 
 async function loadCover() {
-  const gen = loadGen;
-  torrentCover.value = null;
-
   const f = props.coverFile;
+  if (!f || !props.magnet || !isImage(f.path) || f.size <= 0 || f.size > MAX_TORRENT_COVER_BYTES) return;
 
-  if (f && props.magnet && isImage(f.path) && f.size > 0 && f.size <= MAX_TORRENT_COVER_BYTES) {
-    fetching.value = true;
-    try {
-      const url = await invoke("torrent_fetch_image", {
-        magnet: enrichMagnetWithOpenTrackers(props.magnet),
-        fileIdx: f.origIdx,
-      });
-      if (gen !== loadGen) return;
-      if (url) {
-        torrentCover.value = url;
-        return;
-      }
-    } catch (_) {
-      // torrent unavailable / timeout — fall through
-    } finally {
-      if (gen === loadGen) fetching.value = false;
-    }
+  fetching.value = true;
+  try {
+    // torrentFileB64ForTrack shares the same in-memory cache as streamUrl(), so no extra
+    // network request if the .torrent was already downloaded for streaming or another cover.
+    const b64 = await torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId });
+    // getTorrentImageDataUrl deduplicates concurrent fetches for the same (magnet, fileIdx),
+    // so AlbumFolderCover and CoverThumb never open two BitTorrent connections for one image.
+    await getTorrentImageDataUrl(props.magnet, f.origIdx, b64);
+  } catch (_) {
+    // torrent unavailable / timeout — fall through to placeholder
+  } finally {
+    fetching.value = false;
   }
-
-  if (gen !== loadGen) return;
 }
 
 function scheduleCoverLoad() {
   disconnectObserver();
-  loadGen += 1;
-  torrentCover.value = null;
   imgFailed.value = false;
   fetching.value = false;
 
-  if (needsTorrentFetch.value) {
+  if (needsTorrentFetch.value && !torrentCover.value) {
     nextTick(() => {
       const el = rootRef.value;
       if (!el) return;
@@ -112,14 +111,12 @@ function scheduleCoverLoad() {
         ([entry]) => {
           if (!entry?.isIntersecting) return;
           disconnectObserver();
-          loadCover();
+          void loadCover();
         },
         { rootMargin: "600px" }
       );
       observer.observe(el);
     });
-  } else {
-    loadCover();
   }
 }
 

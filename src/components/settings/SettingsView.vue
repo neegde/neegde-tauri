@@ -28,7 +28,11 @@ import {
   probeHttpProxy,
 } from "../../rutracker/proxyConfig.js";
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
+import { hadRutrackerAccount } from "../../rutracker/accountHint.js";
+import { clearSlskCoverCache } from "../../soulseek/api.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
+import AchievementsModal from "./AchievementsModal.vue";
+import SystemIcon from "../shared/SystemIcon.vue";
 import { openAppDebugWindow } from "../../appDebugWindow.js";
 import {
   fetchLatestGithubRelease,
@@ -37,6 +41,7 @@ import {
 } from "../../githubReleaseCheck.js";
 import appIconSrc from "../../assets/neegde-logo.png";
 import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
+import { ACHIEVEMENT_CATALOG } from "../../achievements/achievementsCore.js";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -44,19 +49,89 @@ const props = defineProps({
   rtAvatarUrl:      { type: String, default: null },
   restoringSession: { type: Boolean, default: false },
   theme:            { type: String, default: "dark" },
-  /** Полный журнал отладки приложения (UI, плеер, торрент-стриминг). */
-  appDebugEnabled: { type: Boolean, default: false },
+  appDebugEnabled:  { type: Boolean, default: false },
+  achievementsOptIn:   { type: Boolean, default: false },
+  achievementsUnlocked: { type: Array, default: () => [] },
+  // SoulSeek
+  slskConnected:    { type: Boolean, default: false },
+  slskUsername:     { type: String, default: null },
+  slskLoggingIn:    { type: Boolean, default: false },
+  slskLoginError:   { type: String, default: null },
 });
 
 // avatar image error fallback
 const avatarImgFailed = ref(false);
+
+// SoulSeek login form state
+const slskFormUser = ref(localStorage.getItem("neegde.slsk.user") || "");
+const slskFormPass = ref("");
+watch(slskFormUser, (v) => localStorage.setItem("neegde.slsk.user", v));
+
+/**
+ * After explicit logout the backend deletes `slsk_creds.json` — clear the form if nothing saved.
+ *
+ * Returns:
+ *     void
+ */
+watch(
+  () => props.slskConnected,
+  async (connected, prev) => {
+    if (prev !== true || connected !== false) return;
+    let creds = null;
+    try {
+      creds = await invoke("soulseek_load_credentials");
+    } catch {
+      return;
+    }
+    if (!creds) {
+      slskFormUser.value = "";
+      slskFormPass.value = "";
+      try {
+        localStorage.removeItem("neegde.slsk.user");
+      } catch {
+        /* ignore */
+      }
+    }
+  },
+);
+
+// Предзаполняем форму сохранёнными credentials
+onMounted(async () => {
+  try {
+    const creds = await invoke("soulseek_load_credentials");
+    if (creds && !slskFormUser.value) {
+      slskFormUser.value = creds[0];
+      slskFormPass.value = creds[1];
+    } else if (creds && !slskFormPass.value) {
+      slskFormPass.value = creds[1];
+    }
+  } catch { /* ignore */ }
+});
 
 const emit = defineEmits([
   "login",
   "logout",
   "theme-change",
   "update:appDebugEnabled",
+  "achievements-opt-in-change",
+  "achievements-reset",
+  "slsk-login",
+  "slsk-logout",
 ]);
+
+const achievementRows = computed(() => {
+  const u = new Set(props.achievementsUnlocked ?? []);
+  return ACHIEVEMENT_CATALOG.map((a) => ({
+    ...a,
+    unlocked: a.stub ? false : u.has(a.id),
+  }));
+});
+
+const achievementRowsReal = computed(() => achievementRows.value.filter((r) => !r.stub));
+
+const unlockedAchievementsCount = computed(
+  () => achievementRowsReal.value.filter((r) => r.unlocked).length
+);
 
 /** Подставляется из `package.json` в `vite.config.js` (`define.__APP_VERSION__`). */
 const appVersion = __APP_VERSION__;
@@ -67,6 +142,11 @@ const vozduxanVersion = __VOZDUXAN_VERSION__;
 const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
 const githubProjectUrl = __GITHUB_PROJECT_URL__;
 const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
+
+/** Официальный форум RuTracker (регистрация и вход — те же логин/пароль). */
+const RUTRACKER_FORUM_URL = "https://rutracker.org/forum/index.php";
+/** Сайт Soulseek: справка по аккаунту и сеть. */
+const SOULSEEK_ACCOUNT_INFO_URL = "https://www.slsknet.org/news/user";
 
 const releaseCheckState = ref(githubReleaseApiUrl ? "loading" : "idle");
 const releaseRemoteTag = ref(null);
@@ -191,6 +271,22 @@ const rtReconnectMsg = ref(null);
 /** После неуспеха переподключения скрываем текст и форму ввода до «Выйти из аккаунта» (или успешного входа). */
 const rtCredentialsHiddenUntilLogout = ref(false);
 
+/**
+ * Показывать «Переподключиться» / «Выйти из аккаунта» только если есть сохранённая сессия
+ * или уже шёл сценарий ошибки сессии — не после явного «Выйти» без следов аккаунта.
+ *
+ * Returns:
+ *     Whether session-recovery actions should be visible.
+ */
+const showRutrackerSessionRecovery = computed(() => {
+  if (props.rtLoggedIn || props.restoringSession) return false;
+  return (
+    hadRutrackerAccount() ||
+    Boolean(rtReconnectMsg.value) ||
+    rtCredentialsHiddenUntilLogout.value
+  );
+});
+
 /** Повторная проверка сохранённых cookies на сервере (без пароля). */
 async function handleRtReconnect() {
   rtError.value = null;
@@ -220,6 +316,10 @@ async function handleRtReconnect() {
     rtReconnectBusy.value = false;
   }
 }
+
+const achievementsBrowseOpen = ref(false);
+/** Раскрыт блок «Щитпост» (как nerdOpen). */
+const shitpostOpen = ref(false);
 
 // ── Параметры для задротов ─────────────────────────────────────────────────────────────
 const nerdOpen   = ref(false);
@@ -588,7 +688,7 @@ async function openAppDebugLogWindow() {
 
 async function confirmClearCoverTorrents() {
   const ok = await ask(
-    "Удалятся обложки, загруженные через BitTorrent из раздач (отдельная папка). Продолжить?",
+    "Удалятся обложки, загруженные через BitTorrent из раздач (отдельная папка). Сбросится и кэш обложек SoulSeek в памяти приложения. Продолжить?",
     { title: "Очистить кэш обложек", kind: "warning" },
   );
   if (!ok) return;
@@ -596,12 +696,28 @@ async function confirmClearCoverTorrents() {
   cacheSettingsError.value = null;
   try {
     await invoke("purge_cover_torrent_cache");
+    clearSlskCoverCache();
     await loadNerdDiagnostics();
   } catch (e) {
     cacheSettingsError.value = e?.toString?.() ?? String(e);
   } finally {
     cacheClearBusy.value = false;
   }
+}
+
+/**
+ * Asks confirmation and clears persisted achievement marks via parent.
+ *
+ * Returns:
+ *     void
+ */
+async function confirmResetAchievements() {
+  const ok = await ask(
+    "Сбросятся отметки о полученных достижениях и флаг первого прослушивания — их можно заработать снова. Список лайков не меняется. Продолжить?",
+    { title: "Сбросить достижения", kind: "warning" },
+  );
+  if (!ok) return;
+  emit("achievements-reset");
 }
 
 </script>
@@ -613,8 +729,11 @@ async function confirmClearCoverTorrents() {
     <!-- ── Источники ─────────────────────────────────────────── -->
     <div class="settings-section">
       <div class="settings-section-label">Источники музыки</div>
+      <p class="settings-section-lead">
+        Подключите те сервисы, которыми пользуетесь: оба независимы — регистрируются отдельно.
+      </p>
 
-      <div class="settings-card">
+      <div class="settings-card settings-card--integration">
         <!-- ── Logged in: user card + выход ── -->
         <div v-if="rtLoggedIn" class="settings-card-header">
           <div class="rt-avatar">
@@ -658,7 +777,9 @@ async function confirmClearCoverTorrents() {
 
         <!-- ── Not logged in: generic icon ── -->
         <div v-else class="settings-card-header">
-          <div class="settings-card-icon">🔗</div>
+          <div class="settings-card-icon">
+            <SystemIcon name="link" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Rutracker</div>
             <div class="settings-card-status">
@@ -668,32 +789,65 @@ async function confirmClearCoverTorrents() {
           </div>
         </div>
 
-        <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
-          <p v-if="rtReconnectMsg" class="rt-reconnect-msg rt-reconnect-msg--error">
-            {{ rtReconnectMsg }}
+        <div
+          v-if="!rtLoggedIn && !restoringSession"
+          class="settings-integration-banner settings-integration-banner--rt"
+        >
+          <div class="settings-integration-banner__head">
+            <span class="integration-pill integration-pill--rt">Торрент-трекер</span>
+            <span class="integration-pill integration-pill--neutral">Поиск альбомов</span>
+          </div>
+          <p class="settings-integration-banner__text">
+            Нужен <strong>аккаунт форума RuTracker</strong> — тот же логин и пароль, что на
+            rutracker.org / rutracker.net. Если профиля ещё нет, зарегистрируйтесь на официальном зеркале форума.
           </p>
-          <p v-else class="settings-card-desc rt-session-desc">
-            Уже входили в этом приложении? Можно восстановить сессию без пароля.
-          </p>
-          <div class="rt-session-actions rt-session-actions--failure">
+          <div class="settings-integration-banner__actions">
             <button
               type="button"
-              class="settings-action-btn settings-action-btn--primary"
-              :disabled="rtReconnectBusy"
-              @click="handleRtReconnect"
+              class="settings-integration-link-btn"
+              @click="openExternalUrl(RUTRACKER_FORUM_URL)"
             >
-              <span v-if="rtReconnectBusy" class="spinner" />
-              <template v-else>{{ rtCredentialsHiddenUntilLogout ? "Попробовать снова" : "Переподключиться" }}</template>
-            </button>
-            <button
-              type="button"
-              class="settings-action-btn settings-action-btn--ghost"
-              :disabled="rtReconnectBusy"
-              @click="handleRtLogout"
-            >
-              Выйти из аккаунта
+              Открыть форум RuTracker
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
             </button>
           </div>
+        </div>
+        <p v-else-if="rtLoggedIn" class="settings-integration-compact settings-integration-compact--rt">
+          <span class="integration-pill integration-pill--rt integration-pill--tiny">RuTracker</span>
+          Поиск и прослушивание через торрент-раздачи; вход — ваш логин с форума.
+        </p>
+
+        <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
+          <template v-if="showRutrackerSessionRecovery">
+            <p v-if="rtReconnectMsg" class="rt-reconnect-msg rt-reconnect-msg--error">
+              {{ rtReconnectMsg }}
+            </p>
+            <p v-else class="settings-card-desc rt-session-desc">
+              Уже входили в этом приложении? Можно восстановить сессию без пароля.
+            </p>
+            <div class="rt-session-actions rt-session-actions--failure">
+              <button
+                type="button"
+                class="settings-action-btn settings-action-btn--primary"
+                :disabled="rtReconnectBusy"
+                @click="handleRtReconnect"
+              >
+                <span v-if="rtReconnectBusy" class="spinner" />
+                <template v-else>{{ rtCredentialsHiddenUntilLogout ? "Попробовать снова" : "Переподключиться" }}</template>
+              </button>
+              <button
+                type="button"
+                class="settings-action-btn settings-action-btn--ghost"
+                :disabled="rtReconnectBusy"
+                @click="handleRtLogout"
+              >
+                Выйти из аккаунта
+              </button>
+            </div>
+          </template>
 
           <template v-if="!rtCredentialsHiddenUntilLogout">
             <p class="settings-card-desc settings-card-desc--after-reconnect">
@@ -727,6 +881,111 @@ async function confirmClearCoverTorrents() {
           </template>
         </div>
       </div>
+
+      <!-- ── SoulSeek card ── -->
+      <div class="settings-card settings-card--slsk settings-card--integration">
+        <!-- Connected -->
+        <div v-if="slskConnected" class="settings-card-header">
+          <div class="slsk-avatar">
+            <span>S</span>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">{{ slskUsername }}</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-on" />
+              Подключено · SoulSeek
+            </div>
+          </div>
+          <button
+            type="button"
+            class="settings-action-btn settings-action-btn--ghost"
+            @click="emit('slsk-logout')"
+          >
+            Выйти
+          </button>
+        </div>
+
+        <!-- Not connected -->
+        <div v-else class="settings-card-header">
+          <div class="settings-card-icon">
+            <SystemIcon name="music" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">SoulSeek</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-off" />
+              Не подключено
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="!slskConnected"
+          class="settings-integration-banner settings-integration-banner--slsk"
+        >
+          <div class="settings-integration-banner__head">
+            <span class="integration-pill integration-pill--slsk">P2P-сеть</span>
+            <span class="integration-pill integration-pill--neutral">Отдельные треки</span>
+          </div>
+          <p class="settings-integration-banner__text">
+            <strong>Логин и пароль — от сети SoulSeek</strong>, те же, что в клиентах
+            Nicotine+, Soulseek Qt и др. Отдельной «регистрации на сайте» обычно нет: имя пользователя
+            и пароль задаются при первом входе в официальном клиенте. Здесь вводите те же данные.
+            Сброс пароля и справка — на сайте проекта Soulseek.
+          </p>
+          <div class="settings-integration-banner__actions">
+            <button
+              type="button"
+              class="settings-integration-link-btn settings-integration-link-btn--slsk"
+              @click="openExternalUrl(SOULSEEK_ACCOUNT_INFO_URL)"
+            >
+              Справка по аккаунту Soulseek
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p v-else class="settings-integration-compact settings-integration-compact--slsk">
+          <span class="integration-pill integration-pill--slsk integration-pill--tiny">SoulSeek</span>
+          Поиск треков у пользователей сети; учётные данные — от вашего клиента SoulSeek.
+        </p>
+
+        <div v-if="!slskConnected" class="settings-card-body">
+          <p class="settings-card-desc">
+            Войдите, используя логин и пароль от сети SoulSeek (см. плашку выше).
+          </p>
+          <form
+            class="settings-login-form"
+            @submit.prevent="emit('slsk-login', slskFormUser, slskFormPass)"
+          >
+            <input
+              class="login-input"
+              type="text"
+              placeholder="Логин SoulSeek"
+              v-model="slskFormUser"
+              autocomplete="username"
+            />
+            <input
+              class="login-input"
+              type="password"
+              placeholder="Пароль"
+              v-model="slskFormPass"
+              autocomplete="current-password"
+            />
+            <p v-if="slskLoginError" class="login-error">{{ slskLoginError }}</p>
+            <button
+              class="login-btn"
+              type="submit"
+              :disabled="slskLoggingIn || !slskFormUser.trim() || !slskFormPass"
+            >
+              <span v-if="slskLoggingIn" class="spinner" />
+              <template v-else>Войти в SoulSeek</template>
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
 
     <!-- ── Внешний вид ────────────────────────────────────────── -->
@@ -735,7 +994,9 @@ async function confirmClearCoverTorrents() {
 
       <div class="settings-card">
         <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">🎨</div>
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="palette" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Тема</div>
             <div class="settings-card-status">{{ theme === 'light' ? 'Светлая' : theme === 'system' ? 'Системная' : 'Тёмная' }}</div>
@@ -763,7 +1024,9 @@ async function confirmClearCoverTorrents() {
       <div class="settings-section-label">Звук</div>
       <div class="settings-card">
         <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">🎚</div>
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="sliders" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Эквалайзер</div>
             <div class="settings-card-status">10 полос · Web Audio · локально</div>
@@ -778,9 +1041,11 @@ async function confirmClearCoverTorrents() {
     <!-- ── Кэш: быстрая очистка (вне «задротов») ─────────────────── -->
     <div class="settings-section">
       <div class="settings-section-label">Кэш</div>
-      <div class="settings-card settings-card--cache-quick">
+      <div class="settings-card">
         <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">🗑</div>
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="trash" :size="22" />
+          </div>
           <div class="settings-card-info">
             <div class="settings-card-name">Очистка на диске</div>
             <div class="settings-card-status">Удалить данные кэша без смены лимитов</div>
@@ -794,7 +1059,7 @@ async function confirmClearCoverTorrents() {
           <div class="cache-quick-actions">
             <button
               type="button"
-              class="nerd-btn-danger cache-quick-btn"
+              class="ach-btn ach-btn--primary cache-quick-btn"
               :disabled="cacheClearBusy || cacheSaveBusy"
               @click="confirmClearStreaming"
             >
@@ -803,7 +1068,7 @@ async function confirmClearCoverTorrents() {
             </button>
             <button
               type="button"
-              class="nerd-btn-danger nerd-btn-danger--ghost cache-quick-btn"
+              class="ach-btn ach-btn--danger cache-quick-btn"
               :disabled="cacheClearBusy || cacheSaveBusy"
               @click="confirmClearCoverTorrents"
             >
@@ -814,22 +1079,97 @@ async function confirmClearCoverTorrents() {
       </div>
     </div>
 
-    <!-- ── Параметры для задротов ─────────────────────────────── -->
-    <div class="settings-section">
-      <button class="nerd-toggle" @click="nerdOpen = !nerdOpen">
-        <span class="nerd-toggle-icon">{{ nerdOpen ? '▾' : '▸' }}</span>
-        Параметры для задротов
-        <span
-          v-if="hasCustomMirror() || hasHttpProxyConfigured()"
-          class="nerd-custom-dot"
-          title="Нестандартные зеркало или прокси"
-        />
-      </button>
+    <!-- ── Параметры для задротов / Щитпост ─────────────────────────────── -->
+    <div class="settings-section settings-section--bottom-extras">
+      <div class="settings-extra-toggles">
+        <button type="button" class="nerd-toggle nerd-toggle--row" @click="nerdOpen = !nerdOpen">
+          <span class="nerd-toggle-icon" aria-hidden="true">
+            <SystemIcon :name="nerdOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
+          </span>
+          Параметры для задротов
+          <span
+            v-if="hasCustomMirror() || hasHttpProxyConfigured()"
+            class="nerd-custom-dot"
+            title="Нестандартные зеркало или прокси"
+          />
+        </button>
+        <button type="button" class="nerd-toggle nerd-toggle--row" @click="shitpostOpen = !shitpostOpen">
+          <span class="nerd-toggle-icon" aria-hidden="true">
+            <SystemIcon :name="shitpostOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
+          </span>
+          Щитпост
+          <span
+            v-if="achievementsOptIn"
+            class="nerd-custom-dot"
+            title="Достижения включены"
+          />
+        </button>
+      </div>
+
+      <div v-if="shitpostOpen" class="settings-shitpost-panel">
+        <div class="settings-card settings-card--achievements">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="sparkle" :size="22" />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Достижения</div>
+              <div class="settings-card-status">
+                {{
+                  achievementsOptIn
+                    ? `${unlockedAchievementsCount} из ${achievementRowsReal.length}`
+                    : "Выключено"
+                }}
+              </div>
+            </div>
+            <label class="ach-opt-toggle">
+              <input
+                type="checkbox"
+                :checked="achievementsOptIn"
+                class="ach-opt-toggle-input"
+                @change="emit('achievements-opt-in-change', $event.target.checked)"
+              />
+              <span class="ach-opt-toggle-ui" aria-hidden="true" />
+            </label>
+          </div>
+          <div class="settings-card-body settings-card-body--achievements">
+            <p class="settings-card-desc">
+              В
+              <a
+                v-if="telegramChannelUrl"
+                href="#"
+                class="ach-inline-link"
+                @click.prevent="openExternalUrl(telegramChannelUrl)"
+              >щитпост паблике</a>
+              <template v-else>щитпост паблике</template>
+              чел просил «крутые ачивки» (вплоть до рофла про тысячу минут одной песни) — ну на че
+            </p>
+
+            <p v-if="achievementsOptIn" class="settings-card-desc ach-copy ach-copy-tight">
+              Короткий пуш при получении; полный список — по кнопке.
+            </p>
+            <p v-else class="settings-card-desc ach-copy ach-copy--muted ach-copy-tight">
+              Включите переключатель, чтобы считать галочки и пуши; выключите — всё тихо.
+            </p>
+
+            <div v-if="achievementsOptIn" class="ach-actions">
+              <button type="button" class="ach-btn ach-btn--primary" @click="achievementsBrowseOpen = true">
+                Просмотреть достижения…
+              </button>
+              <button type="button" class="ach-btn ach-btn--danger" @click="confirmResetAchievements">
+                Сбросить достижения
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div v-if="nerdOpen" class="nerd-stack">
         <div class="settings-card nerd-card nerd-card--cache-stats">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">⏱</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="clock" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">Кэш на диске и статистика</div>
               <div class="settings-card-status">Лимиты TTL, объёмы и папка данных</div>
@@ -842,13 +1182,13 @@ async function confirmClearCoverTorrents() {
               @click="loadNerdDiagnostics"
             >
               <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
-              <template v-else>↻</template>
+              <SystemIcon v-else name="refresh" :size="18" />
             </button>
           </div>
           <div class="settings-card-body">
             <p class="settings-card-desc nerd-desc">
               Лимиты задают размер папки стриминга и время жизни неактивных торрентов. Ниже — фактические
-              объёмы RAM и диска (↻ обновляет цифры и подтягивает сохранённые лимиты).
+              объёмы RAM и диска (<span class="nerd-inline-ico" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span> обновляет цифры и подтягивает сохранённые лимиты).
             </p>
 
             <div class="nerd-merge-label">Лимиты</div>
@@ -887,7 +1227,11 @@ async function confirmClearCoverTorrents() {
                 @click="saveCacheSettings"
               >
                 <span v-if="cacheSaveBusy" class="spinner" />
-                <template v-else>{{ cacheSaveOk ? '✓ Сохранено' : 'Сохранить лимиты' }}</template>
+                <span v-else-if="cacheSaveOk" class="settings-btn-saved">
+                  <SystemIcon name="check" :size="14" />
+                  <span>Сохранено</span>
+                </span>
+                <template v-else>Сохранить лимиты</template>
               </button>
             </div>
 
@@ -1013,13 +1357,19 @@ async function confirmClearCoverTorrents() {
               </div>
             </div>
 
-            <p v-else class="nerd-stat-hint">Нажми ↻ чтобы обновить.</p>
+            <p v-else class="nerd-stat-hint">
+              Нажми
+              <span class="nerd-inline-ico nerd-inline-ico--btn" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span>
+              чтобы обновить.
+            </p>
           </div>
         </div>
 
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🪞</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="mirror" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">Зеркало Rutracker</div>
               <div class="settings-card-status">Адрес сайта для подключения</div>
@@ -1057,7 +1407,11 @@ async function confirmClearCoverTorrents() {
                   @click="saveMirror"
                 >
                   <span v-if="nerdProbeBusy" class="spinner" />
-                  <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
+                    <SystemIcon name="check" :size="14" />
+                    <span>Сохранено</span>
+                  </span>
+                  <template v-else>Сохранить</template>
                 </button>
                 <button
                   v-if="persistedMirrorMode === MIRROR_MODE_AUTO"
@@ -1100,7 +1454,11 @@ async function confirmClearCoverTorrents() {
                   @click="saveMirror"
                 >
                   <span v-if="nerdProbeBusy" class="spinner" />
-                  <template v-else>{{ mirrorSaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
+                    <SystemIcon name="check" :size="14" />
+                    <span>Сохранено</span>
+                  </span>
+                  <template v-else>Сохранить</template>
                 </button>
               </div>
             </template>
@@ -1126,7 +1484,9 @@ async function confirmClearCoverTorrents() {
 
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🌐</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="globe" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">HTTP-прокси</div>
               <div class="settings-card-status">Тип HTTP · пресеты blockme</div>
@@ -1152,7 +1512,11 @@ async function confirmClearCoverTorrents() {
                 @click="saveProxy"
               >
                 <span v-if="proxySaveBusy" class="spinner" />
-                <template v-else>{{ proxySaved ? '✓ Сохранено' : 'Сохранить' }}</template>
+                <span v-else-if="proxySaved" class="settings-btn-saved">
+                  <SystemIcon name="check" :size="14" />
+                  <span>Сохранено</span>
+                </span>
+                <template v-else>Сохранить</template>
               </button>
               <button
                 type="button"
@@ -1179,7 +1543,9 @@ async function confirmClearCoverTorrents() {
 
         <div class="settings-card nerd-card">
           <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">🪲</div>
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="bug" :size="22" />
+            </div>
             <div class="settings-card-info">
               <div class="settings-card-name">Журнал отладки</div>
               <div class="settings-card-status">Клики, экраны, плеер, торренты</div>
@@ -1204,6 +1570,8 @@ async function confirmClearCoverTorrents() {
         </div>
 
       </div>
+
+      <AchievementsModal v-model:open="achievementsBrowseOpen" :rows="achievementRows" />
     </div>
 
     <!-- ── О приложении ───────────────────────────────────────── -->
@@ -1390,6 +1758,25 @@ async function confirmClearCoverTorrents() {
   line-height: 1.4;
 }
 
+/* ── Параметры для задротов / Щитпост ─────────────────────────────────────────────── */
+.settings-extra-toggles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.settings-extra-toggles .nerd-toggle {
+  margin-bottom: 0;
+}
+.settings-extra-toggles .nerd-toggle--row {
+  flex: none;
+  align-self: flex-start;
+}
+.settings-shitpost-panel {
+  margin-bottom: 12px;
+}
+
 /* ── Параметры для задротов ────────────────────────────────────────────────────────── */
 .nerd-toggle {
   display: flex;
@@ -1408,7 +1795,32 @@ async function confirmClearCoverTorrents() {
   transition: color 0.15s;
 }
 .nerd-toggle:hover { color: var(--text); }
-.nerd-toggle-icon  { font-size: 10px; }
+.nerd-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  flex-shrink: 0;
+}
+.settings-btn-saved {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  line-height: 1;
+}
+.nerd-inline-ico {
+  display: inline-flex;
+  vertical-align: -0.15em;
+  margin: 0 1px;
+  color: inherit;
+}
+.nerd-inline-ico--btn {
+  padding: 1px 2px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  vertical-align: -0.2em;
+}
 
 .nerd-toggle-inline {
   display: flex;
@@ -1434,10 +1846,7 @@ async function confirmClearCoverTorrents() {
 
 .nerd-card { margin-top: 0; }
 
-/* Быстрая очистка кэша (основные настройки) */
-.settings-card--cache-quick {
-  border-left: 3px solid var(--accent);
-}
+/* Быстрая очистка кэша — те же карточка и кнопки, что в остальных секциях настроек */
 .cache-quick-desc {
   margin-bottom: 4px;
 }
@@ -1456,6 +1865,15 @@ async function confirmClearCoverTorrents() {
 .cache-quick-btn {
   flex: 1;
   min-width: min(100%, 240px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.cache-quick-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .nerd-merge-label {
@@ -2021,5 +2439,133 @@ async function confirmClearCoverTorrents() {
 }
 .settings-release-retry:hover {
   color: var(--text);
+}
+
+/* ── SoulSeek card ──────────────────────────────────────────────────────────── */
+.settings-card--slsk {
+  margin-top: 12px;
+}
+.slsk-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #336699;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+
+/* ── Achievements (opt-in) ──────────────────────────────────────────────────── */
+.settings-card--achievements .settings-card-header {
+  align-items: center;
+}
+.ach-opt-toggle {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 26px;
+  cursor: pointer;
+}
+.ach-opt-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+.ach-opt-toggle-ui {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 13px;
+  background: var(--border);
+  transition: background 0.15s ease;
+  pointer-events: none;
+}
+.ach-opt-toggle-ui::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  transition: transform 0.15s ease;
+}
+.ach-opt-toggle-input:checked + .ach-opt-toggle-ui {
+  background: color-mix(in srgb, var(--accent) 75%, var(--border));
+}
+.ach-opt-toggle-input:checked + .ach-opt-toggle-ui::after {
+  transform: translateX(18px);
+}
+.ach-opt-toggle-input:focus-visible + .ach-opt-toggle-ui {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.settings-card-body--achievements {
+  /* Отступ от разделительной линии до текста (раньше было 0 — прилипало) */
+  padding-top: 22px;
+}
+.ach-inline-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ach-inline-link:hover {
+  color: var(--text);
+}
+.ach-copy {
+  margin-bottom: 10px;
+}
+.ach-copy-tight {
+  margin-bottom: 12px;
+}
+.ach-copy--muted {
+  color: var(--muted);
+}
+.ach-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.ach-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface-h);
+  color: var(--text);
+}
+.ach-btn:hover {
+  background: color-mix(in srgb, var(--surface-h) 85%, var(--accent));
+}
+.ach-btn--primary {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--text);
+}
+.ach-btn--primary:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+.ach-btn--danger {
+  border-color: color-mix(in srgb, #c44 35%, var(--border));
+  background: transparent;
+  color: color-mix(in srgb, #e66 88%, var(--text));
+}
+.ach-btn--danger:hover {
+  background: color-mix(in srgb, #c44 12%, transparent);
 }
 </style>

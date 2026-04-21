@@ -14,6 +14,17 @@ export function disposeTorrentPreview() {
 /** Frees one stream by URL path token so LRU can evict the torrent. */
 export function releaseTorrentStreamUrl(url) {
   if (!url || typeof url !== "string") return Promise.resolve();
+  const slsk = "/slsk/";
+  const si = url.indexOf(slsk);
+  if (si >= 0) {
+    const rest = url.slice(si + slsk.length);
+    const token = rest.split(/[/?#]/)[0];
+    if (!token) return Promise.resolve();
+    void appDebugLog("stream", `release: soulseek token=${token}`);
+    return invoke("soulseek_release_stream", { token }).catch((e) => {
+      void appDebugLog("stream", `release: soulseek error — token=${token} err=${String(e)}`);
+    });
+  }
   const marker = "/stream/";
   const i = url.indexOf(marker);
   if (i < 0) return Promise.resolve();
@@ -49,6 +60,19 @@ function tokenFromUrl(url) {
  * @param {string} url  URL потока вида http://127.0.0.1:PORT/stream/TOKEN
  * @param {number} byteOffset  Текущая позиция в байтах
  */
+/**
+ * Возвращает статистику скачивания для потока: { download_rate (bytes/sec), num_peers }.
+ * Используй во время фазы buffering чтобы показать прогресс пользователю.
+ *
+ * @param {string} url  URL потока вида http://127.0.0.1:PORT/stream/TOKEN
+ * @returns {Promise<{download_rate: number, num_peers: number}|null>}
+ */
+export function vozduxanStreamStats(url) {
+  const token = tokenFromUrl(url);
+  if (!token) return Promise.resolve(null);
+  return invoke("vozduxan_stream_stats", { token }).catch(() => null);
+}
+
 export function vozduxanNotifyPosition(url, byteOffset) {
   if (!url || typeof url !== "string") return Promise.resolve();
   const marker = "/stream/";

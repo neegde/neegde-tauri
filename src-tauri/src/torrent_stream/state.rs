@@ -1102,6 +1102,11 @@ impl TorrentStreamState {
         self.inner.ensure_session().await
     }
 
+    /// Bytes of a previously cached `.torrent` from streaming prep (same path as `prepare_inner`).
+    pub(crate) fn torrent_metadata_cache_bytes(&self, info_hash: Id20) -> Option<Vec<u8>> {
+        self.inner.load_torrent_metadata_cache(info_hash)
+    }
+
     pub(crate) fn export_cancel_reset(&self) {
         self.inner
             .export_cancel_requested

@@ -12,6 +12,11 @@ const props = defineProps({
   magnet: { type: String, default: "" },
   /** Индекс файла картинки в торренте (папка альбома), не обложка темы на форуме. */
   coverFileIdx: { type: [Number, null], default: null },
+  /**
+   * Внешний URL обложки (например MusicBrainz CAA после enrich в плеере).
+   * Имеет приоритет над торрентом и обложкой темы RuTracker.
+   */
+  overrideCoverUrl: { type: String, default: "" },
   size: { type: Number, default: 44 },
   radius: { type: Number, default: 4 },
   /** Заполняет родителя (например `.album-art` в сетке лайков). */
@@ -28,6 +33,9 @@ let observer = null;
  * Prefers in-torrent image when coverFileIdx is set; falls back to RuTracker topic cover (same as AlbumFolderCover).
  */
 const coverUrl = computed(() => {
+  const override = (props.overrideCoverUrl && String(props.overrideCoverUrl).trim()) || "";
+  if (override) return override;
+
   const magnet = (props.magnet && props.magnet.trim()) || "";
   const idx =
     props.coverFileIdx != null && Number.isFinite(Number(props.coverFileIdx))
@@ -45,7 +53,7 @@ const coverUrl = computed(() => {
 
 // Reset error state when the cover source changes
 watch(
-  () => [props.torrentId, props.source, props.magnet, props.coverFileIdx],
+  () => [props.torrentId, props.source, props.magnet, props.coverFileIdx, props.overrideCoverUrl],
   () => { coverErr.value = false; }
 );
 
@@ -59,6 +67,9 @@ function disconnectObserver() {
 function setupCover() {
   disconnectObserver();
   coverErr.value = false;
+
+  const override = (props.overrideCoverUrl && String(props.overrideCoverUrl).trim()) || "";
+  if (override) return;
 
   const magnet = (props.magnet && props.magnet.trim()) || "";
   const idx =
@@ -107,7 +118,7 @@ function setupCover() {
 
 onMounted(setupCover);
 watch(
-  () => [props.torrentId, props.source, props.magnet, props.coverFileIdx],
+  () => [props.torrentId, props.source, props.magnet, props.coverFileIdx, props.overrideCoverUrl],
   () => setupCover()
 );
 onUnmounted(disconnectObserver);
@@ -128,6 +139,7 @@ onUnmounted(disconnectObserver);
       :src="coverUrl"
       :class="fill ? 'album-art-img' : 'cover-thumb-img'"
       alt=""
+      draggable="false"
       @error="coverErr = true; appDebugLog('cover', `CoverThumb <img> onerror — cover rendered but browser rejected it torrentId=${props.torrentId} coverFileIdx=${props.coverFileIdx}`)"
     />
     <svg v-else class="cover-thumb-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

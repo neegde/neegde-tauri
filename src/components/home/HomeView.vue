@@ -1,30 +1,12 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import CoverThumb from "../shared/CoverThumb.vue";
-import { prefetchTorrentDetails } from "../../rutracker/search.js";
 
 const props = defineProps({
   recentHistory: { type: Array, default: () => [] },
-  loggedIn: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["open-recent", "go-to-search", "search-query"]);
-
-// ── Cover prefetch on auth ────────────────────────────────────────────────────
-// IntersectionObserver fires before auth restores → rutracker_get_cover fails silently.
-// Re-trigger when loggedIn becomes true.
-watch(
-  () => props.loggedIn,
-  (on) => {
-    if (!on) return;
-    for (const item of props.recentHistory.slice(0, 10)) {
-      if (item.source === "rutracker" && item.id) {
-        prefetchTorrentDetails(item.id);
-      }
-    }
-  },
-  { immediate: true }
-);
+const emit = defineEmits(["open-recent", "remove-recent", "go-to-search", "search-query"]);
 
 // ── Monthly stats ─────────────────────────────────────────────────────────────
 const thisMonthCount = computed(() => {
@@ -132,33 +114,64 @@ onUnmounted(() => {
 
     <template v-else>
 
-      <!-- ── Недавно слушал ──────────────────────────────────────────── -->
-      <section class="home-section">
-        <h2 class="home-section-title">Недавно слушал</h2>
+      <section class="home-section" aria-labelledby="home-recent-heading">
+        <h2 id="home-recent-heading" class="home-section-title">Недавно слушали</h2>
         <div class="home-grid">
-          <button
+          <article
             v-for="item in recentSlice"
             :key="item.id"
             class="home-card"
-            @click="emit('open-recent', item)"
           >
-            <div class="home-card-cover">
-              <CoverThumb
-                :torrent-id="item.id"
-                :source="item.source"
-                :size="120"
-                :radius="6"
-                :fill="true"
-              />
-              <div class="home-card-play-overlay">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="7,4 21,12 7,20"/>
-                </svg>
+            <div class="home-card-cover-wrap">
+              <button
+                type="button"
+                class="home-card-open home-card-open--cover"
+                @click="emit('open-recent', item)"
+              >
+                <div class="home-card-cover">
+                  <CoverThumb
+                    :torrent-id="item.id"
+                    :source="item.source"
+                    :size="120"
+                    :radius="6"
+                    :fill="true"
+                  />
+                  <div class="home-card-play-overlay">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <polygon points="7,4 21,12 7,20"/>
+                    </svg>
+                  </div>
+                </div>
+              </button>
+              <!-- Зона только в правом верхнем углу: крестик не перекрывает выпадающий поиск и виден по hover -->
+              <div class="home-card-remove-corner">
+                <button
+                  type="button"
+                  class="home-card-remove"
+                  title="Убрать из недавних"
+                  aria-label="Убрать из недавних"
+                  @click.stop="emit('remove-recent', item)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M18 6L6 18M6 6l12 12"
+                      stroke="currentColor"
+                      stroke-width="2.25"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
               </div>
             </div>
-            <div class="home-card-name">{{ torrentDisplayName(item.name) }}</div>
-            <div v-if="item.artist" class="home-card-sub">{{ item.artist }}</div>
-          </button>
+            <button
+              type="button"
+              class="home-card-open home-card-open--text"
+              @click="emit('open-recent', item)"
+            >
+              <div class="home-card-name">{{ torrentDisplayName(item.name) }}</div>
+              <div v-if="item.artist" class="home-card-sub">{{ item.artist }}</div>
+            </button>
+          </article>
         </div>
       </section>
 
@@ -865,16 +878,94 @@ onUnmounted(() => {
   gap: 16px;
 }
 .home-card {
-  background: none;
-  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  margin: 0;
   padding: 0;
-  cursor: pointer;
-  text-align: left;
   border-radius: 8px;
   transition: background 0.15s;
 }
 .home-card:hover {
   background: var(--surface-h);
+}
+.home-card-cover-wrap {
+  position: relative;
+  width: 100%;
+  margin-bottom: 8px;
+  isolation: isolate;
+}
+.home-card-open {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.home-card-open--cover {
+  border-radius: 8px 8px 0 0;
+}
+.home-card-open--text {
+  padding: 0 4px 6px;
+  border-radius: 0 0 8px 8px;
+}
+.home-card-remove-corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 5px;
+  box-sizing: border-box;
+  /* Иначе весь квадрат 44×44 перехватывает клики: обложка под ним не открывается */
+  pointer-events: none;
+}
+.home-card-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.52);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, background 0.15s, transform 0.12s;
+}
+.home-card-cover-wrap:hover .home-card-remove,
+.home-card-remove-corner:focus-within .home-card-remove {
+  opacity: 1;
+  pointer-events: auto;
+}
+.home-card-remove:hover {
+  background: rgba(180, 40, 50, 0.92);
+  transform: scale(1.06);
+}
+.home-card-remove:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (hover: none) {
+  .home-card-remove {
+    opacity: 0.9;
+    pointer-events: auto;
+  }
 }
 .home-card-cover {
   position: relative;
@@ -883,7 +974,6 @@ onUnmounted(() => {
   border-radius: 6px;
   overflow: hidden;
   background: var(--surface);
-  margin-bottom: 8px;
 }
 .home-card-play-overlay {
   position: absolute;

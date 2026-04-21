@@ -104,9 +104,15 @@ handleToggleLike(like) // toggle presence in likes dict
 | Альбомы | `type === "album"` | сетка карточек с `CoverThumb` |
 | Раздачи | `type === "torrent"` | сетка карточек с обложкой Rutracker (`getCoverReactive`) |
 
+## Search (combined Rutracker + SoulSeek)
+
+- Один запрос в `handleSearch`: Rutracker → `searchAlbumResults`, SoulSeek → `searchTrackResults` (параллельно).
+- Кеш LRU: ключ `queryNorm + "|mixed"`, значение `{ albums, tracks }`.
+- `Results.vue`: вкладки «Треки» / «Альбомы» (одна панель видна), дефолт вкладки только при смене `searchResultsEpoch` в `handleSearch` (не при батчах SoulSeek).
+
 ## Search Results Filtering
 
-`Results.vue` фильтрует массив `props.results` через `isLikelyPlayable(name, category)` перед рендерингом:
+`Results.vue` фильтрует `albumResults` через `isLikelyPlayable(name, category)` перед рендерингом сетки:
 - Скрывает раздачи с видео-форматами в названии (`x264`, `xvid`, `720p`, `hdtv`, …)
 - Скрывает SACD/DSD-раздачи (`sacd`, `sacd-r`, `dsd`, `dsf`, `dff`)
 - Скрывает раздачи из видео-категорий (`видео`, `клип`, `video`, `clip`)

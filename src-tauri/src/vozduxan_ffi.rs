@@ -71,6 +71,13 @@ pub struct VozduxanFileList {
     pub error_msg: [u8; 256],
 }
 
+/// Returned by vozduxan_stream_stats.
+#[repr(C)]
+pub struct VozduxanStreamStats {
+    pub download_rate_bytes: i32,
+    pub num_peers: i32,
+}
+
 /// Log callback: called for every VOZDUXAN_LOG line (stderr is always written too).
 pub type VozduxanLogFn = Option<unsafe extern "C" fn(message: *const c_char, userdata: *mut c_void)>;
 
@@ -95,6 +102,11 @@ unsafe extern "C" {
         progress_fn: VozduxanProgressFn,
         userdata: *mut c_void,
     ) -> VozduxanStreamInfo;
+
+    pub fn vozduxan_stream_stats(
+        session: *mut VozduxanSession,
+        token: *const c_char,
+    ) -> VozduxanStreamStats;
 
     pub fn vozduxan_stream_notify_position(
         session: *mut VozduxanSession,
