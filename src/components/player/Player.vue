@@ -3,7 +3,11 @@ import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } f
 import { listen } from "@tauri-apps/api/event";
 import CoverThumb from "../shared/CoverThumb.vue";
 import { prefetchNextInQueue, streamUrl } from "../../torrent/api.js";
-import { trackDisplayBasename, extractTrackArtist } from "../../lib/utils.js";
+import {
+  trackDisplayBasename,
+  extractTrackArtist,
+  parseArtistTitleFromTrackFilename,
+} from "../../lib/utils.js";
 import {
   releaseTorrentStreamUrl,
   torrentPrepareCancel,
@@ -702,9 +706,14 @@ watch(
       return;
     }
     void syncMediaSessionMetadata(t);
-    // Fire iTunes enrichment in background — does NOT block playback
-    const artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
-    const titleLocal = trackDisplayBasename(t.fileName);
+    // MusicBrainz enrichment in background — does NOT block playback
+    let artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
+    let titleLocal = trackDisplayBasename(t.fileName);
+    const parsed = parseArtistTitleFromTrackFilename(t.fileName || t.torrentName || "");
+    if (parsed.artist) {
+      artistLocal = parsed.artist;
+      titleLocal = parsed.title;
+    }
     enrichTrackMeta(artistLocal, titleLocal, (meta) => {
       if (props.track !== t) return; // track changed while request was in flight
       enrichedMeta.value = meta;
@@ -1379,6 +1388,7 @@ onUnmounted(() => {
           :source="track.source"
           :magnet="track.magnet"
           :cover-file-idx="track.coverFileIdx ?? null"
+          :override-cover-url="enrichedMeta?.coverUrl ?? ''"
           :size="56"
           :radius="4"
           fallback="♪"

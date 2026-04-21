@@ -1168,6 +1168,42 @@ function handlePlaySlskTrack(track) {
   queuePos.value = 0;
 }
 
+/**
+ * Builds a library «like» row from a SoulSeek search result row (same identity as
+ * `groupSlskResults` ids and `handlePlaySlskTrack` queue fields).
+ *
+ * Args:
+ *     track: Flat search result with `slsk_username`, `slsk_filepath`, optional `id`.
+ *
+ * Returns:
+ *     Object with `id`, `type: "track"`, and fields expected by `handleToggleLike` / LikesView.
+ */
+function soulseekSearchResultToLike(track) {
+  const filepath = (track.slsk_filepath ?? track.slsk_tracks?.[0]?.slsk_filepath ?? "").replace(/\\/g, "/");
+  const username = track.slsk_username ?? track.slsk_tracks?.[0]?.slsk_username ?? "";
+  const slskFilepath = track.slsk_filepath ?? track.slsk_tracks?.[0]?.slsk_filepath ?? filepath;
+  const filename = filepath.split("/").pop() || track.name || "track";
+  const id = track.id ?? `slsk_track_${username}_${slskFilepath}`;
+  return {
+    id,
+    type: "track",
+    source: "soulseek",
+    magnet: "",
+    fileIdx: 0,
+    fileName: filepath || filename,
+    torrentName: filename,
+    torrentId: track.id ?? id,
+    artist: track.artist ?? null,
+    slskUsername: username,
+    slskFilepath,
+    slskFilesize: track.size ?? track.slsk_tracks?.[0]?.size ?? 0,
+  };
+}
+
+function handleLikeSlskTrack(track) {
+  handleToggleLike(soulseekSearchResultToLike(track));
+}
+
 function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
   let coverFileIdx = explicitCoverFileIdx ?? null;
   let albumDirPath = null;
@@ -2250,6 +2286,7 @@ function onMouseSideButtonUp(e) {
             :selected-id="null"
             @select="handleSelect"
             @play-slsk-track="handlePlaySlskTrack"
+            @like-slsk-track="handleLikeSlskTrack"
           />
 
           <TorrentView

@@ -4,7 +4,12 @@ import CoverThumb from "../shared/CoverThumb.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import { trackCoverFileIdxForLike } from "../../library/likesCover.js";
-import { trackDisplayBasename, audioFormatLabel } from "../../lib/utils.js";
+import {
+  trackDisplayBasename,
+  audioFormatLabel,
+  parseArtistTitleFromTrackFilename,
+  extractArtist as extractArtistFromTorrentName,
+} from "../../lib/utils.js";
 import { getCoverReactive } from "../../rutracker/search.js";
 
 const props = defineProps({
@@ -50,15 +55,33 @@ const albums = computed(() =>
 const tracks = computed(() =>
   props.likes.filter((l) => l.type === "track").sort((a, b) => b.addedAt - a.addedAt)
 );
+
+/**
+ * Title and subtitle lines for a liked track row (title first, artist second).
+ *
+ * Args:
+ *     like: Liked track row.
+ *
+ * Returns:
+ *     `{ title, subtitle }`. Subtitle is empty when no second line should show.
+ */
+function likeTrackLines(like) {
+  const { artist, title } = parseArtistTitleFromTrackFilename(like.fileName);
+  const primary = artist ? title : trackDisplayBasename(like.fileName);
+  let subtitle = "";
+  if (artist) subtitle = artist;
+  else if (like.source === "rutracker") {
+    subtitle = extractArtistFromTorrentName(like.torrentName ?? "") || "";
+  }
+  return { title: primary, subtitle };
+}
+
+/** Each track with precomputed { title, subtitle } for the list row. */
+const tracksWithLines = computed(() => tracks.value.map((like) => ({ like, lines: likeTrackLines(like) })));
 const torrents = computed(() =>
   props.likes.filter((l) => l.type === "torrent").sort((a, b) => b.addedAt - a.addedAt)
 );
 
-
-function extractArtist(torrentName) {
-  const m = torrentName?.match(/^(.+?)\s+[-–—]\s+/);
-  return m ? m[1].trim() : torrentName ?? "";
-}
 
 function tracksLabel(n) {
   return `${n} ${n === 1 ? "трек" : n < 5 ? "трека" : "треков"}`;
@@ -119,22 +142,6 @@ function likeTrackTooltip(like) {
   }
   return lines.join("\n");
 }
-
-/**
- * Second line under the title: release name or SoulSeek peer.
- *
- * Args:
- *     like: Liked track row.
- *
- * Returns:
- *     Short subtitle string.
- */
-function likeTrackSubtitle(like) {
-  if (like.source === "soulseek") {
-    return like.slskUsername || like.torrentName || "SoulSeek";
-  }
-  return like.torrentName ?? "";
-}
 </script>
 
 <template>
@@ -189,14 +196,14 @@ function likeTrackSubtitle(like) {
           <span class="likes-th-actions-head" aria-hidden="true" />
         </div>
         <div
-          v-for="(like, i) in tracks"
-          :key="like.id"
-          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(like)]"
-          @click="emit('play', like)"
-          @contextmenu.prevent="openTrackCtx($event, like)"
+          v-for="(row, i) in tracksWithLines"
+          :key="row.like.id"
+          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(row.like)]"
+          @click="emit('play', row.like)"
+          @contextmenu.prevent="openTrackCtx($event, row.like)"
         >
           <div class="track-num">
-            <PlayingIndicator v-if="isNowPlayingTrack(like)" :live="playerPlaying" />
+            <PlayingIndicator v-if="isNowPlayingTrack(row.like)" :live="playerPlaying" />
             <template v-else>
               <span class="track-num-val">{{ i + 1 }}</span>
               <span class="track-num-icon">
@@ -209,34 +216,34 @@ function likeTrackSubtitle(like) {
           <div class="likes-track-main">
             <div
               class="likes-thumb-frame"
-              :class="like.source === 'soulseek' ? 'likes-thumb-frame--slsk' : 'likes-thumb-frame--rt'"
-              :title="like.source === 'soulseek' ? 'SoulSeek' : 'RuTracker'"
+              :class="row.like.source === 'soulseek' ? 'likes-thumb-frame--slsk' : 'likes-thumb-frame--rt'"
+              :title="row.like.source === 'soulseek' ? 'SoulSeek' : 'RuTracker'"
             >
               <CoverThumb
-                :torrent-id="like.torrentId"
-                :source="like.source"
-                :magnet="like.magnet"
-                :cover-file-idx="trackCoverFileIdx(like)"
+                :torrent-id="row.like.torrentId"
+                :source="row.like.source"
+                :magnet="row.like.magnet"
+                :cover-file-idx="trackCoverFileIdx(row.like)"
                 :size="40"
                 :radius="4"
               />
             </div>
             <div class="track-info">
               <div class="track-name-wrap">
-                <div class="track-name" :title="likeTrackTooltip(like)">{{ trackDisplayBasename(like.fileName) }}</div>
+                <div class="track-name" :title="likeTrackTooltip(row.like)">{{ row.lines.title }}</div>
               </div>
               <button
+                v-if="row.lines.subtitle"
                 class="likes-track-sub"
-                :class="{ 'likes-track-sub--peer': like.source === 'soulseek' }"
-                @click.stop="emit('open-torrent', like)"
-              >{{ likeTrackSubtitle(like) }}</button>
+                @click.stop="emit('open-torrent', row.like)"
+              >{{ row.lines.subtitle }}</button>
             </div>
           </div>
           <div class="track-actions">
             <button
               class="track-btn like-btn liked"
               title="Убрать лайк"
-              @click.stop="emit('toggle-like', like)"
+              @click.stop="emit('toggle-like', row.like)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -245,12 +252,12 @@ function likeTrackSubtitle(like) {
             <button
               class="track-btn dl"
               title="Скачать"
-              @click.stop="emit('download', like)"
+              @click.stop="emit('download', row.like)"
             >↓</button>
             <button
               class="track-btn"
               title="Перейти к раздаче"
-              @click.stop="emit('open-torrent', like)"
+              @click.stop="emit('open-torrent', row.like)"
             >↗</button>
           </div>
         </div>
@@ -292,7 +299,7 @@ function likeTrackSubtitle(like) {
           </div>
           <div class="album-name">{{ like.torrentName }}</div>
           <div class="album-meta likes-album-artist">
-            <span class="likes-track-sub">{{ extractArtist(like.torrentName) }}</span>
+            <span class="likes-track-sub">{{ extractArtistFromTorrentName(like.torrentName) }}</span>
           </div>
         </div>
       </div>
@@ -329,7 +336,7 @@ function likeTrackSubtitle(like) {
           </div>
           <div class="album-name">{{ like.albumName || like.torrentName }}</div>
           <div class="album-meta likes-album-artist">
-            <span class="likes-track-sub">{{ extractArtist(like.torrentName) }}</span>
+            <span class="likes-track-sub">{{ extractArtistFromTorrentName(like.torrentName) }}</span>
           </div>
         </div>
       </div>

@@ -96,7 +96,7 @@ function onCtxAction(id) {
   if (id === "queue")    emit("add-to-queue", origIdx);
   const f = (props.files ?? []).find((f) => f.origIdx === origIdx);
   if (id === "playlist" && f) emit("add-to-playlist", makePlaylistTrack(props.torrent, props.magnet, f));
-  if (id === "like"     && f) emit("toggle-like",     makePlaylistTrack(props.torrent, props.magnet, f));
+  if (id === "like"     && f) emit("toggle-like",     makeTrackLike(props.torrent, props.magnet, f));
 }
 
 // ── View mode ────────────────────────────────────────────────────────────────

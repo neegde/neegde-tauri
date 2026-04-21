@@ -397,6 +397,33 @@ export function trackDisplayBasename(path) {
   return stripFilenameExtension(withoutPrefix);
 }
 
+/**
+ * Parses "Artist - Title" from a track file path for two-line UI (title on top, artist below).
+ * Uses the same basename / track-prefix stripping as `trackDisplayBasename`, then stripMetaTags,
+ * then the first ` - ` / ` – ` / ` — ` split. Single-title files return artist empty and title set.
+ *
+ * Args:
+ *     path: File path or basename.
+ *
+ * Returns:
+ *     `{ artist, title }` with trimmed strings; empty strings when nothing to show.
+ */
+export function parseArtistTitleFromTrackFilename(path) {
+  const base = basename(String(path ?? "").replace(/\\/g, "/"));
+  const p = parseAudioTrackPrefix(base);
+  const rest = p ? p.title : base;
+  const noExt = stripFilenameExtension(rest);
+  const cleaned = stripMetaTags(noExt).trim();
+  if (!cleaned) return { artist: "", title: "" };
+  const m = cleaned.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (m) {
+    const a = m[1].trim();
+    const t = m[2].trim();
+    if (a && t && !VARIOUS_ARTISTS_RE.test(a)) return { artist: a, title: t };
+  }
+  return { artist: "", title: cleaned };
+}
+
 function sortAudioFilesByTrackPrefix(audioFiles) {
   if (audioFiles.length <= 1) return audioFiles;
   const withIdx = audioFiles.map((f, i) => ({ f, i }));
