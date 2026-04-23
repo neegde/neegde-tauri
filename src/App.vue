@@ -70,6 +70,7 @@ import { useDownloads } from "./composables/useDownloads.js";
 import { useNavStack } from "./composables/useNavStack.js";
 import { useMagnetDialog } from "./composables/useMagnetDialog.js";
 import { useAlbumPreview } from "./composables/useAlbumPreview.js";
+import { useTorrentDetail } from "./composables/useTorrentDetail.js";
 import { loadPersistedState } from "./persistence/bootstrap.js";
 import {
   likedTracks as libraryLikedTracks,
@@ -420,47 +421,7 @@ function handlePlayPlaylist(startIdx) {
   replaceQueue(tracks, Math.max(0, Math.min(startIdx ?? 0, tracks.length - 1)));
 }
 
-// ── AlbumView handlers ─────────────────────────────────────────────────────
-
-/** Resolve an album's trackIds to live Track instances via the registry. */
-function currentAlbumTracks() {
-  const alb = currentAlbum.value;
-  if (!alb) return [];
-  const out = [];
-  for (const id of alb.trackIds ?? []) {
-    const t = getTrack(id);
-    if (t) out.push(t);
-  }
-  return out;
-}
-
-function handleAlbumPlayAll() {
-  const tracks = currentAlbumTracks();
-  if (!tracks.length) return;
-  allowPlayerAutoplay();
-  replaceQueue(tracks, 0);
-}
-
-function handleAlbumToggleLike(album) {
-  if (!album) return;
-  libToggleLikeAlbum(album);
-}
-
-function handleAlbumDownloadAll() {
-  const tracks = currentAlbumTracks();
-  if (!tracks.length) return;
-  downloadOverlayExpanded.value = true;
-  for (const t of tracks) {
-    void t.exportToDisk((p) => { downloadProgress.value = p; });
-  }
-}
-
-const currentAlbumLiked = computed(() => {
-  const alb = currentAlbum.value;
-  if (!alb) return false;
-  libraryLikedAlbumIds.value; // reactive dep
-  return libIsAlbumLiked(alb.id);
-});
+// Album / torrent handlers moved into useTorrentDetail (see setup above).
 
 // ── Search ────────────────────────────────────────────────────────────────────
 // Reactive surface lives in src/stores/search.js. We only keep UI-local bits
@@ -476,25 +437,59 @@ const error = searchError;
 /** Narrow SoulSeek track list to this username (search results unchanged). */
 const slskPeerBrowseUser = ref(null);
 
-// ── Torrent ───────────────────────────────────────────────────────────────────
-const selected      = ref(null);
-const torrentMagnet = ref("");
-const torrentCover  = ref(null);   // base64 data URL or null
-const files         = shallowRef([]);
-/**
- * Active Album entity for the new AlbumView path (search → album click).
- * Mutually exclusive with `selected` (legacy TorrentView path).
- * Opening an album from search sets this; opening a magnet / deep link /
- * recent topic sets `selected` instead.
- */
-const currentAlbum  = shallowRef(null);
-const loadingFiles  = ref(false);
-
-/** Полный список файлов раздачи до предпросмотра одного альбома (как из лайков). */
-const torrentFilesBeforeAlbumPreview = ref(null);
-const torrentSelectedBeforeAlbumPreview = ref(null);
+// ── Torrent / Album detail (state + handlers) ──────────────────────────────
+// Two composables share a few refs: `useTorrentDetail` owns the selected
+// torrent / current Album state, `useNavStack` owns back/forward history.
+// They're wired via shared backStack/forwardStack refs + late-bound snapshot
+// getters so torrent-detail handlers can push nav snapshots built by
+// useNavStack (which itself reads torrent state).
 
 const mainRef = ref(null);
+
+const navBackStack     = ref([]);
+const navForwardStack  = ref([]);
+let navSnapSearchRef    = () => ({ type: "search" });
+let navSnapTorrentRef   = () => ({ type: "torrent" });
+let navSnapAlbumRef     = () => ({ type: "album" });
+
+// Mutable options object — we re-assign `downloadOverlayExpanded` + `downloadProgress`
+// after useDownloads runs so useTorrentDetail's handlers can write to the real refs.
+const torrentDetailOpts = {
+  backStack: navBackStack,
+  forwardStack: navForwardStack,
+  snapshotSearchForBack: () => navSnapSearchRef(),
+  snapshotTorrentForBack: () => navSnapTorrentRef(),
+  snapshotAlbumForBack: () => navSnapAlbumRef(),
+  recentHistory,
+  allowPlayerAutoplay,
+  openTorrentFromPlayer: (payload) => handleOpenTorrentFromPlayer(payload),
+  downloadOverlayExpanded: ref(false),  // placeholder — replaced below
+  downloadProgress: ref(null),          // placeholder — replaced below
+};
+
+const {
+  selected,
+  torrentMagnet,
+  torrentCover,
+  files,
+  currentAlbum,
+  loadingFiles,
+  torrentFilesBeforeAlbumPreview,
+  torrentSelectedBeforeAlbumPreview,
+  currentAlbumLiked,
+  handleSelect,
+  handleSelectLegacyTopic,
+  handlePlay,
+  handlePlayAll,
+  handlePlayAlbum,
+  handleAddToQueueFromTorrent,
+  handleOpenTorrentSourceFromView,
+  handleAlbumPlayAll,
+  handleAlbumToggleLike,
+  handleAlbumDownloadAll,
+  makeTrackFromFile,
+  tracksFromFiles,
+} = useTorrentDetail(torrentDetailOpts);
 
 const {
   forwardStack,
@@ -513,7 +508,14 @@ const {
   view, returnView, currentPlaylistId,
   searchQuery, searchEntities, slskPeerBrowseUser, error,
   mainRef,
+  backStack: navBackStack,
+  forwardStack: navForwardStack,
 });
+
+// Late-bind snapshot functions into useTorrentDetail's closures.
+navSnapSearchRef = snapshotSearchForBack;
+navSnapTorrentRef = snapshotTorrentForBack;
+navSnapAlbumRef = snapshotAlbumForBack;
 
 // Download state + handlers (overlay progress, export helpers) live in
 // useDownloads. See src/composables/useDownloads.js for the full surface.
@@ -528,6 +530,11 @@ const {
   handleDownloadAll,
   handleDownloadAlbum,
 } = useDownloads({ selected, torrentMagnet, files, currentPlaylist });
+
+// Swap in the real download overlay refs so useTorrentDetail's
+// handleAlbumDownloadAll writes to the proper shared state.
+torrentDetailOpts.downloadOverlayExpanded = downloadOverlayExpanded;
+torrentDetailOpts.downloadProgress = downloadProgress;
 
 let exportDbgLastAt = 0;
 let exportDbgLastPhase = "";
@@ -792,147 +799,6 @@ const {
  * A reference to the original `__entity` stays attached so we don't lose
  * the connection when TorrentView is finally migrated in Phase 6.
  */
-/**
- * Open an Album entity in the new AlbumView — no legacy row transformation.
- * Tracks resolve through the entities registry; AlbumView reads them by id.
- * Legacy row payloads (deep link, recent history) still go through
- * `handleSelectLegacyTopic` + TorrentView.
- */
-function handleSelect(album) {
-  if (!album || album.type !== "album") {
-    return handleSelectLegacyTopic(album);
-  }
-
-  // Toggle off if clicking the already-open album.
-  if (currentAlbum.value?.id === album.id) {
-    forwardStack.value = [];
-    backStack.value = [];
-    currentAlbum.value = null;
-    appDebugLog("search", `album deselected: ${album.id}`);
-    return;
-  }
-
-  appDebugLog("search", `album opened: ${album.id} "${album.title}"`);
-  if (currentAlbum.value) backStack.value.push(snapshotAlbumForBack());
-  else if (selected.value) backStack.value.push(snapshotTorrentForBack());
-  else                     backStack.value.push(snapshotSearchForBack());
-  forwardStack.value = [];
-
-  // Clear legacy TorrentView state — the two paths are mutually exclusive.
-  selected.value = null;
-  files.value = [];
-  torrentMagnet.value = "";
-  torrentCover.value = null;
-  torrentFilesBeforeAlbumPreview.value = null;
-  torrentSelectedBeforeAlbumPreview.value = null;
-
-  currentAlbum.value = album;
-
-  // RT: prewarm torrent file cache + record recent history (topic-level).
-  const src = album.sources?.[0];
-  if (src?.kind === "rutracker") {
-    const topicId = src.refs?.topicId;
-    const topicRow = src.raw?.topicRow;
-    const details = src.raw?.details;
-    if (topicId) {
-      void torrentFileB64ForTrack({ source: "rutracker", torrentId: topicId });
-      if (topicRow) {
-        recentHistory.value = addToRecentHistory({
-          id: String(topicId),
-          name: topicRow.name ?? album.title,
-          source: "rutracker",
-          artist: album.artist ?? details?.artist ?? "",
-          magnet: details?.magnet ?? "",
-        });
-      }
-    }
-  }
-}
-
-/**
- * Legacy fallback — called with a synthesized "torrent row" from code paths
- * that don't have an Album entity (deep link handler, likes, recent
- * history). Fetches TorrentDetails and builds a displayable `selected`
- * row + files list inline. Eventually these callers should synthesize an
- * Album entity instead and go through `handleSelect`.
- */
-async function handleSelectLegacyTopic(torrent) {
-  if (!torrent?.id) return;
-  if (selected.value?.id === torrent.id) {
-    forwardStack.value = [];
-    backStack.value = [];
-    selected.value = null; files.value = []; torrentMagnet.value = ""; torrentCover.value = null;
-    torrentFilesBeforeAlbumPreview.value = null;
-    torrentSelectedBeforeAlbumPreview.value = null;
-    return;
-  }
-  if (selected.value) backStack.value.push(snapshotTorrentForBack());
-  else                backStack.value.push(snapshotSearchForBack());
-  forwardStack.value = [];
-  torrentFilesBeforeAlbumPreview.value = null;
-  torrentSelectedBeforeAlbumPreview.value = null;
-  selected.value      = torrent;
-  files.value         = [];
-  torrentMagnet.value = "";
-  torrentCover.value  = null;
-  loadingFiles.value  = true;
-
-  if (torrent.source === "soulseek") {
-    // Likes / history can pre-populate slsk_tracks (fallback when Album entity missing)
-    const trackList = torrent.slsk_tracks?.length
-      ? torrent.slsk_tracks
-      : [{ slsk_filepath: torrent.slsk_filepath, slsk_username: torrent.slsk_username, size: torrent.size }];
-    const albumFolder =
-      (torrent.slsk_folder?.split("/").pop() || torrent.name || "album").trim();
-    files.value = trackList.map((t, i) => {
-      const normalized = (t.slsk_filepath ?? "").replace(/\\/g, "/");
-      const filename = normalized.split("/").pop() || t.name || `track_${i}`;
-      return {
-        name: filename,
-        path: `${albumFolder}/${filename}`,
-        size: t.size ?? 0,
-        idx: i, origIdx: i,
-        slskUsername: t.slsk_username ?? torrent.slsk_username,
-        slskFilepath: t.slsk_filepath ?? normalized,
-        slskFilesize: t.size ?? 0,
-        slskMetaTrackId: torrent.id,
-        slskFolderCoverUsername: torrent.slsk_cover_username ?? null,
-        slskFolderCoverFilepath: torrent.slsk_cover_filepath ?? null,
-        slskFolderCoverSize: torrent.slsk_cover_size ?? 0,
-      };
-    });
-    loadingFiles.value = false;
-    return;
-  }
-
-  try {
-    const details = await getTorrentDetails(torrent.id);
-    torrentMagnet.value = details.magnet ?? "";
-    torrentCover.value  = details.cover_data_url ?? null;
-    if (details.artist) selected.value = { ...selected.value, artist: details.artist };
-    files.value = details.files.map((f, i) => ({
-      name: f.path[f.path.length - 1] ?? "",
-      path: f.path.join("/"),
-      size: f.size,
-      idx: i,
-      origIdx: i,
-    }));
-    void torrentFileB64ForTrack({ source: torrent.source, torrentId: torrent.id });
-    recentHistory.value = addToRecentHistory({
-      id: String(torrent.id),
-      name: torrent.name ?? "",
-      source: torrent.source ?? "rutracker",
-      artist: details.artist ?? torrent.artist ?? "",
-      magnet: details.magnet ?? "",
-    });
-  } catch (e) {
-    console.error("handleSelectLegacyTopic:", e);
-    appDebugLog("search", `torrent open error: #${torrent.id} — ${String(e)}`);
-  } finally {
-    loadingFiles.value = false;
-  }
-}
-
 /** Play a single Track entity directly from search results. */
 function handlePlaySlskTrack(track) {
   if (!isTrack(track)) return;
@@ -946,111 +812,8 @@ function handleLikeSlskTrack(track) {
   toggleLikeTrack(track);
 }
 
-/**
- * Build (or fetch from registry) a Track instance for a file inside the
- * currently-open torrent / SoulSeek folder.
- */
-function makeTrackFromFile(f, torrent, magnet, fileList, explicitCoverFileIdx) {
-  let coverFileIdx = explicitCoverFileIdx ?? null;
-  let albumDirPath = null;
-  if (fileList?.length) {
-    const albs = detectAlbums(fileList);
-    for (const a of albs) {
-      if (a.audioFiles.some((af) => af.origIdx === f.origIdx)) {
-        if (coverFileIdx == null) coverFileIdx = a.coverFile?.origIdx ?? null;
-        albumDirPath = a.dirPath || null;
-        break;
-      }
-    }
-  }
-  if (torrent?.source === "soulseek") {
-    const ent = buildSlskTrackEntity({
-      username: f.slskUsername ?? torrent.slsk_username ?? null,
-      filepath: f.slskFilepath ?? f.path ?? null,
-      size: f.slskFilesize ?? f.size ?? torrent.size ?? 0,
-      filename: trackDisplayBasename(f.path),
-      artist: torrent?.artist ?? null,
-      cover: (f.slskFolderCoverUsername && f.slskFolderCoverFilepath)
-        ? { slsk_username: f.slskFolderCoverUsername, slsk_filepath: f.slskFolderCoverFilepath, size: f.slskFolderCoverSize }
-        : null,
-      albumTitle: torrent?.name ?? "",
-    });
-    const id = registerAndGetId(ent);
-    return id ? getTrack(id) : null;
-  }
-  const synthTorrent = {
-    id: torrent?.__topicId ?? torrent?.id ?? "",
-    name: torrent?.name ?? "",
-    artist: torrent?.artist ?? null,
-    source: torrent?.source ?? "rutracker",
-  };
-  const btih = torrent?.source === "magnet" ? parseBtihFromMagnet(magnet) : null;
-  const ent = buildRtTrackEntity(f, synthTorrent, magnet, btih, coverFileIdx, albumDirPath);
-  const id = registerAndGetId(ent);
-  return id ? getTrack(id) : null;
-}
-
-function tracksFromFiles(fileArray, coverIdxOverride) {
-  return fileArray
-    .map((f) => makeTrackFromFile(f, selected.value, torrentMagnet.value, files.value, coverIdxOverride))
-    .filter((t) => t != null);
-}
-
-function handlePlay(fileIdx) {
-  allowPlayerAutoplay();
-  const audioFiles = orderedAudioFiles(files.value);
-  const startIdx = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
-  const tracks = tracksFromFiles(audioFiles, null);
-  if (tracks.length === 0) return;
-  // If the user clicked the same file that's already first in queue, just jump.
-  const sameQueue = queueStoreIds.value.length === tracks.length
-    && queueStoreIds.value.every((id, i) => id === tracks[i]?.id);
-  if (sameQueue) {
-    jumpTo(startIdx);
-    return;
-  }
-  replaceQueue(tracks, startIdx);
-}
-
-function handlePlayAll() {
-  allowPlayerAutoplay();
-  const audioFiles = orderedAudioFiles(files.value);
-  if (!audioFiles.length) return;
-  const tracks = tracksFromFiles(audioFiles, null);
-  if (tracks.length === 0) return;
-  replaceQueue(tracks, 0);
-}
-
-function handlePlayAlbum(albumFiles) {
-  if (!albumFiles.length) return;
-  allowPlayerAutoplay();
-  const albs = detectAlbums(files.value);
-  const first = albumFiles[0];
-  let coverIdx = null;
-  for (const a of albs) {
-    if (a.audioFiles.some((af) => af.origIdx === first.origIdx)) {
-      coverIdx = a.coverFile?.origIdx ?? null;
-      break;
-    }
-  }
-  const tracks = tracksFromFiles(albumFiles, coverIdx);
-  if (tracks.length === 0) return;
-  replaceQueue(tracks, 0);
-}
-
-/**
- * @param {object} a
- * @param {object} b
- * @returns {boolean}
- */
-/** Enqueue a track from an audio file in the current torrent. */
-function handleAddToQueueFromTorrent(fileIdx) {
-  const audioFiles = orderedAudioFiles(files.value);
-  const f = audioFiles.find((x) => x.origIdx === fileIdx);
-  if (!f || !selected.value) return;
-  const track = makeTrackFromFile(f, selected.value, torrentMagnet.value, files.value);
-  if (track) enqueueTrack(track);
-}
+// makeTrackFromFile / tracksFromFiles / handlePlay / handlePlayAll /
+// handlePlayAlbum / handleAddToQueueFromTorrent moved into useTorrentDetail.
 
 function onQueueJump(i) {
   allowPlayerAutoplay();
@@ -1098,41 +861,7 @@ function clearSlskPeerBrowseUser() {
   slskPeerBrowseUser.value = null;
 }
 
-/**
- * Opens «источник» exactly like clicking the track title in the player: same payload as
- * `handleOpenTorrentFromPlayer`, using the current раздача + optional track `origIdx`.
- *
- * Args:
- *     origIdx: File `origIdx` from the track row context menu, or null.
- */
-function handleOpenTorrentSourceFromView(origIdx) {
-  const t = selected.value;
-  if (!t) return;
-  const list = files.value ?? [];
-  const f =
-    origIdx != null ? list.find((x) => x.origIdx === origIdx) : null;
-  let albumDirPath = null;
-  if (list.length && f) {
-    const albs = detectAlbums(list);
-    const album = albs.find((a) => a.audioFiles.some((af) => af.origIdx === f.origIdx));
-    albumDirPath = album?.dirPath ?? null;
-  }
-  const payload = {
-    torrentId: t.id,
-    torrentName: t.name ?? "",
-    source: t.source,
-    magnet: torrentMagnet.value ?? "",
-    artist: t.artist ?? null,
-    seeders: t.seeders ?? null,
-    fileIdx: f?.origIdx ?? origIdx ?? 0,
-    albumDirPath,
-  };
-  if (t.source === "soulseek") {
-    payload.slskUsername = f?.slskUsername ?? t.slsk_username ?? list[0]?.slskUsername ?? null;
-    payload.slskFilepath = f?.slskFilepath ?? null;
-  }
-  handleOpenTorrentFromPlayer(payload);
-}
+// handleOpenTorrentSourceFromView moved into useTorrentDetail.
 
 /**
  * SoulSeek search row: same as player «open album» for that result.

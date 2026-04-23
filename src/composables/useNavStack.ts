@@ -43,11 +43,18 @@ export interface UseNavStackCtx {
   slskPeerBrowseUser: Ref<string | null>;
   error: Ref<string | null>;
   mainRef: Ref<HTMLElement | null>;
+  /**
+   * Optional external refs — lets other composables share the same stacks so
+   * mutations (push on navigate, reset on fresh search) stay in sync across
+   * all callers.
+   */
+  backStack?: Ref<NavEntry[]>;
+  forwardStack?: Ref<NavEntry[]>;
 }
 
 export function useNavStack(ctx: UseNavStackCtx) {
-  const forwardStack = ref<NavEntry[]>([]);
-  const backStack = ref<NavEntry[]>([]);
+  const forwardStack = ctx.forwardStack ?? ref<NavEntry[]>([]);
+  const backStack = ctx.backStack ?? ref<NavEntry[]>([]);
 
   function scrollMainToTop(): void {
     if (ctx.mainRef.value) ctx.mainRef.value.scrollTo(0, 0);
