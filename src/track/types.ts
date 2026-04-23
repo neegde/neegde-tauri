@@ -28,16 +28,38 @@ export interface MagnetRefs {
   albumDirPath: string | null;
 }
 
-export interface SourceBase<K extends ProviderKind, R> {
-  kind: K;
-  refs: R;
-  raw?: unknown;
+/** Cover ref shape stamped by the SoulSeek search provider. */
+export interface SlskTrackCoverRef {
+  slsk_username?: string;
+  slsk_filepath?: string;
+  size?: number;
 }
 
-export type TrackSource =
-  | SourceBase<"rutracker", RutrackerRefs>
-  | SourceBase<"soulseek", SoulseekRefs>
-  | SourceBase<"magnet", MagnetRefs>;
+export interface RutrackerTrackRaw {
+  topicRow?: { id?: string | number; name?: string; [k: string]: unknown };
+  details?: { magnet?: string; artist?: string | null; [k: string]: unknown };
+  file?: unknown;
+  [k: string]: unknown;
+}
+
+export interface SoulseekTrackRaw {
+  row?: unknown;
+  cover?: SlskTrackCoverRef | null;
+  peers?: number;
+  [k: string]: unknown;
+}
+
+export interface SourceBase<K extends ProviderKind, R, Raw = unknown> {
+  kind: K;
+  refs: R;
+  raw?: Raw;
+}
+
+export type RutrackerTrackSource = SourceBase<"rutracker", RutrackerRefs, RutrackerTrackRaw>;
+export type SoulseekTrackSource  = SourceBase<"soulseek",  SoulseekRefs,  SoulseekTrackRaw>;
+export type MagnetTrackSource    = SourceBase<"magnet",    MagnetRefs,    RutrackerTrackRaw>;
+
+export type TrackSource = RutrackerTrackSource | SoulseekTrackSource | MagnetTrackSource;
 
 /**
  * Shape emitted by search providers / entity factories. Intermediate — Track

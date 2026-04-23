@@ -2,7 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { Track } from "./Track.js";
-import type { NavigationTarget, SoulseekRefs, TrackSource } from "./types.js";
+import type {
+  NavigationTarget,
+  SoulseekRefs,
+  SoulseekTrackSource,
+  SlskTrackCoverRef,
+} from "./types.js";
+import type { SoulseekAlbumSource } from "../album/types.js";
 import {
   getSlskCoverReactive,
   getSlskCoverDataUrl,
@@ -10,31 +16,31 @@ import {
 } from "../soulseek/coverCache.js";
 import { getAlbum, entitiesVersion } from "../stores/entities.js";
 
-interface SlskCoverRef {
-  slsk_username: string;
-  slsk_filepath: string;
-  size?: number;
-}
-
 export class SoulseekTrack extends Track {
-  private get refs(): SoulseekRefs {
-    return (this.source as TrackSource & { kind: "soulseek" }).refs;
+  private get slskSource(): SoulseekTrackSource {
+    return this.source as SoulseekTrackSource;
   }
 
-  private get rawAny(): { cover?: SlskCoverRef | null; peers?: number } {
-    return (this.source.raw ?? {}) as { cover?: SlskCoverRef | null; peers?: number };
+  private get refs(): SoulseekRefs {
+    return this.slskSource.refs;
+  }
+
+  /** Peers count stamped by the provider when the track is an orphan singleton. */
+  getPeers(): number {
+    return this.slskSource.raw?.peers ?? 0;
   }
 
   /**
    * Best cover ref: parent Album's cover (for album-child tracks), else the
    * track's own ref (set by provider for orphan singletons).
    */
-  private coverRef(): SlskCoverRef | null {
-    const own = this.rawAny.cover ?? null;
+  getCoverRef(): SlskTrackCoverRef | null {
+    const own = this.slskSource.raw?.cover ?? null;
     if (own) return own;
     if (this.albumId) {
       const parent = getAlbum(this.albumId);
-      const pc = parent?.sources?.[0]?.raw?.cover as SlskCoverRef | undefined;
+      const parentSource = parent?.sources?.[0] as SoulseekAlbumSource | undefined;
+      const pc = parentSource?.raw?.cover ?? null;
       if (pc) return pc;
     }
     return null;
@@ -58,13 +64,13 @@ export class SoulseekTrack extends Track {
     // Touch the entity-registry version so re-registration of the parent
     // album (e.g. its `raw.cover` getting stamped later) refreshes us.
     entitiesVersion.value;
-    const ref = this.coverRef();
+    const ref = this.getCoverRef();
     if (!ref?.slsk_username || !ref?.slsk_filepath) return null;
     return getSlskCoverReactive(ref.slsk_username, ref.slsk_filepath);
   }
 
   override startCoverFetch(): void {
-    const ref = this.coverRef();
+    const ref = this.getCoverRef();
     if (!ref?.slsk_username || !ref?.slsk_filepath) return;
     if (peekSlskCover(ref.slsk_username, ref.slsk_filepath) !== undefined) return;
     void getSlskCoverDataUrl(ref.slsk_username, ref.slsk_filepath, ref.size ?? 0).catch(() => {});

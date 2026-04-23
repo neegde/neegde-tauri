@@ -311,7 +311,7 @@ function runCoverFetches() {
 
   const folderMap = new Map();
   for (const track of trackEntitiesFiltered.value) {
-    const coverRef = track.sources?.[0]?.raw?.cover;
+    const coverRef = track.getCoverRef?.() ?? null;
     if (coverRef?.slsk_filepath) continue;   // already has folder art
     const meta = slskMeta.get(track.id);
     if (!meta || meta.coverUrl) continue;

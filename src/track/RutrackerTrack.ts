@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { Track } from "./Track.js";
-import type { NavigationTarget, RutrackerRefs, TrackSource } from "./types.js";
+import type {
+  NavigationTarget,
+  RutrackerRefs,
+  RutrackerTrackSource,
+  MagnetTrackSource,
+  RutrackerTrackRaw,
+} from "./types.js";
 import {
   getCoverReactive,
   getRutrackerCoverDataUrl,
@@ -11,8 +17,16 @@ import {
 export class RutrackerTrack extends Track {
   protected readonly sourceKind: "rutracker" | "magnet" = "rutracker";
 
+  private get rtSource(): RutrackerTrackSource | MagnetTrackSource {
+    return this.source as RutrackerTrackSource | MagnetTrackSource;
+  }
+
   protected get refs(): RutrackerRefs {
-    return (this.source as TrackSource & { kind: "rutracker" | "magnet" }).refs as RutrackerRefs;
+    return this.rtSource.refs as RutrackerRefs;
+  }
+
+  protected get rtRaw(): RutrackerTrackRaw | undefined {
+    return this.rtSource.raw;
   }
 
   /**
@@ -23,8 +37,7 @@ export class RutrackerTrack extends Track {
    */
   private getMagnet(): string {
     if (this.refs.magnet) return this.refs.magnet;
-    const raw = this.source.raw as { details?: { magnet?: string } } | undefined;
-    return raw?.details?.magnet ?? "";
+    return this.rtRaw?.details?.magnet ?? "";
   }
 
   override hasPlaybackIdentity(): boolean {

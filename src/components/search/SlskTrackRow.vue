@@ -8,8 +8,8 @@ import PlayingIndicator from "../shared/PlayingIndicator.vue";
 /**
  * Row for a SoulSeek Track entity. Reads Track directly; cover info is
  * resolved via the parent Album (through the entities registry) when the
- * Track is an album child, otherwise from `track.sources[0].raw.cover`
- * stored by the provider for orphan singles.
+ * Track is an album child, otherwise via `track.getCoverRef()` (stamped
+ * by the provider for orphan singles).
  */
 const props = defineProps({
   /** @type {import("vue").PropType<import("../../types/entities.js").Track>} */
@@ -33,7 +33,7 @@ const peers = computed(() => {
     const parent = getAlbum(props.track.albumId);
     if (parent?.peers) return parent.peers;
   }
-  return props.track.sources?.[0]?.raw?.peers ?? 0;
+  return props.track.getPeers?.() ?? 0;
 });
 
 const trackExt = computed(() => {

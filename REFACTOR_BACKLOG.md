@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `df026a3` "17"
+**Последний коммит:** `19` "#11 typed .raw accessors on Track subclasses"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -70,7 +70,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - **#10 `NavigationTarget` полиморфный** — `RutrackerTarget` / `SoulseekTarget` подклассы. `src/track/types.ts` сейчас имеет loose union. Track subclasses строят разные формы в `navigationTarget()`. Blast: ~8-12 сайтов.
 
-- **#11 Типизированные `.raw` аксессоры** на Track subclasses — вместо `as SlskCoverRef` везде. В `SoulseekTrack.getCoverRef()`, `getPeers()` и т.п. Blast: 3-5 файлов.
+- ~~**#11 Типизированные `.raw` аксессоры**~~ ✅ commit 19 — `TrackSource` теперь кэнд-generic в `raw`, `SoulseekTrack.getCoverRef()` / `getPeers()` публичны, RutrackerTrack использует `rtRaw?.details?.magnet`. Обновлены SlskTrackRow, Results.
 
 - **#12 `SearchProvider` class** (сейчас loose object с `kind: string` + `search()`) — для унификации логгинга и типобезопасности `kind`. Blast: ~5 файлов (engine, session, оба провайдера).
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **17**. Следующий должен быть **18**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **19**. Следующий должен быть **20**.
 
 HEREDOC-стиль:
 
