@@ -189,8 +189,9 @@ describe("App.vue — cold boot with persisted queue", () => {
     await flushPromises();
     const player = w.findComponent({ name: "Player" });
     expect(player.exists()).toBe(true);
-    // After restoring from snapshot the queue ids are in the store.
-    expect(player.props("playbackQueue")).toBeDefined();
+    // Queue store is seeded from the snapshot.
+    const { queueIds } = await import("../src/stores/queue.js");
+    expect(queueIds.value.length).toBeGreaterThan(0);
     w.unmount();
     document.body.innerHTML = "";
   });
@@ -199,10 +200,11 @@ describe("App.vue — cold boot with persisted queue", () => {
     seedQueueSnapshot();
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
+    const { suppressAutoplay } = await import("../src/stores/queue.js");
     const player = w.findComponent({ name: "Player" });
     await player.vm.$emit("request-stream");
     await flushPromises();
-    expect(player.props("suppressAutoplay")).toBe(false);
+    expect(suppressAutoplay.value).toBe(false);
     w.unmount();
     document.body.innerHTML = "";
   });
@@ -211,45 +213,47 @@ describe("App.vue — cold boot with persisted queue", () => {
 describe("App.vue — queue / repeat / shuffle cycling", () => {
   it("cycleRepeatMode cycles off → all → one → off", async () => {
     fakeLocalStorage.delete("neegde.player.repeatMode");
+    const { repeatMode } = await import("../src/stores/queue.js");
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
     const player = w.findComponent({ name: "Player" });
-    expect(player.props("repeatMode")).toBe("off");
+    expect(repeatMode.value).toBe("off");
     await player.vm.$emit("cycle-repeat");
     await flushPromises();
-    expect(player.props("repeatMode")).toBe("all");
+    expect(repeatMode.value).toBe("all");
     await player.vm.$emit("cycle-repeat");
     await flushPromises();
-    expect(player.props("repeatMode")).toBe("one");
+    expect(repeatMode.value).toBe("one");
     await player.vm.$emit("cycle-repeat");
     await flushPromises();
-    expect(player.props("repeatMode")).toBe("off");
+    expect(repeatMode.value).toBe("off");
     w.unmount();
     document.body.innerHTML = "";
   });
 
   it("toggleShuffle is a no-op when queue has fewer than 2 items", async () => {
+    const { shuffleOn } = await import("../src/stores/queue.js");
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
     const player = w.findComponent({ name: "Player" });
-    const before = player.props("shuffleOn");
+    const before = shuffleOn.value;
     await player.vm.$emit("toggle-shuffle");
     await flushPromises();
-    // Because queue is empty, shuffle is not flipped.
-    expect(player.props("shuffleOn")).toBe(before);
+    expect(shuffleOn.value).toBe(before);
     w.unmount();
     document.body.innerHTML = "";
   });
 
   it("toggleShuffle flips shuffle when queue >= 2", async () => {
     seedQueueSnapshot();
+    const { shuffleOn } = await import("../src/stores/queue.js");
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
     const player = w.findComponent({ name: "Player" });
-    const before = player.props("shuffleOn");
+    const before = shuffleOn.value;
     await player.vm.$emit("toggle-shuffle");
     await flushPromises();
-    expect(player.props("shuffleOn")).toBe(!before);
+    expect(shuffleOn.value).toBe(!before);
     w.unmount();
     document.body.innerHTML = "";
   });
@@ -323,10 +327,11 @@ describe("App.vue — queue / repeat / shuffle cycling", () => {
 
   it("queue-download / queue-add-to-playlist from player propagate", async () => {
     seedQueueSnapshot();
+    const { nowPlayingTrack } = await import("../src/stores/queue.js");
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
     const player = w.findComponent({ name: "Player" });
-    const track = player.props("track");
+    const track = nowPlayingTrack.value;
     // Queue add-to-playlist opens the modal.
     await player.vm.$emit("queue-add-to-playlist", track);
     await flushPromises();

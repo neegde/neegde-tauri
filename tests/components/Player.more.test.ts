@@ -83,6 +83,8 @@ vi.mock("../../src/composables/useMarquee.js", () => ({
 import Player from "../../src/components/player/Player.vue";
 import { buildTrack } from "../../src/track/factory.js";
 import { mockInvoke } from "../_setup.js";
+import { replaceQueue, queueIds, queuePos, setRepeat } from "../../src/stores/queue.js";
+import { clearEntities } from "../../src/stores/entities.js";
 
 const track = buildTrack({
   type: "track", id: "t1", title: "Song", artist: "Artist",
@@ -91,21 +93,27 @@ const track = buildTrack({
   sources: [{ kind: "soulseek", refs: { slskUsername: "u", slskFilepath: "song.mp3" }, raw: { cover: null } }],
 });
 
+const track2 = buildTrack({
+  type: "track", id: "t2", title: "Song 2", artist: "Artist",
+  albumTitle: null, albumId: null, fileName: "song2.mp3",
+  format: null, bitrate: 320, duration: 200, size: 1000,
+  sources: [{ kind: "soulseek", refs: { slskUsername: "u", slskFilepath: "song2.mp3" }, raw: { cover: null } }],
+});
+
 beforeEach(() => {
   document.body.innerHTML = "";
   vi.clearAllMocks();
+  clearEntities();
+  queueIds.value = [];
+  queuePos.value = 0;
+  setRepeat("off");
 });
 
-async function mountPlayer(extraProps: Record<string, unknown> = {}) {
+async function mountPlayer(overrides: { queue?: ReturnType<typeof buildTrack>[]; queuePos?: number } = {}) {
   mockInvoke.mockResolvedValue({ url: "http://stream", token: "tok" });
-  const w = mount(Player, {
-    props: {
-      track, likedIds: new Set<string>(), playbackQueue: [track], queueIndex: 0,
-      hasPrev: false, hasNext: false, repeatMode: "off", shuffleOn: false,
-      ...extraProps,
-    },
-    attachTo: document.body,
-  });
+  const queue = overrides.queue ?? [track];
+  replaceQueue(queue, overrides.queuePos ?? 0);
+  const w = mount(Player, { attachTo: document.body });
   // Let watchers + prepareStream settle.
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
   return w;
@@ -121,7 +129,8 @@ describe("Player — keyboard shortcuts", () => {
   });
 
   it("ArrowRight emits next when hasNext", async () => {
-    const w = await mountPlayer({ hasNext: true });
+    // 2-track queue at pos=0 → hasNext=true
+    const w = await mountPlayer({ queue: [track, track2], queuePos: 0 });
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowRight" }));
     await w.vm.$nextTick();
     expect(w.emitted("next")).toBeTruthy();
@@ -129,7 +138,8 @@ describe("Player — keyboard shortcuts", () => {
   });
 
   it("ArrowLeft emits prev when hasPrev", async () => {
-    const w = await mountPlayer({ hasPrev: true });
+    // 2-track queue at pos=1 → hasPrev=true
+    const w = await mountPlayer({ queue: [track, track2], queuePos: 1 });
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowLeft" }));
     await w.vm.$nextTick();
     expect(w.emitted("prev")).toBeTruthy();
@@ -137,7 +147,7 @@ describe("Player — keyboard shortcuts", () => {
   });
 
   it("keydown inside INPUT is ignored", async () => {
-    const w = await mountPlayer({ hasNext: true });
+    const w = await mountPlayer({ queue: [track, track2], queuePos: 0 });
     const input = document.createElement("input");
     document.body.appendChild(input);
     input.focus();
@@ -164,33 +174,24 @@ describe("Player — play button + cancelLoad", () => {
   it("clicking play button while preparing cancels load", async () => {
     // prepareStream returns a pending promise — phase stays 'preparing'.
     mockInvoke.mockImplementation(() => new Promise(() => {}));
-    const w = mount(Player, {
-      props: {
-        track, likedIds: new Set<string>(), playbackQueue: [track],
-        queueIndex: 0, hasPrev: false, hasNext: false,
-      },
-      attachTo: document.body,
-    });
+    replaceQueue([track], 0);
+    const w = mount(Player, { attachTo: document.body });
     await w.vm.$nextTick(); await w.vm.$nextTick();
-    // Click play while in preparing phase — triggers cancelLoad.
     await w.find(".ctrl-btn-play").trigger("click");
     expect(torrentPrepareCancelMock).toHaveBeenCalled();
     w.unmount();
   });
 
   it("suppressAutoplay + no src → request-stream emission from togglePlay", async () => {
-    const w = mount(Player, {
-      props: {
-        track, likedIds: new Set<string>(), playbackQueue: [track],
-        queueIndex: 0, hasPrev: false, hasNext: false,
-        suppressAutoplay: true,
-      },
-      attachTo: document.body,
-    });
+    replaceQueue([track], 0);
+    // seedFromSnapshot would set this on real cold start; here we flip manually.
+    const { suppressAutoplay } = await import("../../src/stores/queue.js");
+    suppressAutoplay.value = true;
+    const w = mount(Player, { attachTo: document.body });
     await w.vm.$nextTick();
-    // Play button click → togglePlay path → request-stream emit.
     await w.find(".ctrl-btn-play").trigger("click");
     expect(w.emitted("request-stream")).toBeTruthy();
+    suppressAutoplay.value = false;
     w.unmount();
   });
 });
@@ -198,13 +199,8 @@ describe("Player — play button + cancelLoad", () => {
 describe("Player — audio event handlers", () => {
   async function mountWithAudio() {
     mockInvoke.mockResolvedValue({ url: "http://stream", token: "tok" });
-    const w = mount(Player, {
-      props: {
-        track, likedIds: new Set<string>(), playbackQueue: [track], queueIndex: 0,
-        hasPrev: false, hasNext: false,
-      },
-      attachTo: document.body,
-    });
+    replaceQueue([track], 0);
+    const w = mount(Player, { attachTo: document.body });
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
     return w;
   }
@@ -241,13 +237,9 @@ describe("Player — audio event handlers", () => {
 
   it("ended event with repeat=one restarts without emitting 'ended'", async () => {
     mockInvoke.mockResolvedValue({ url: "http://stream", token: "tok" });
-    const w = mount(Player, {
-      props: {
-        track, likedIds: new Set<string>(), playbackQueue: [track], queueIndex: 0,
-        hasPrev: false, hasNext: false, repeatMode: "one",
-      },
-      attachTo: document.body,
-    });
+    replaceQueue([track], 0);
+    setRepeat("one");
+    const w = mount(Player, { attachTo: document.body });
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
     const a = w.find("audio").element as HTMLAudioElement | undefined;
     if (!a) { w.unmount(); return; }
@@ -262,13 +254,8 @@ describe("Player — audio event handlers", () => {
   it("error event sets error phase and schedules auto-retry", async () => {
     vi.useFakeTimers();
     mockInvoke.mockResolvedValue({ url: "http://stream", token: "tok" });
-    const w = mount(Player, {
-      props: {
-        track, likedIds: new Set<string>(), playbackQueue: [track], queueIndex: 0,
-        hasPrev: false, hasNext: false,
-      },
-      attachTo: document.body,
-    });
+    replaceQueue([track], 0);
+    const w = mount(Player, { attachTo: document.body });
     // Let the initial prepare chain settle.
     await vi.runOnlyPendingTimersAsync();
     for (let i = 0; i < 4; i++) await Promise.resolve();
@@ -356,23 +343,17 @@ describe("Player — queue interactions", () => {
 
 describe("Player — null / untracked paths", () => {
   it("null track renders without crashing", () => {
-    const w = mount(Player, {
-      props: {
-        track: null, likedIds: new Set<string>(), playbackQueue: [],
-        queueIndex: 0, hasPrev: false, hasNext: false,
-      },
-    });
+    queueIds.value = [];
+    queuePos.value = 0;
+    const w = mount(Player);
     expect(w.html()).toBeTruthy();
     w.unmount();
   });
 
   it("toggleCurrentLike is a no-op without a track", () => {
-    const w = mount(Player, {
-      props: {
-        track: null, likedIds: new Set<string>(), playbackQueue: [],
-        queueIndex: 0, hasPrev: false, hasNext: false,
-      },
-    });
+    queueIds.value = [];
+    queuePos.value = 0;
+    const w = mount(Player);
     const btn = w.find(".player-like-btn");
     if (btn.exists()) btn.trigger("click");
     expect(w.emitted("toggle-like")).toBeFalsy();

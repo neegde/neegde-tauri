@@ -318,17 +318,6 @@
 
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
-      :track="nowPlayingTrackFromStore"
-      :next-track="nextTrackFromStore"
-      :second-next-track="secondNextTrackFromStore"
-      :suppress-autoplay="suppressAutoplayAfterSessionRestore"
-      :has-prev="queueHasPrev"
-      :has-next="queueHasNext"
-      :repeat-mode="repeatMode"
-      :shuffle-on="shuffleOn"
-      :liked-ids="libraryLikedTrackIds"
-      :playback-queue="playbackQueueTracks"
-      :queue-index="queueStorePos"
       @prev="handlePrev"
       @next="handlePlayerNext"
       @ended="handleTrackEnded"

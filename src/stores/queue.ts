@@ -47,6 +47,14 @@ export class PlaybackQueue {
   readonly secondNext: ComputedRef<Track | null>;
   readonly hasPrev: ComputedRef<boolean>;
   readonly hasNext: ComputedRef<boolean>;
+  /** Track[] view of the queue — resolves each id via the entities registry. */
+  readonly tracks: ComputedRef<Track[]>;
+  /**
+   * After cold-start session restore we don't want HTML autoplay on src assignment.
+   * Flipped to `true` by {@link seedFromSnapshot} when it hydrates a non-empty
+   * queue, and cleared via {@link allowAutoplay} when the user initiates playback.
+   */
+  readonly suppressAutoplay: Ref<boolean> = ref(false);
 
   constructor(private readonly persistFn: (s: QueueSnapshot) => void = saveQueueSnapshot) {
     this.nowPlaying = computed(() => {
@@ -95,6 +103,16 @@ export class PlaybackQueue {
       if (len === 0) return false;
       if (this.pos.value < len - 1) return true;
       return this.repeatMode.value === "all";
+    });
+
+    this.tracks = computed(() => {
+      entitiesVersion.value;
+      const out: Track[] = [];
+      for (const id of this.ids.value) {
+        const t = getTrack(id) ?? hydrateTrack(id);
+        if (t) out.push(t);
+      }
+      return out;
     });
   }
 
@@ -208,6 +226,15 @@ export class PlaybackQueue {
   seedFromSnapshot(s: QueueSnapshot): void {
     this.ids.value = s.trackIds;
     this.pos.value = Math.max(0, Math.min(s.pos, Math.max(0, s.trackIds.length - 1)));
+    // Cold-start session restore: if we hydrated any tracks, suppress HTML
+    // autoplay on the next src assignment so the Player only starts on user
+    // intent (which clears the flag via `allowAutoplay`).
+    this.suppressAutoplay.value = s.trackIds.length > 0;
+  }
+
+  /** Clear the autoplay-suppression flag. Called when user initiates playback. */
+  allowAutoplay(): void {
+    this.suppressAutoplay.value = false;
   }
 
   snapshot(): QueueSnapshot {
@@ -231,6 +258,9 @@ export const nextTrack = playbackQueue.next;
 export const secondNextTrack = playbackQueue.secondNext;
 export const hasPrev = playbackQueue.hasPrev;
 export const hasNext = playbackQueue.hasNext;
+export const queueTracks = playbackQueue.tracks;
+export const suppressAutoplay = playbackQueue.suppressAutoplay;
+export const allowAutoplay = (): void => playbackQueue.allowAutoplay();
 
 // Mutators (thin delegates)
 export const replaceQueue = (tracks: Track[], startIndex = 0): void =>

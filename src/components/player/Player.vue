@@ -44,6 +44,19 @@ import {
   queueTrackKey,
   prefetchFingerprint,
 } from "../../player/queueRowKey.js";
+import {
+  nowPlayingTrack,
+  nextTrack as queueNextTrack,
+  secondNextTrack as queueSecondNextTrack,
+  hasPrev as queueHasPrev,
+  hasNext as queueHasNext,
+  queueTracks,
+  queuePos,
+  repeatMode as queueRepeatMode,
+  shuffleOn as queueShuffleOn,
+  suppressAutoplay as queueSuppressAutoplay,
+} from "../../stores/queue.js";
+import { likedTrackIds } from "../../stores/library.js";
 
 function fmtTime(secs) {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
@@ -53,31 +66,23 @@ function fmtTime(secs) {
 }
 
 /**
- * Player props — all track-like fields arrive as `Track` class instances.
- * Data access is through getters (`track.title`, `.artist`, `.kind`);
- * playback / export / cover resolution via methods (`track.prepareStream()`,
- * `track.coverUrl()`).
+ * Player reads its playback state directly from `stores/queue` + `stores/library`
+ * — no props. Parent (App.vue) only listens to emits for handlers that still
+ * live there (search-artist, open-torrent, download, etc.).
+ *
+ * Top-level ref aliases below are exposed to the template (Vue auto-unwraps).
  */
-const props = defineProps({
-  /** @type {import('vue').PropType<Track | null>} */
-  track: { type: Object, default: null },
-  /** @type {import('vue').PropType<Track | null>} */
-  nextTrack: { type: Object, default: null },
-  /** @type {import('vue').PropType<Track | null>} */
-  secondNextTrack: { type: Object, default: null },
-  hasPrev: Boolean,
-  hasNext: Boolean,
-  /** After cold-start session restore we don't want HTML autoplay on src assignment. */
-  suppressAutoplay: Boolean,
-  /** Set of liked Track ids — drives the heart-button state. */
-  /** @type {import('vue').PropType<Set<string> | null>} */
-  likedIds: { type: Object, default: null },
-  /** @type {import('vue').PropType<Track[]>} */
-  playbackQueue: { type: Array, default: () => [] },
-  queueIndex: { type: Number, default: 0 },
-  repeatMode: { type: String, default: "off" },
-  shuffleOn: Boolean,
-});
+const track             = nowPlayingTrack;
+const nextTrack         = queueNextTrack;
+const secondNextTrack   = queueSecondNextTrack;
+const hasPrev           = queueHasPrev;
+const hasNext           = queueHasNext;
+const suppressAutoplay  = queueSuppressAutoplay;
+const likedIds          = likedTrackIds;
+const playbackQueue     = queueTracks;
+const queueIndex        = queuePos;
+const repeatMode        = queueRepeatMode;
+const shuffleOn         = queueShuffleOn;
 
 const emit = defineEmits([
   "prev",
@@ -104,7 +109,7 @@ const {
   openQueueCtx,
   onQueueCtxAction,
 } = useQueueContextMenu({
-  playbackQueue: computed(() => props.playbackQueue ?? []),
+  playbackQueue: computed(() => playbackQueue.value ?? []),
   onDownload: (q) => emit("queue-download", q),
   onAddToPlaylist: (q) => emit("queue-add-to-playlist", q),
 });
@@ -113,7 +118,7 @@ const {
 const enrichedMeta = ref(null);
 
 const { soulseekSearchMeta, currentArtist, displayTitle, playerCoverOverride } = usePlayerDisplay({
-  track: computed(() => props.track),
+  track: track,
   enrichedMeta,
 });
 
@@ -123,21 +128,21 @@ function onArtistClick() {
 }
 
 function onTrackClick() {
-  const t = props.track;
+  const t = track.value;
   if (!t) return;
   const target = t.navigationTarget();
   if (target) emit("open-torrent", target);
 }
 
-const hasTrack = computed(() => trackHasPlaybackIdentity(props.track));
+const hasTrack = computed(() => trackHasPlaybackIdentity(track.value));
 
 const isCurrentTrackLiked = computed(() => {
-  const t = props.track;
-  return t ? Boolean(props.likedIds?.has(t.id)) : false;
+  const t = track.value;
+  return t ? Boolean(likedIds.value?.has(t.id)) : false;
 });
 
 function toggleCurrentLike() {
-  const t = props.track;
+  const t = track.value;
   if (!t) return;
   emit("toggle-like", t);
 }
@@ -188,9 +193,9 @@ const queuePanelOpen = ref(false);
 const vizOpen = ref(false);
 
 const { prefetchedStream, resetOnTrackChange: resetPrefetchOnTrackChange, releasePrefetchedStream } = usePrefetch({
-  track: computed(() => props.track),
-  nextTrack: computed(() => props.nextTrack),
-  secondNextTrack: computed(() => props.secondNextTrack),
+  track: track,
+  nextTrack: nextTrack,
+  secondNextTrack: secondNextTrack,
   playing,
   streamPhase,
   isLoading: computed(() => streamPhase.value === "preparing" || streamPhase.value === "buffering"),
@@ -213,11 +218,11 @@ const {
   lastPrepareProgress,
   streamDownloadStats,
   statsHistory,
-  track: computed(() => props.track),
+  track: track,
 });
 
 watch(
-  () => queueTrackKey(props.track),
+  () => queueTrackKey(track.value),
   () => {
     activeStreamPrepareSig.value = "";
     prepareAttempt.value = 0;
@@ -236,7 +241,7 @@ const { bufferedPercent, updateBufferStats, stopBufferPoll } = useBufferPoll({
 
 const { startBufferingWatchdog, clearBufferingWatchdog } = useBufferingWatchdog({
   audioRef, streamPhase, streamError, src,
-  track: computed(() => props.track),
+  track: track,
   onStart: () => startStatsPolling(),
 });
 
@@ -262,7 +267,7 @@ function logPlayRejected(context, err) {
 }
 
 async function cancelLoad() {
-  void appDebugLog("player", `stream prepare: user cancelled — "${props.track?.fileName?.slice?.(0,70)}" fileIdx=${props.track?.fileIdx} phase=${streamPhase.value}`);
+  void appDebugLog("player", `stream prepare: user cancelled — "${track.value?.fileName?.slice?.(0,70)}" fileIdx=${track.value?.fileIdx} phase=${streamPhase.value}`);
   loadCancelledByUser.value = true;
   void torrentPrepareCancel();
   const prevUrl = src.value;
@@ -287,8 +292,8 @@ function onPlayButtonClick() {
 
 function togglePlay() {
   if (!hasTrack.value) return;
-  if (props.suppressAutoplay && !src.value) {
-    void appDebugLog("player", `togglePlay: suppressed — emitting request-stream fileIdx=${props.track?.fileIdx}`);
+  if (suppressAutoplay.value && !src.value) {
+    void appDebugLog("player", `togglePlay: suppressed — emitting request-stream fileIdx=${track.value?.fileIdx}`);
     emit("request-stream");
     return;
   }
@@ -337,8 +342,8 @@ function onKey(e) {
     if (streamPhase.value === "preparing") void cancelLoad();
     else togglePlay();
   }
-  if (e.code === "ArrowRight" && props.hasNext) { e.preventDefault(); emit("next"); }
-  if (e.code === "ArrowLeft" && props.hasPrev) { e.preventDefault(); emit("prev"); }
+  if (e.code === "ArrowRight" && hasNext.value) { e.preventDefault(); emit("next"); }
+  if (e.code === "ArrowLeft" && hasPrev.value) { e.preventDefault(); emit("prev"); }
 }
 
 function onAudioError() {
@@ -366,14 +371,14 @@ function onAudioError() {
   // the torrent has been downloading the first piece for ~28s total, so a
   // fresh prepare() almost always finds it available immediately.
   if (prepareAttempt.value === 0) {
-    const trackKeyAtError = queueTrackKey(props.track);
+    const trackKeyAtError = queueTrackKey(track.value);
     setTimeout(() => {
       if (
         streamPhase.value === "error" &&
         !loadCancelledByUser.value &&
-        queueTrackKey(props.track) === trackKeyAtError
+        queueTrackKey(track.value) === trackKeyAtError
       ) {
-        void appDebugLog("player", `stream prepare: auto-retry after audio error — "${props.track?.fileName?.slice?.(0, 60)}" fileIdx=${props.track?.fileIdx}`);
+        void appDebugLog("player", `stream prepare: auto-retry after audio error — "${track.value?.fileName?.slice?.(0, 60)}" fileIdx=${track.value?.fileIdx}`);
         streamError.value = "";
         prepareAttempt.value++;
       }
@@ -388,7 +393,7 @@ watch(playing, (v) => {
 }, { immediate: true });
 
 watch(streamPhase, (phase, prev) => {
-  void appDebugLog("player", `streamPhase: ${prev} → ${phase} — "${props.track?.fileName?.slice?.(0,60)}" fileIdx=${props.track?.fileIdx}`);
+  void appDebugLog("player", `streamPhase: ${prev} → ${phase} — "${track.value?.fileName?.slice?.(0,60)}" fileIdx=${track.value?.fileIdx}`);
   if (phase !== "buffering") {
     clearBufferingWatchdog();
     if (phase !== "ready") stopStatsPolling();
@@ -400,11 +405,11 @@ watch(streamPhase, (phase, prev) => {
 });
 
 watchEffect(() => {
-  void props.hasPrev;
-  void props.hasNext;
+  void hasPrev.value;
+  void hasNext.value;
   setMediaSessionApi({
     play: () => {
-      if (props.suppressAutoplay && !src.value && hasTrack.value) {
+      if (suppressAutoplay.value && !src.value && hasTrack.value) {
         emit("request-stream");
         return;
       }
@@ -467,7 +472,7 @@ function buildSessionEnriched(t) {
 }
 
 watch(
-  () => props.track,
+  () => track.value,
   (t) => {
     enrichedMeta.value = null;
     if (!trackHasPlaybackIdentity(t)) {
@@ -494,7 +499,7 @@ watch(
       }
     }
     enrichTrackMeta(artistLocal, titleLocal, (meta) => {
-      if (props.track !== t) return;  // track changed while request was in flight
+      if (track.value !== t) return;  // track changed while request was in flight
       enrichedMeta.value = meta;
       void syncMediaSessionMetadata(t, { ...buildSessionEnriched(t), ...meta });
     });
@@ -503,9 +508,9 @@ watch(
 );
 
 watch(
-  () => [playing.value, duration.value, current.value, queueTrackKey(props.track)],
+  () => [playing.value, duration.value, current.value, queueTrackKey(track.value)],
   () => {
-    if (!trackHasPlaybackIdentity(props.track) || streamPhase.value === "error") return;
+    if (!trackHasPlaybackIdentity(track.value) || streamPhase.value === "error") return;
     const d = duration.value;
     const p = current.value;
     if (!Number.isFinite(d) || d <= 0) return;
@@ -515,7 +520,7 @@ watch(
 );
 
 useDiscordPresence({
-  track: computed(() => props.track),
+  track: track,
   playing,
   streamPhase,
   current,
@@ -547,13 +552,13 @@ function bumpStreamPhaseReady() {
 
 function onAudioCanPlay() {
   const a = audioRef.value;
-  void appDebugLog("player", `audio: canplay — currentTime=${a?.currentTime?.toFixed(2)} buffered%=${bufferedPercent.value} "${props.track?.fileName?.slice?.(0,60)}"`);
+  void appDebugLog("player", `audio: canplay — currentTime=${a?.currentTime?.toFixed(2)} buffered%=${bufferedPercent.value} "${track.value?.fileName?.slice?.(0,60)}"`);
   updateBufferStats();
   bumpStreamPhaseReady();
 }
 
 function onAudioPlaying() {
-  void appDebugLog("player", `audio: playing — currentTime=${audioRef.value?.currentTime?.toFixed(2)} "${props.track?.fileName?.slice?.(0,60)}"`);
+  void appDebugLog("player", `audio: playing — currentTime=${audioRef.value?.currentTime?.toFixed(2)} "${track.value?.fileName?.slice?.(0,60)}"`);
   bumpStreamPhaseReady();
 }
 
@@ -564,7 +569,7 @@ function onAudioPlaying() {
 function onAudioWaiting() {
   const a = audioRef.value;
   if (a && !a.paused) {
-    void appDebugLog("player", `audio: waiting (rebuffering) — currentTime=${a.currentTime?.toFixed(2)} buffered%=${bufferedPercent.value} "${props.track?.fileName?.slice?.(0,60)}"`);
+    void appDebugLog("player", `audio: waiting (rebuffering) — currentTime=${a.currentTime?.toFixed(2)} buffered%=${bufferedPercent.value} "${track.value?.fileName?.slice?.(0,60)}"`);
     streamPhase.value = "buffering";
     startBufferingWatchdog();
   }
@@ -581,12 +586,12 @@ function onAudioStalled() {
 
 watch(
   () => [
-    queueTrackKey(props.track),
+    queueTrackKey(track.value),
     prepareAttempt.value,
-    props.suppressAutoplay,
+    suppressAutoplay.value,
   ],
   async ([, , suppressed], _, onCleanup) => {
-    const t = props.track;
+    const t = track.value;
     void appDebugLog("player", `stream-watch: fired — id=${t?.id ?? "—"} kind=${t?.kind ?? "—"} suppressed=${suppressed} phase=${streamPhase.value} activeSig="${activeStreamPrepareSig.value?.slice(0,30)}"`);
     if (!t || !t.hasPlaybackIdentity()) {
       activeStreamPrepareSig.value = "";
@@ -647,9 +652,9 @@ watch(
 
     let cancelled = false;
     onCleanup(() => { cancelled = true; });
-    void appDebugLog("player", `stream prepare: start — "${t.fileName?.slice?.(0,70)}" id=${t.id} kind=${t.kind} attempt=${prepareAttempt.value} suppressAutoplay=${props.suppressAutoplay}`);
+    void appDebugLog("player", `stream prepare: start — "${t.fileName?.slice?.(0,70)}" id=${t.id} kind=${t.kind} attempt=${prepareAttempt.value} suppressAutoplay=${suppressAutoplay.value}`);
     try {
-      const preparedKey = queueTrackKey(props.track);
+      const preparedKey = queueTrackKey(track.value);
       let nextSrc = "";
       if (prefetchedStream.value.url && prefetchedStream.value.forKey === preparedKey) {
         nextSrc = prefetchedStream.value.url;
@@ -715,7 +720,7 @@ function onDocClick() {
   queuePanelOpen.value = false;
 }
 
-const queueLen = computed(() => props.playbackQueue?.length ?? 0);
+const queueLen = computed(() => playbackQueue.value?.length ?? 0);
 
 const playerTrackInfoRef = ref(null);
 const titleMarqueeWrapRef = ref(null);
@@ -731,14 +736,14 @@ const {
   titleWrap: titleMarqueeWrapRef,
   artistWrap: artistMarqueeWrapRef,
   displayTitle,
-  fileName: computed(() => props.track?.fileName ?? ""),
+  fileName: computed(() => track.value?.fileName ?? ""),
   currentArtist,
   hasTrack,
 });
 
 const repeatCycleTitle = computed(() => {
-  if (props.repeatMode === "all") return "Повтор: вся очередь";
-  if (props.repeatMode === "one") return "Повтор: один трек";
+  if (repeatMode.value === "all") return "Повтор: вся очередь";
+  if (repeatMode.value === "one") return "Повтор: один трек";
   return "Повтор выключен";
 });
 
@@ -747,9 +752,9 @@ const repeatCycleTitle = computed(() => {
  * clip; otherwise App advances the queue.
  */
 function onAudioEnded() {
-  const qLen = props.playbackQueue?.length ?? 0;
+  const qLen = playbackQueue.value?.length ?? 0;
   const loopSameTrack =
-    props.repeatMode === "one" || (props.repeatMode === "all" && qLen === 1);
+    repeatMode.value === "one" || (repeatMode.value === "all" && qLen === 1);
   if (loopSameTrack) {
     const a = audioRef.value;
     if (!a) return;

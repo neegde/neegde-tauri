@@ -352,7 +352,7 @@
         class="player-audio"
         crossorigin="anonymous"
         :src="src"
-        :autoplay="Boolean(src) && !props.suppressAutoplay"
+        :autoplay="Boolean(src) && !suppressAutoplay"
         @loadstart="streamPhase = 'buffering'"
         @play="onAudioPlay"
         @playing="onAudioPlaying"

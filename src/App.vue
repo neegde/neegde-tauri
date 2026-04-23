@@ -110,6 +110,7 @@ import {
   clear as clearQueue,
   setRepeat,
   toggleShuffle as storeToggleShuffle,
+  allowAutoplay,
   seedQueueFromSnapshot,
 } from "./stores/queue.js";
 import { getTrack } from "./stores/entities.js";
@@ -142,12 +143,8 @@ import SystemIcon from "./components/shared/SystemIcon.vue";
 const nowPlaying = nowPlayingTrackFromStore;  // alias used by useAppDebug
 const { appDebugEnabled } = useAppDebug({ view, queuePos: queueStorePos, nowPlaying });
 
-/** Track[] view over the queue ids — used for the in-player queue panel. */
-const playbackQueueTracks = computed(() =>
-  queueStoreIds.value
-    .map((id) => getTrack(id))
-    .filter((t) => t != null),
-);
+// playbackQueueTracks moved into queue store as `queueTracks`; Player.vue
+// reads it directly without a prop.
 
 /**
  * HMR-safe Track check. `instanceof Track` breaks after Vite HMR: if the
@@ -161,11 +158,14 @@ function isTrack(t) {
   return !!t && t.type === "track" && typeof t.prepareStream === "function";
 }
 
-/** On cold start with a restored queue we don't want HTML autoplay on src assignment. */
-const suppressAutoplayAfterSessionRestore = ref(queueStoreIds.value.length > 0);
-
+/**
+ * Autoplay-suppression flag is owned by the queue store. `seedFromSnapshot`
+ * sets it to true on cold start when the restored queue is non-empty; this
+ * alias just surfaces the "allow" toggle under its historical name for the
+ * handlers that call it.
+ */
 function allowPlayerAutoplay() {
-  suppressAutoplayAfterSessionRestore.value = false;
+  allowAutoplay();
 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
