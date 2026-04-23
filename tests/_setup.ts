@@ -45,6 +45,30 @@ class FakeIntersectionObserver {
 (globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver })
   .IntersectionObserver = FakeIntersectionObserver as unknown as typeof IntersectionObserver;
 
+// ── ResizeObserver shim (jsdom lacks it). Used by layout-measurement code.
+class FakeResizeObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+  constructor(_cb: ResizeObserverCallback) {}
+}
+(globalThis as unknown as { ResizeObserver: typeof ResizeObserver })
+  .ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+
+// ── matchMedia shim (jsdom lacks it) ───────────────────────────────────────
+if (typeof window !== "undefined" && !window.matchMedia) {
+  (window as unknown as { matchMedia: typeof matchMedia }).matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })) as unknown as typeof matchMedia;
+}
+
 // ── Tauri IPC + plugins ────────────────────────────────────────────────────
 // A single shared invoke mock that individual tests can override per-call.
 
@@ -75,6 +99,17 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 vi.mock("../src/rutracker/config.js", () => ({
   getMirror: () => "https://rutracker.test",
   resolveMirrorIfNeeded: vi.fn().mockResolvedValue(undefined),
+  DEFAULT_MIRROR: "https://rutracker.net",
+  KNOWN_MIRRORS: ["https://rutracker.net", "https://rutracker.org"],
+  MIRROR_MODE_AUTO: "auto",
+  MIRROR_MODE_MANUAL: "manual",
+  getMirrorMode: () => "manual",
+  setMirrorMode: vi.fn(),
+  setMirror: vi.fn(),
+  resetMirror: vi.fn(),
+  hasCustomMirror: () => false,
+  getLastResolvedMirror: () => null,
+  probeMirrorsNow: vi.fn().mockResolvedValue("https://rutracker.net"),
 }));
 
 vi.mock("../src/appDebugLog.js", () => ({

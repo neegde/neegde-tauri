@@ -49,7 +49,7 @@ describe("SearchSession — single provider", () => {
     const s = new SearchSession("q", { providers: [p] });
     await s.completed;
     expect(s.status.value).toBe("done");
-    expect(s.results.value.map((e) => e.id).sort()).toEqual(["a", "b"]);
+    expect((s.results.value as unknown as FakeEntity[]).map((e) => e.id).sort()).toEqual(["a", "b"]);
     expect(s.providerStatus.value.p1).toBe("done");
   });
 
@@ -58,7 +58,7 @@ describe("SearchSession — single provider", () => {
     const s = new SearchSession("q", { providers: [p] });
     await s.completed;
     expect(s.results.value).toHaveLength(1);
-    expect((s.results.value[0] as FakeEntity).score).toBe(0);
+    expect((s.results.value[0] as unknown as FakeEntity).score).toBe(0);
   });
 });
 
@@ -68,7 +68,7 @@ describe("SearchSession — multi-provider merge", () => {
     const p2 = makeProvider("p2", [[{ id: "c" }]]);
     const s = new SearchSession("q", { providers: [p1, p2] });
     await s.completed;
-    expect(s.results.value.map((e) => e.id)).toEqual(["a", "b", "c"]);
+    expect(s.results.value.map((e) => (e as unknown as FakeEntity).id)).toEqual(["a", "b", "c"]);
   });
 });
 
@@ -81,7 +81,7 @@ describe("SearchSession — provider failure", () => {
     expect(s.providerStatus.value.bad).toBe("error");
     expect(s.providerError.value.bad).toMatch(/boom/);
     expect(s.providerStatus.value.ok).toBe("done");
-    expect(s.results.value.map((e) => e.id)).toContain("ok-1");
+    expect(s.results.value.map((e) => (e as unknown as FakeEntity).id)).toContain("ok-1");
   });
 });
 

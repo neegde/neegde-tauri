@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">75% </span>
+                <span class="strong">93.75% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>12/16</span>
+                <span class='fraction'>15/16</span>
             </div>
         
             
@@ -37,16 +37,16 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">73.33% </span>
+                <span class="strong">93.33% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>11/15</span>
+                <span class='fraction'>14/15</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">75% </span>
+                <span class="strong">93.75% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>12/16</span>
+                <span class='fraction'>15/16</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line medium'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -175,35 +175,33 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">76x</span>
+<span class="cline-any cline-yes">143x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">76x</span>
+<span class="cline-any cline-yes">143x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">138x</span>
+<span class="cline-any cline-yes">834x</span>
 <span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">60x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-yes">59x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-yes">435x</span>
+<span class="cline-any cline-yes">222x</span>
+<span class="cline-any cline-yes">41x</span>
+<span class="cline-any cline-yes">38x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">36x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">270x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">14x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -241,7 +239,9 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">61x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">175x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Abstract Track — base of the per-source class hierarchy.
@@ -278,8 +278,8 @@ export abstract class Track {
   get albumTitle(): string | null { return this.data.albumTitle ?? null; }
   get fileName(): string      { return this.data.fileName; }
   get size(): number | null   { return this.data.size; }
-  get <span class="fstat-no" title="function not covered" >bitrate(): number | null {</span> <span class="cstat-no" title="statement not covered" >return this.data.bitrate; }</span>
-  get <span class="fstat-no" title="function not covered" >duration(): number | null {</span> <span class="cstat-no" title="statement not covered" >return this.data.duration; }</span>
+  get bitrate(): number | null { return this.data.bitrate; }
+  get duration(): number | null { return this.data.duration; }
   get <span class="fstat-no" title="function not covered" >format(): string | null {</span> <span class="cstat-no" title="statement not covered" >return this.data.format; }</span>
 &nbsp;
   /** Source kind — the discriminator that drove subclass selection. */
@@ -291,7 +291,7 @@ export abstract class Track {
    * peek into `sources[0].raw` (SlskTrackRow peers count, debug logs).
    * Prefer dedicated accessors (`coverUrl()`, etc.) in new code.
    */
-  get <span class="fstat-no" title="function not covered" >sources(): readonly TrackSource[] {</span> <span class="cstat-no" title="statement not covered" >return this.data.sources; }</span>
+  get sources(): readonly TrackSource[] { return this.data.sources; }
 &nbsp;
   // ── Behavior (subclass-specific) ──────────────────────────────────────────
 &nbsp;
@@ -340,7 +340,7 @@ export abstract class Track {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T03:02:22.180Z
+                at 2026-04-23T03:59:10.840Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

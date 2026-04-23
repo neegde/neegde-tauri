@@ -55,7 +55,7 @@ describe("rutrackerProvider", () => {
       cover_data_url: null,
     });
     const snaps = await consume(rutrackerProvider.search("x", makeCtx()));
-    const flat = snaps[snaps.length - 1]!;
+    const flat = snaps[snaps.length - 1] as Array<{ id: string; type?: string; albumId?: string; trackIds?: string[]; title?: string; sources?: Array<{ kind: string }> }>;
     const album = flat.find((e) => e.type === "album");
     const tracks = flat.filter((e) => e.type === "track");
     expect(album?.title).toBe("Album");
@@ -81,7 +81,7 @@ describe("rutrackerProvider", () => {
     });
     const ctx = makeCtx();
     const snaps = await consume(rutrackerProvider.search("x", ctx));
-    const flat = snaps[snaps.length - 1]!;
+    const flat = snaps[snaps.length - 1] as Array<{ id: string; type?: string; albumId?: string; trackIds?: string[]; title?: string; sources?: Array<{ kind: string }> }>;
     expect(flat.some((e) => e.id?.includes("ok"))).toBe(true);
     expect(ctx.log).toHaveBeenCalledWith("rutracker", expect.stringMatching(/bad failed/));
   });
@@ -105,7 +105,7 @@ describe("rutrackerProvider", () => {
       cover_data_url: null,
     });
     const snaps = await consume(rutrackerProvider.search("x", makeCtx()));
-    const flat = snaps[snaps.length - 1]!;
+    const flat = snaps[snaps.length - 1] as Array<{ id: string; type?: string; albumId?: string; trackIds?: string[]; title?: string; sources?: Array<{ kind: string }> }>;
     expect(flat).toHaveLength(0);
   });
 });

@@ -84,8 +84,8 @@ describe("buildSlskTrackEntity", () => {
     expect(t?.sources?.[0]?.raw?.cover?.slsk_username).toBe("u");
   });
   it("null when missing username or filepath", () => {
-    expect(buildSlskTrackEntity({ username: "", filepath: "x", filename: "n" })).toBeNull();
-    expect(buildSlskTrackEntity({ username: "u", filepath: "", filename: "n" })).toBeNull();
+    expect(buildSlskTrackEntity({ username: "", filepath: "x", filename: "n", size: 0, artist: null, cover: null, albumTitle: "" })).toBeNull();
+    expect(buildSlskTrackEntity({ username: "u", filepath: "", filename: "n", size: 0, artist: null, cover: null, albumTitle: "" })).toBeNull();
   });
 });
 
@@ -94,7 +94,7 @@ describe("registerAndGetId", () => {
     expect(registerAndGetId(null)).toBeNull();
   });
   it("registers and returns id", () => {
-    const t = buildSlskTrackEntity({ username: "u", filepath: "f.mp3", filename: "f.mp3" });
+    const t = buildSlskTrackEntity({ username: "u", filepath: "f.mp3", filename: "f.mp3", size: 0, artist: null, cover: null, albumTitle: "" });
     const id = registerAndGetId(t);
     expect(id).toBe(t?.id);
     expect(getEntity(id!)).not.toBeNull();

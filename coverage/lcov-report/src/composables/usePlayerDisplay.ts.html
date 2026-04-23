@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">75% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/36</span>
+                <span class='fraction'>27/36</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">56.66% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/30</span>
+                <span class='fraction'>17/30</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/5</span>
+                <span class='fraction'>5/5</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/27</span>
+                <span class='fraction'>27/27</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -176,42 +176,42 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Title / artist / cover computeds for the player strip.
@@ -247,46 +247,46 @@ interface SlskMetaRecord {
   albumUrl?: string | null;
 }
 &nbsp;
-export function <span class="fstat-no" title="function not covered" >usePlayerDisplay(c</span>tx: {
+export function usePlayerDisplay(ctx: {
   track: ComputedRef&lt;Track | null&gt;;
   enrichedMeta: Ref&lt;EnrichedMeta | null&gt;;
 }) {
-  const <span class="cstat-no" title="statement not covered" >soulseekSearchMeta = computed&lt;SlskMetaRecord | null&gt;(<span class="fstat-no" title="function not covered" >() =&gt; {</span></span>
-    const t = <span class="cstat-no" title="statement not covered" >ctx.track.value;</span>
-<span class="cstat-no" title="statement not covered" >    if (!t || t.kind !== "soulseek") <span class="cstat-no" title="statement not covered" >return null;</span></span>
-<span class="cstat-no" title="statement not covered" >    return (slskMeta as Map&lt;string, SlskMetaRecord&gt;).get(t.id) ?? null;</span>
+  const soulseekSearchMeta = computed&lt;SlskMetaRecord | null&gt;(() =&gt; {
+    const t = ctx.track.value;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (!t || t.kind !== "soulseek") <span class="cstat-no" title="statement not covered" >return null;</span>
+    return (slskMeta as Map&lt;string, SlskMetaRecord&gt;).get(t.id) ?? null;
   });
 &nbsp;
-  const <span class="cstat-no" title="statement not covered" >currentArtist = computed&lt;string&gt;(<span class="fstat-no" title="function not covered" >() =&gt; {</span></span>
-    const t = <span class="cstat-no" title="statement not covered" >ctx.track.value;</span>
-<span class="cstat-no" title="statement not covered" >    if (soulseekSearchMeta.value?.artist) <span class="cstat-no" title="statement not covered" >return soulseekSearchMeta.value.artist;</span></span>
-    const enrArtist = <span class="cstat-no" title="statement not covered" >ctx.enrichedMeta.value?.artist;</span>
-<span class="cstat-no" title="statement not covered" >    if (enrArtist &amp;&amp; !isYearLike(String(enrArtist).trim())) <span class="cstat-no" title="statement not covered" >return enrArtist;</span></span>
-    const <span class="cstat-no" title="statement not covered" >parsed = parseArtistTitleFromTrackFilename(t?.fileName ?? "");</span>
-<span class="cstat-no" title="statement not covered" >    if (parsed.artist) <span class="cstat-no" title="statement not covered" >return parsed.artist;</span></span>
-<span class="cstat-no" title="statement not covered" >    return t?.artist ?? "";</span>
+  const currentArtist = computed&lt;string&gt;(() =&gt; {
+    const t = ctx.track.value;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (soulseekSearchMeta.value?.artist) <span class="cstat-no" title="statement not covered" >return soulseekSearchMeta.value.artist;</span>
+    const enrArtist = ctx.enrichedMeta.value?.artist;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (enrArtist &amp;&amp; <span class="branch-1 cbranch-no" title="branch not covered" >!isYearLike(String(enrArtist).trim())) <span class="cstat-no" title="statement not covered" >r</span>eturn enrArtist;</span>
+    const parsed = parseArtistTitleFromTrackFilename(t?.fileName ?? <span class="branch-1 cbranch-no" title="branch not covered" >"")</span>;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (parsed.artist) <span class="cstat-no" title="statement not covered" >return parsed.artist;</span>
+    return t?.artist ?? <span class="branch-1 cbranch-no" title="branch not covered" >"";</span>
   });
 &nbsp;
-  const <span class="cstat-no" title="statement not covered" >displayTitle = computed&lt;string&gt;(<span class="fstat-no" title="function not covered" >() =&gt; {</span></span>
-    const t = <span class="cstat-no" title="statement not covered" >ctx.track.value;</span>
-<span class="cstat-no" title="statement not covered" >    if (soulseekSearchMeta.value?.title) <span class="cstat-no" title="statement not covered" >return soulseekSearchMeta.value.title;</span></span>
-<span class="cstat-no" title="statement not covered" >    if (ctx.enrichedMeta.value?.title) <span class="cstat-no" title="statement not covered" >return ctx.enrichedMeta.value.title;</span></span>
-    const path = <span class="cstat-no" title="statement not covered" >t?.fileName ?? "";</span>
-    const { artist, title <span class="cstat-no" title="statement not covered" >} = parseArtistTitleFromTrackFilename(path);</span>
-<span class="cstat-no" title="statement not covered" >    if (artist) <span class="cstat-no" title="statement not covered" >return title;</span></span>
-<span class="cstat-no" title="statement not covered" >    return trackDisplayBasename(path);</span>
+  const displayTitle = computed&lt;string&gt;(() =&gt; {
+    const t = ctx.track.value;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (soulseekSearchMeta.value?.title) <span class="cstat-no" title="statement not covered" >return soulseekSearchMeta.value.title;</span>
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (ctx.enrichedMeta.value?.title) <span class="cstat-no" title="statement not covered" >return ctx.enrichedMeta.value.title;</span>
+    const path = t?.fileName ?? <span class="branch-1 cbranch-no" title="branch not covered" >"";</span>
+    const { artist, title } = parseArtistTitleFromTrackFilename(path);
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (artist) <span class="cstat-no" title="statement not covered" >return title;</span>
+    return trackDisplayBasename(path);
   });
 &nbsp;
   /** Enriched/slskMeta cover override; empty string = fall through to Track.coverUrl(). */
-  const <span class="cstat-no" title="statement not covered" >playerCoverOverride = computed&lt;string&gt;(<span class="fstat-no" title="function not covered" >() =&gt; {</span></span>
-    const e = <span class="cstat-no" title="statement not covered" >ctx.enrichedMeta.value?.coverUrl;</span>
-<span class="cstat-no" title="statement not covered" >    if (e) <span class="cstat-no" title="statement not covered" >return e;</span></span>
-    const sm = <span class="cstat-no" title="statement not covered" >soulseekSearchMeta.value;</span>
-<span class="cstat-no" title="statement not covered" >    if (sm?.coverUrl) <span class="cstat-no" title="statement not covered" >return sm.coverUrl;</span></span>
-<span class="cstat-no" title="statement not covered" >    return "";</span>
+  const playerCoverOverride = computed&lt;string&gt;(() =&gt; {
+    const e = ctx.enrichedMeta.value?.coverUrl;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (e) <span class="cstat-no" title="statement not covered" >return e;</span>
+    const sm = soulseekSearchMeta.value;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (sm?.coverUrl) <span class="cstat-no" title="statement not covered" >return sm.coverUrl;</span>
+    return "";
   });
 &nbsp;
-<span class="cstat-no" title="statement not covered" >  return { soulseekSearchMeta, currentArtist, displayTitle, playerCoverOverride };</span>
+  return { soulseekSearchMeta, currentArtist, displayTitle, playerCoverOverride };
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -295,7 +295,7 @@ export function <span class="fstat-no" title="function not covered" >usePlayerDi
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T03:02:22.180Z
+                at 2026-04-23T03:59:10.840Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

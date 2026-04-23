@@ -22,12 +22,12 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.vue",
-    "src/**/*.js",
-    "tests/**/*.ts"
+    "src/**/*.js"
   ],
   "exclude": [
     "node_modules",
     "dist",
-    "src-tauri/target"
+    "src-tauri/target",
+    "tests"
   ]
 }

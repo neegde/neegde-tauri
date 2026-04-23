@@ -17,7 +17,9 @@
     "tauri": "tauri",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:ui": "vitest --coverage --ui"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
