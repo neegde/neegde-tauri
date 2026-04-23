@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { reactive } from "vue";
+import { reactive, ref } from "vue";
 import { getMirror } from "./config.js";
 import { appDebugLog } from "../appDebugLog.js";
 
@@ -23,6 +23,61 @@ const pending = new Map();
 const _reactive = reactive(new Map());
 
 let totalBytes = 0;
+
+/**
+ * Auth state gate for Rutracker cover fetches.
+ *
+ * "unknown" — before `restoreSession` / login has resolved. Fetches wait here so
+ *             we don't spam the backend with "Необходимо войти" errors during
+ *             the startup race window.
+ * "in"      — user is authenticated; fetches proceed normally.
+ * "out"     — user is confirmed not logged in; fetches short-circuit to null
+ *             (no backend call, no negative-cache poisoning).
+ *
+ * @type {import("vue").Ref<"unknown" | "in" | "out">}
+ */
+const authState = ref("unknown");
+
+/**
+ * Counter bumped when auth transitions "out"/"unknown" → "in". CoverThumb
+ * watches this so its IntersectionObserver can be re-attached after a failed
+ * pre-auth render (the observer disconnects on first intersection and wouldn't
+ * otherwise retry once auth becomes available).
+ *
+ * @type {import("vue").Ref<number>}
+ */
+export const rutrackerCoverFetchEpoch = ref(0);
+
+/** Pending awaiters for the auth gate to leave "unknown". */
+let authGateWaiters = [];
+
+/**
+ * Update the current auth state gate.
+ *
+ * Arguments:
+ *     state: "unknown" | "in" | "out" — latest known Rutracker auth state.
+ */
+export function setRutrackerAuthState(state) {
+  const prev = authState.value;
+  if (prev === state) return;
+  authState.value = state;
+
+  if (state !== "unknown") {
+    const waiters = authGateWaiters;
+    authGateWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  if (state === "in" && prev !== "in") {
+    // Wake up CoverThumbs that gave up pre-auth so their observers re-attach.
+    rutrackerCoverFetchEpoch.value += 1;
+  }
+}
+
+function waitForAuthResolved() {
+  if (authState.value !== "unknown") return Promise.resolve();
+  return new Promise((resolve) => { authGateWaiters.push(resolve); });
+}
 
 function cacheKey(topicId) {
   return `${getMirror()}\n${String(topicId)}`;
@@ -105,14 +160,30 @@ export function clearRutrackerCoverCache() {
   totalBytes = 0;
 }
 
+/** True when the err message from backend means the call hit the auth gate. */
+function isNotLoggedInError(err) {
+  const m = String(err?.message || err || "");
+  return m.includes("Необходимо войти");
+}
+
 /**
  * Cover for grid: cache hit / in-flight dedup / network only once per topic per mirror.
- * @returns {Promise<string | null>}
+ *
+ * If the auth state is still "unknown" (startup race with `restoreSession`), the
+ * call awaits the gate so we don't poison the cache with null entries that
+ * would stick around long after the user actually logged in. If auth is "out",
+ * we short-circuit to null without touching the backend or the cache.
+ *
+ * Returns:
+ *     Promise resolving to a data-URL string or null when no cover is available.
  */
 export async function getRutrackerCoverDataUrl(topicId) {
   const key = cacheKey(topicId);
   const hit = touch(key);
   if (hit !== undefined) return hit;
+
+  await waitForAuthResolved();
+  if (authState.value !== "in") return null;
 
   let p = pending.get(key);
   if (!p) {
@@ -132,7 +203,11 @@ export async function getRutrackerCoverDataUrl(topicId) {
       })
       .catch((e) => {
         void appDebugLog("cover", `rutracker cover: error — topicId=${topicId} err=${String(e)}`);
-        rememberRutrackerCover(topicId, null);
+        // Do not negative-cache auth errors — the user may be about to log in,
+        // and we want the retry triggered by the CoverThumb epoch to succeed.
+        if (!isNotLoggedInError(e)) {
+          rememberRutrackerCover(topicId, null);
+        }
         return null;
       })
       .finally(() => {

@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { login, logout, restoreSession } from "../../rutracker/auth.js";
+import { login, loginViaWebview, logout, restoreSession } from "../../rutracker/auth.js";
 import { normalizeLoginStatus } from "../../rutracker/sessionStatus.js";
 import {
   getMirror,
@@ -234,12 +234,31 @@ const rtUsername = ref("");
 const rtPassword = ref("");
 const rtLoading  = ref(false);
 const rtError    = ref(null);
+const rtNeedsCaptcha = ref(false);
+const rtWebviewBusy  = ref(false);
+
+/**
+ * Heuristic: detect a CAPTCHA / Cloudflare error payload so we can surface
+ * the "login via embedded browser" fallback button.
+ *
+ * Arguments:
+ *     msg: Human-readable error message from backend.
+ *
+ * Returns:
+ *     `true` when the message mentions captcha in either language.
+ */
+function isCaptchaError(msg) {
+  if (!msg) return false;
+  const m = String(msg).toLowerCase();
+  return m.includes("captcha") || m.includes("каптч") || m.includes("капч");
+}
 
 async function handleRtLogin(e) {
   e.preventDefault();
   if (!rtUsername.value.trim() || !rtPassword.value) return;
   rtLoading.value = true;
   rtError.value   = null;
+  rtNeedsCaptcha.value = false;
   try {
     const result = await login(rtUsername.value.trim(), rtPassword.value);
     if (result.success) {
@@ -250,11 +269,42 @@ async function handleRtLogin(e) {
       avatarImgFailed.value = false;
     } else {
       rtError.value = result.error || "Ошибка входа";
+      rtNeedsCaptcha.value = isCaptchaError(result.error);
     }
   } catch (err) {
     rtError.value = "Нет соединения — проверьте зеркало и интернет";
   } finally {
     rtLoading.value = false;
+  }
+}
+
+/**
+ * Open the embedded WebView login window. Used as a fallback when the
+ * programmatic login is blocked by CAPTCHA / Cloudflare.
+ *
+ * Returns:
+ *     Nothing; resolved login state is propagated via the `login` emit.
+ */
+async function handleRtWebviewLogin() {
+  if (rtWebviewBusy.value) return;
+  rtWebviewBusy.value = true;
+  rtError.value = null;
+  try {
+    const result = await loginViaWebview();
+    if (result?.success) {
+      rtCredentialsHiddenUntilLogout.value = false;
+      emit("login", result.username, result.avatar_url || null);
+      rtUsername.value = "";
+      rtPassword.value = "";
+      avatarImgFailed.value = false;
+      rtNeedsCaptcha.value = false;
+    } else {
+      rtError.value = result?.error || "Вход через браузер не завершён";
+    }
+  } catch (err) {
+    rtError.value = String(err?.message || err);
+  } finally {
+    rtWebviewBusy.value = false;
   }
 }
 
@@ -872,11 +922,25 @@ async function confirmResetAchievements() {
               <button
                 class="login-btn"
                 type="submit"
-                :disabled="rtLoading || !rtUsername.trim() || !rtPassword"
+                :disabled="rtLoading || rtWebviewBusy || !rtUsername.trim() || !rtPassword"
               >
                 <span v-if="rtLoading" class="spinner" />
                 <template v-else>Войти в Rutracker</template>
               </button>
+              <button
+                v-if="rtNeedsCaptcha || rtWebviewBusy"
+                type="button"
+                class="login-btn login-btn--ghost"
+                :disabled="rtLoading || rtWebviewBusy"
+                @click="handleRtWebviewLogin"
+              >
+                <span v-if="rtWebviewBusy" class="spinner" />
+                <template v-else>Войти через встроенный браузер</template>
+              </button>
+              <p v-if="rtNeedsCaptcha && !rtWebviewBusy" class="rt-captcha-hint">
+                Сайт запросил проверку, что вход не автоматический — откроется окно браузера,
+                в котором нужно ввести логин/пароль и пройти проверку.
+              </p>
             </form>
           </template>
         </div>
@@ -1754,6 +1818,12 @@ async function confirmResetAchievements() {
 .rt-reconnect-msg {
   margin: 12px 0 0;
   font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.rt-captcha-hint {
+  margin: 2px 0 0;
+  font-size: 11px;
   color: var(--muted);
   line-height: 1.4;
 }

@@ -26,6 +26,8 @@ import {
   getTorrentDetails,
   filterRutrackerRowsWithPlayableAudio,
   prefetchTorrentDetails,
+  setRutrackerAuthState,
+  clearRutrackerCoverCache,
 } from "./rutracker/search.js";
 import {
   soulseekLogin,
@@ -53,6 +55,7 @@ import NavArrows       from "./components/shell/NavArrows.vue";
 import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 import AppSplash from "./components/shell/AppSplash.vue";
+import OnboardingDialog from "./components/shell/OnboardingDialog.vue";
 import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow, closeAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory, removeFromRecentHistory } from "./lib/recentHistory.js";
@@ -378,7 +381,24 @@ function applyEffectiveTheme(mode) {
   document.documentElement.setAttribute("data-theme", effective);
 }
 
-const restoringSession = ref(true);
+// ── Onboarding ────────────────────────────────────────────────────────────
+const ONBOARDING_DONE_KEY = "neegde.onboarding.v1.done";
+const isFirstLaunch = !localStorage.getItem(ONBOARDING_DONE_KEY);
+
+// On first launch we skip the loading splash entirely — otherwise its typewriter
+// animation flashes for a moment before being replaced by the onboarding dialog.
+const restoringSession = ref(!isFirstLaunch);
+const showOnboarding = ref(isFirstLaunch);
+
+function dismissOnboarding() {
+  showOnboarding.value = false;
+  localStorage.setItem(ONBOARDING_DONE_KEY, "1");
+}
+
+function handleOnboardingSlskConnected(username) {
+  slskConnected.value = true;
+  slskUsername.value  = username || null;
+}
 
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
 const RESTORE_UI_MAX_MS = 5_000;
@@ -401,8 +421,17 @@ onMounted(async () => {
     await resolveMirrorIfNeeded();
     const raw = await restoreSession();
     const s = normalizeLoginStatus(raw);
-    if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
-  } catch (_) { /* offline or no saved session — stay logged out */ }
+    if (s.loggedIn) {
+      handleLogin(s.username, s.avatarUrl);
+    } else {
+      // Explicitly resolve the cover-fetch auth gate so thumbs that were
+      // waiting can short-circuit to null instead of hanging forever.
+      setRutrackerAuthState("out");
+    }
+  } catch (_) {
+    // Offline / no saved session — treat as logged out so cover fetches stop waiting.
+    setRutrackerAuthState("out");
+  }
   try {
     await syncRtHttpProxyCacheFromBackend();
   } catch (_) { /* нет Tauri API (превью в браузере) */ }
@@ -417,6 +446,11 @@ onMounted(async () => {
   }
   window.clearTimeout(unblockTimer);
   restoringSession.value = false;
+
+  // Debug: force-show onboarding from the browser console or settings
+  if (import.meta.env.DEV) {
+    window.__neegde_dev_show_onboarding = () => { showOnboarding.value = true; };
+  }
 
   // Deep link: app already running (neegde://torrent/...)
   onOpenUrl((urls) => { if (urls?.[0]) void handleDeepLink(urls[0]); });
@@ -961,6 +995,7 @@ function handleLogin(username, avatarUrl) {
   rtLoggedIn.value  = true;
   rtUsername.value  = username || null;
   rtAvatarUrl.value = avatarUrl || null;
+  setRutrackerAuthState("in");
 }
 
 /** @param {{ forgetAccount?: boolean } | void} evt — forgetAccount: явный выход (настройки), сбрасываем «раньше входили». */
@@ -970,6 +1005,8 @@ function handleLogout(evt) {
   rtLoggedIn.value   = false;
   rtUsername.value   = null;
   rtAvatarUrl.value  = null;
+  setRutrackerAuthState("out");
+  clearRutrackerCoverCache();
   homeSearchActive.value = false;
   searchAlbumResults.value = [];
   searchTrackResults.value = [];
@@ -2951,6 +2988,17 @@ function onMouseSideButtonUp(e) {
     />
 
     <AppSplash :visible="restoringSession" />
+
+    <OnboardingDialog
+      :visible="showOnboarding"
+      :rt-logged-in="rtLoggedIn"
+      :rt-username="rtUsername"
+      :slsk-connected="slskConnected"
+      :slsk-username="slskUsername"
+      @close="dismissOnboarding"
+      @rt-connected="handleLogin"
+      @slsk-connected="handleOnboardingSlskConnected"
+    />
 
     <AchievementToast
       v-model:open="achievementToastOpen"

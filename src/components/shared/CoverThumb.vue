@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive } from "../../rutracker/search.js";
+import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, rutrackerCoverFetchEpoch } from "../../rutracker/search.js";
 import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
 import { appDebugLog } from "../../appDebugLog.js";
@@ -118,7 +118,16 @@ function setupCover() {
 
 onMounted(setupCover);
 watch(
-  () => [props.torrentId, props.source, props.magnet, props.coverFileIdx, props.overrideCoverUrl],
+  () => [
+    props.torrentId,
+    props.source,
+    props.magnet,
+    props.coverFileIdx,
+    props.overrideCoverUrl,
+    // Re-run setupCover when Rutracker auth becomes available after a startup
+    // race — otherwise the observer stays disconnected and the cover never loads.
+    rutrackerCoverFetchEpoch.value,
+  ],
   () => setupCover()
 );
 onUnmounted(disconnectObserver);

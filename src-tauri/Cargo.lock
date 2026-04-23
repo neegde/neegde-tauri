@@ -2974,6 +2974,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cmake",
+ "cookie",
  "dashmap",
  "discord-rich-presence",
  "encoding_rs",

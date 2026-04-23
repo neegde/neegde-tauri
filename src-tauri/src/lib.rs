@@ -213,6 +213,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             rutracker::rutracker_login,
+            rutracker::rutracker_login_via_webview,
             rutracker::rutracker_logout,
             rutracker::rutracker_restore_session,
             rutracker::rutracker_status,
@@ -222,6 +223,7 @@ pub fn run() {
             rutracker::rutracker_topic_has_playable_audio,
             rutracker::rutracker_download_torrent_file_b64,
             rutracker::rutracker_pick_mirror,
+            rutracker::rutracker_check_connectivity,
             rutracker::rutracker_get_http_proxy,
             rutracker::rutracker_set_http_proxy,
             rutracker::rutracker_probe_http_proxy,
