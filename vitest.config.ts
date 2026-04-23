@@ -49,7 +49,6 @@ export default defineConfig({
         "src/audio/equalizerGraph.ts",
         "src/audio/equalizerConfig.ts",
         "src/audio/equalizerState.ts",
-        "src/audio/mediaSession.ts",
         "src/components/player/PlayerVisualizerModal.vue",
         "src/components/player/visualizerPresets.ts",
         "src/composables/usePlayerEqualizer.ts",
