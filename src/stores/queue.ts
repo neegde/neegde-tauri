@@ -6,11 +6,14 @@
  * Track (and therefore the URL, cover, refs, …) is resolved through the
  * entities registry / trackCache.
  *
- * Persistence is debounced via the `queue` snapshot module — caller calls
- * mutator methods here, store writes to storage.
+ * Core behaviour lives in `class PlaybackQueue` — bounds checks, pos fix-ups,
+ * repeat/shuffle mode all sit as methods with invariants enforced internally.
+ * A module-level singleton (`playbackQueue`) is exported, and every named
+ * function export below is a thin delegate to it so existing call sites keep
+ * working verbatim.
  */
 
-import { ref, computed } from "vue";
+import { ref, computed, type Ref, type ComputedRef } from "vue";
 import type { Track } from "../track/Track.js";
 import { getTrack, registerEntity, entitiesVersion } from "./entities.js";
 import { putTrack, hydrateTrack } from "../persistence/trackCache.js";
@@ -31,172 +34,228 @@ function loadShuffleOn(): boolean {
   try { return localStorage.getItem(SHUFFLE_STORAGE_KEY) === "1"; } catch { return false; }
 }
 
-// ── State ───────────────────────────────────────────────────────────────────
+// ── Class ───────────────────────────────────────────────────────────────────
 
-export const queueIds = ref<string[]>([]);
-export const queuePos = ref<number>(0);
-export const repeatMode = ref<RepeatMode>(loadRepeatMode());
-export const shuffleOn = ref<boolean>(loadShuffleOn());
+export class PlaybackQueue {
+  readonly ids: Ref<string[]> = ref([]);
+  readonly pos: Ref<number> = ref(0);
+  readonly repeatMode: Ref<RepeatMode> = ref(loadRepeatMode());
+  readonly shuffleOn: Ref<boolean> = ref(loadShuffleOn());
 
-// ── Derived ─────────────────────────────────────────────────────────────────
+  readonly nowPlaying: ComputedRef<Track | null>;
+  readonly next: ComputedRef<Track | null>;
+  readonly secondNext: ComputedRef<Track | null>;
+  readonly hasPrev: ComputedRef<boolean>;
+  readonly hasNext: ComputedRef<boolean>;
 
-export const nowPlayingTrack = computed<Track | null>(() => {
-  entitiesVersion.value;
-  const id = queueIds.value[queuePos.value];
-  if (!id) return null;
-  return getTrack(id) ?? hydrateTrack(id);
-});
+  constructor(private readonly persistFn: (s: QueueSnapshot) => void = saveQueueSnapshot) {
+    this.nowPlaying = computed(() => {
+      entitiesVersion.value;
+      const id = this.ids.value[this.pos.value];
+      if (!id) return null;
+      return getTrack(id) ?? hydrateTrack(id);
+    });
 
-export const nextTrack = computed<Track | null>(() => {
-  entitiesVersion.value;
-  const ids = queueIds.value;
-  const len = ids.length;
-  if (len === 0) return null;
-  const pos = queuePos.value;
-  let nextId: string | undefined;
-  if (pos < len - 1) nextId = ids[pos + 1];
-  else if (repeatMode.value === "all") nextId = ids[0];
-  if (!nextId) return null;
-  return getTrack(nextId) ?? hydrateTrack(nextId);
-});
+    this.next = computed(() => {
+      entitiesVersion.value;
+      const ids = this.ids.value;
+      const len = ids.length;
+      if (len === 0) return null;
+      const pos = this.pos.value;
+      let nextId: string | undefined;
+      if (pos < len - 1) nextId = ids[pos + 1];
+      else if (this.repeatMode.value === "all") nextId = ids[0];
+      if (!nextId) return null;
+      return getTrack(nextId) ?? hydrateTrack(nextId);
+    });
 
-export const secondNextTrack = computed<Track | null>(() => {
-  entitiesVersion.value;
-  const ids = queueIds.value;
-  const len = ids.length;
-  if (len < 2) return null;
-  const pos = queuePos.value;
-  let id: string | undefined;
-  if (pos < len - 2) id = ids[pos + 2];
-  else if (pos === len - 2 && repeatMode.value === "all") id = ids[0];
-  else if (repeatMode.value === "all") id = len > 2 ? ids[1] : ids[0];
-  if (!id) return null;
-  return getTrack(id) ?? hydrateTrack(id);
-});
+    this.secondNext = computed(() => {
+      entitiesVersion.value;
+      const ids = this.ids.value;
+      const len = ids.length;
+      if (len < 2) return null;
+      const pos = this.pos.value;
+      let id: string | undefined;
+      if (pos < len - 2) id = ids[pos + 2];
+      else if (pos === len - 2 && this.repeatMode.value === "all") id = ids[0];
+      else if (this.repeatMode.value === "all") id = len > 2 ? ids[1] : ids[0];
+      if (!id) return null;
+      return getTrack(id) ?? hydrateTrack(id);
+    });
 
-export const hasPrev = computed<boolean>(() => {
-  const len = queueIds.value.length;
-  if (len === 0) return false;
-  if (queuePos.value > 0) return true;
-  return repeatMode.value === "all" && len > 1;
-});
+    this.hasPrev = computed(() => {
+      const len = this.ids.value.length;
+      if (len === 0) return false;
+      if (this.pos.value > 0) return true;
+      return this.repeatMode.value === "all" && len > 1;
+    });
 
-export const hasNext = computed<boolean>(() => {
-  const len = queueIds.value.length;
-  if (len === 0) return false;
-  if (queuePos.value < len - 1) return true;
-  return repeatMode.value === "all";
-});
-
-// ── Persistence sync ───────────────────────────────────────────────────────
-
-function persist(): void {
-  saveQueueSnapshot({ trackIds: queueIds.value, pos: queuePos.value });
-}
-
-// ── Mutators ────────────────────────────────────────────────────────────────
-
-function registerAll(tracks: Track[]): string[] {
-  const ids: string[] = [];
-  for (const t of tracks) {
-    if (!t?.id) continue;
-    registerEntity(t);
-    putTrack(t);
-    ids.push(t.id);
+    this.hasNext = computed(() => {
+      const len = this.ids.value.length;
+      if (len === 0) return false;
+      if (this.pos.value < len - 1) return true;
+      return this.repeatMode.value === "all";
+    });
   }
-  return ids;
+
+  // ── Private helpers ──────────────────────────────────────────────────────
+
+  private persist(): void {
+    this.persistFn({ trackIds: this.ids.value, pos: this.pos.value });
+  }
+
+  private registerAll(tracks: Track[]): string[] {
+    const ids: string[] = [];
+    for (const t of tracks) {
+      if (!t?.id) continue;
+      registerEntity(t);
+      putTrack(t);
+      ids.push(t.id);
+    }
+    return ids;
+  }
+
+  // ── Mutators ─────────────────────────────────────────────────────────────
+
+  replace(tracks: Track[], startIndex = 0): void {
+    this.ids.value = this.registerAll(tracks);
+    this.pos.value = Math.max(0, Math.min(startIndex, this.ids.value.length - 1));
+    this.persist();
+  }
+
+  enqueueTrack(track: Track): void {
+    if (!track?.id) return;
+    registerEntity(track);
+    putTrack(track);
+    this.ids.value = [...this.ids.value, track.id];
+    this.persist();
+  }
+
+  enqueueTracks(tracks: Track[]): void {
+    if (!tracks?.length) return;
+    const newIds = this.registerAll(tracks);
+    this.ids.value = [...this.ids.value, ...newIds];
+    this.persist();
+  }
+
+  playTrackNow(track: Track): void {
+    this.replace([track], 0);
+  }
+
+  removeAt(idx: number): void {
+    const len = this.ids.value.length;
+    if (idx < 0 || idx >= len) return;
+    const next = this.ids.value.slice();
+    next.splice(idx, 1);
+    this.ids.value = next;
+    if (idx < this.pos.value) this.pos.value -= 1;
+    else if (idx === this.pos.value) this.pos.value = Math.min(this.pos.value, Math.max(0, next.length - 1));
+    this.persist();
+  }
+
+  moveItem(from: number, to: number): void {
+    const len = this.ids.value.length;
+    if (from === to || from < 0 || from >= len || to < 0 || to >= len) return;
+    const next = this.ids.value.slice();
+    const [id] = next.splice(from, 1);
+    if (id != null) next.splice(to, 0, id);
+    this.ids.value = next;
+    const pos = this.pos.value;
+    if (pos === from) this.pos.value = to;
+    else if (from < pos && to >= pos) this.pos.value = pos - 1;
+    else if (from > pos && to <= pos) this.pos.value = pos + 1;
+    this.persist();
+  }
+
+  clear(): void {
+    this.ids.value = [];
+    this.pos.value = 0;
+    this.persist();
+  }
+
+  jumpTo(idx: number): void {
+    if (idx < 0 || idx >= this.ids.value.length) return;
+    this.pos.value = idx;
+    this.persist();
+  }
+
+  advance(): void {
+    const len = this.ids.value.length;
+    if (len === 0) return;
+    if (this.pos.value < len - 1) this.pos.value += 1;
+    else if (this.repeatMode.value === "all") this.pos.value = 0;
+    this.persist();
+  }
+
+  rewind(): void {
+    const len = this.ids.value.length;
+    if (len === 0) return;
+    if (this.pos.value > 0) this.pos.value -= 1;
+    else if (this.repeatMode.value === "all" && len > 1) this.pos.value = len - 1;
+    this.persist();
+  }
+
+  setRepeat(mode: RepeatMode): void {
+    this.repeatMode.value = mode;
+    try { localStorage.setItem(REPEAT_STORAGE_KEY, mode); } catch { /* ignore */ }
+  }
+
+  toggleShuffle(): void {
+    this.shuffleOn.value = !this.shuffleOn.value;
+    try { localStorage.setItem(SHUFFLE_STORAGE_KEY, this.shuffleOn.value ? "1" : "0"); } catch { /* ignore */ }
+  }
+
+  seedFromSnapshot(s: QueueSnapshot): void {
+    this.ids.value = s.trackIds;
+    this.pos.value = Math.max(0, Math.min(s.pos, Math.max(0, s.trackIds.length - 1)));
+  }
+
+  snapshot(): QueueSnapshot {
+    return { trackIds: this.ids.value.slice(), pos: this.pos.value };
+  }
 }
 
-export function replaceQueue(tracks: Track[], startIndex = 0): void {
-  queueIds.value = registerAll(tracks);
-  queuePos.value = Math.max(0, Math.min(startIndex, queueIds.value.length - 1));
-  persist();
-}
+// ── Singleton + back-compat named exports ────────────────────────────────────
 
-export function enqueueTrack(track: Track): void {
-  if (!track?.id) return;
-  registerEntity(track);
-  putTrack(track);
-  queueIds.value = [...queueIds.value, track.id];
-  persist();
-}
+export const playbackQueue = new PlaybackQueue();
 
-export function enqueueTracks(tracks: Track[]): void {
-  if (!tracks?.length) return;
-  const newIds = registerAll(tracks);
-  queueIds.value = [...queueIds.value, ...newIds];
-  persist();
-}
+// Reactive refs — direct handles so existing `.value` writers still work.
+export const queueIds = playbackQueue.ids;
+export const queuePos = playbackQueue.pos;
+export const repeatMode = playbackQueue.repeatMode;
+export const shuffleOn = playbackQueue.shuffleOn;
 
-export function playTrackNow(track: Track): void {
-  replaceQueue([track], 0);
-}
+// Computed refs
+export const nowPlayingTrack = playbackQueue.nowPlaying;
+export const nextTrack = playbackQueue.next;
+export const secondNextTrack = playbackQueue.secondNext;
+export const hasPrev = playbackQueue.hasPrev;
+export const hasNext = playbackQueue.hasNext;
 
-export function removeAt(idx: number): void {
-  const len = queueIds.value.length;
-  if (idx < 0 || idx >= len) return;
-  const next = queueIds.value.slice();
-  next.splice(idx, 1);
-  queueIds.value = next;
-  if (idx < queuePos.value) queuePos.value -= 1;
-  else if (idx === queuePos.value) queuePos.value = Math.min(queuePos.value, Math.max(0, next.length - 1));
-  persist();
-}
-
-export function moveItem(from: number, to: number): void {
-  const len = queueIds.value.length;
-  if (from === to || from < 0 || from >= len || to < 0 || to >= len) return;
-  const next = queueIds.value.slice();
-  const [id] = next.splice(from, 1);
-  if (id != null) next.splice(to, 0, id);
-  queueIds.value = next;
-  const pos = queuePos.value;
-  if (pos === from) queuePos.value = to;
-  else if (from < pos && to >= pos) queuePos.value = pos - 1;
-  else if (from > pos && to <= pos) queuePos.value = pos + 1;
-  persist();
-}
-
-export function clear(): void {
-  queueIds.value = [];
-  queuePos.value = 0;
-  persist();
-}
-
-export function jumpTo(idx: number): void {
-  if (idx < 0 || idx >= queueIds.value.length) return;
-  queuePos.value = idx;
-  persist();
-}
-
-export function next(): void {
-  const len = queueIds.value.length;
-  if (len === 0) return;
-  if (queuePos.value < len - 1) queuePos.value += 1;
-  else if (repeatMode.value === "all") queuePos.value = 0;
-  persist();
-}
-
-export function prev(): void {
-  const len = queueIds.value.length;
-  if (len === 0) return;
-  if (queuePos.value > 0) queuePos.value -= 1;
-  else if (repeatMode.value === "all" && len > 1) queuePos.value = len - 1;
-  persist();
-}
-
-export function setRepeat(mode: RepeatMode): void {
-  repeatMode.value = mode;
-  try { localStorage.setItem(REPEAT_STORAGE_KEY, mode); } catch { /* ignore */ }
-}
-
-export function toggleShuffle(): void {
-  shuffleOn.value = !shuffleOn.value;
-  try { localStorage.setItem(SHUFFLE_STORAGE_KEY, shuffleOn.value ? "1" : "0"); } catch { /* ignore */ }
-}
-
-/** Populate from persistence snapshot on boot. */
-export function seedQueueFromSnapshot(s: QueueSnapshot): void {
-  queueIds.value = s.trackIds;
-  queuePos.value = Math.max(0, Math.min(s.pos, Math.max(0, s.trackIds.length - 1)));
-}
+// Mutators (thin delegates)
+export const replaceQueue = (tracks: Track[], startIndex = 0): void =>
+  playbackQueue.replace(tracks, startIndex);
+export const enqueueTrack = (track: Track): void =>
+  playbackQueue.enqueueTrack(track);
+export const enqueueTracks = (tracks: Track[]): void =>
+  playbackQueue.enqueueTracks(tracks);
+export const playTrackNow = (track: Track): void =>
+  playbackQueue.playTrackNow(track);
+export const removeAt = (idx: number): void =>
+  playbackQueue.removeAt(idx);
+export const moveItem = (from: number, to: number): void =>
+  playbackQueue.moveItem(from, to);
+export const clear = (): void =>
+  playbackQueue.clear();
+export const jumpTo = (idx: number): void =>
+  playbackQueue.jumpTo(idx);
+export const next = (): void =>
+  playbackQueue.advance();
+export const prev = (): void =>
+  playbackQueue.rewind();
+export const setRepeat = (mode: RepeatMode): void =>
+  playbackQueue.setRepeat(mode);
+export const toggleShuffle = (): void =>
+  playbackQueue.toggleShuffle();
+export const seedQueueFromSnapshot = (s: QueueSnapshot): void =>
+  playbackQueue.seedFromSnapshot(s);
