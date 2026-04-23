@@ -7,13 +7,17 @@
  * Album itself. Replaces TorrentView for the search-album-click path.
  */
 
-import { ref, shallowRef, computed } from "vue";
+import { computed } from "vue";
 import type { Track } from "../../track/Track.js";
 import type { AlbumData } from "../../stores/entities.js";
 import { getTrack, entitiesVersion } from "../../stores/entities.js";
 import TrackCover from "../shared/TrackCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
+import {
+  useTrackContextMenu,
+  type CtxActionDef,
+} from "../../composables/useTrackContextMenu.js";
 import {
   trackDisplayBasename,
   audioFormatLabel,
@@ -77,22 +81,8 @@ const artistLabel = computed<string>(() => {
 });
 
 // ── Context menu ───────────────────────────────────────────────────────────
-const ctxOpen = ref(false);
-const ctxX = ref(0);
-const ctxY = ref(0);
-const ctxTrack = shallowRef<Track | null>(null);
 
-function openTrackCtx(e: MouseEvent, t: Track): void {
-  e.preventDefault();
-  ctxX.value = e.clientX;
-  ctxY.value = e.clientY;
-  ctxTrack.value = t;
-  ctxOpen.value = true;
-}
-
-const ctxActions = computed(() => {
-  const t = ctxTrack.value;
-  if (!t) return [];
+function albumTrackActions(t: Track): CtxActionDef[] {
   const srcLabel = t.kind === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
   const isLiked = props.likedTrackIds.has(t.id);
   return [
@@ -105,18 +95,26 @@ const ctxActions = computed(() => {
     { id: "download", label: "Скачать",    icon: "download", disabled: !t.hasPlaybackIdentity() },
     { id: "source",   label: srcLabel,     icon: "source" },
   ];
-});
-
-function onCtxAction(id: string): void {
-  const t = ctxTrack.value;
-  if (!t) return;
-  if (id === "play")     emit("play-track", t);
-  if (id === "queue")    emit("add-to-queue", t);
-  if (id === "like")     emit("toggle-like-track", t);
-  if (id === "playlist") emit("add-to-playlist", t);
-  if (id === "download") emit("download-track", t);
-  if (id === "source")   emit("open-track-source", t);
 }
+
+const {
+  ctxOpen,
+  ctxX,
+  ctxY,
+  ctxActions,
+  openTrackCtx,
+  onCtxAction,
+} = useTrackContextMenu({
+  actionsFor: albumTrackActions,
+  onAction: (id, t) => {
+    if (id === "play")     emit("play-track", t);
+    if (id === "queue")    emit("add-to-queue", t);
+    if (id === "like")     emit("toggle-like-track", t);
+    if (id === "playlist") emit("add-to-playlist", t);
+    if (id === "download") emit("download-track", t);
+    if (id === "source")   emit("open-track-source", t);
+  },
+});
 
 // ── Row helpers ────────────────────────────────────────────────────────────
 function isNowPlaying(t: Track): boolean {

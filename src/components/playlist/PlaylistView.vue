@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed } from "vue";
+import { ref, computed } from "vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import TrackCover from "../shared/TrackCover.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { trackDisplayBasename } from "../../lib/utils.js";
 import { Track } from "../../track/Track.js";
 import type { Playlist } from "../../playlist/Playlist.js";
+import {
+  useTrackContextMenu,
+  libraryTrackActions,
+} from "../../composables/useTrackContextMenu.js";
 
 const props = defineProps<{
   playlist: Playlist;
@@ -55,41 +59,22 @@ const firstTrack = computed<Track | null>(() => props.tracks[0] ?? null);
 
 // ── Context menu ─────────────────────────────────────────────────────────────
 
-const ctxOpen = ref(false);
-const ctxX = ref(0);
-const ctxY = ref(0);
-const ctxTrack = shallowRef<Track | null>(null);
-
-function openTrackCtx(e: MouseEvent, track: Track): void {
-  e.preventDefault();
-  ctxX.value = e.clientX;
-  ctxY.value = e.clientY;
-  ctxTrack.value = track;
-  ctxOpen.value = true;
-}
-
-const playlistCtxActions = computed(() => {
-  const t = ctxTrack.value;
-  if (!t) return [];
-  const srcLabel = t.kind === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
-  const canDownload = t.hasPlaybackIdentity();
-  return [
-    { id: "queue", label: "В очередь", icon: "queue" },
-    { id: "playlist", label: "В плейлист", icon: "playlist" },
-    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload },
-    { id: "divider" },
-    { id: "source", label: srcLabel, icon: "source" },
-  ];
+const {
+  ctxOpen,
+  ctxX,
+  ctxY,
+  ctxActions: playlistCtxActions,
+  openTrackCtx,
+  onCtxAction,
+} = useTrackContextMenu({
+  actionsFor: libraryTrackActions,
+  onAction: (id, t) => {
+    if (id === "queue") emit("add-to-queue", t);
+    if (id === "playlist") emit("add-to-playlist", t);
+    if (id === "download") emit("download-track", t);
+    if (id === "source") emit("open-track-source", t);
+  },
 });
-
-function onCtxAction(id: string): void {
-  const t = ctxTrack.value;
-  if (!t) return;
-  if (id === "queue") emit("add-to-queue", t);
-  if (id === "playlist") emit("add-to-playlist", t);
-  if (id === "download") emit("download-track", t);
-  if (id === "source") emit("open-track-source", t);
-}
 </script>
 
 <template src="./PlaylistView.html"></template>

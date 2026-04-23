@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">98.43% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>63/64</span>
+                <span class='fraction'>49/49</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">90.19% </span>
+                <span class="strong">91.48% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>46/51</span>
+                <span class='fraction'>43/47</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>11/11</span>
+                <span class='fraction'>10/10</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>52/52</span>
+                <span class='fraction'>39/39</span>
             </div>
         
             
@@ -198,9 +198,11 @@
 <a name='L133'></a><a href='#L133'>133</a>
 <a name='L134'></a><a href='#L134'>134</a>
 <a name='L135'></a><a href='#L135'>135</a>
-<a name='L136'></a><a href='#L136'>136</a>
-<a name='L137'></a><a href='#L137'>137</a>
-<a name='L138'></a><a href='#L138'>138</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L136'></a><a href='#L136'>136</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -279,25 +281,11 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">29x</span>
-<span class="cline-any cline-yes">29x</span>
-<span class="cline-any cline-yes">29x</span>
-<span class="cline-any cline-yes">29x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">8x</span>
-<span class="cline-any cline-yes">8x</span>
-<span class="cline-any cline-yes">8x</span>
-<span class="cline-any cline-yes">8x</span>
-<span class="cline-any cline-yes">8x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">29x</span>
-<span class="cline-any cline-yes">32x</span>
-<span class="cline-any cline-yes">32x</span>
 <span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">32x</span>
-<span class="cline-any cline-yes">32x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -308,6 +296,15 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">29x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">6x</span>
@@ -316,8 +313,7 @@
 <span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -346,13 +342,17 @@
  * Album itself. Replaces TorrentView for the search-album-click path.
  */
 &nbsp;
-import { ref, shallowRef, computed } from "vue";
+import { computed } from "vue";
 import type { Track } from "../../track/Track.js";
 import type { AlbumData } from "../../stores/entities.js";
 import { getTrack, entitiesVersion } from "../../stores/entities.js";
 import TrackCover from "../shared/TrackCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
+import {
+  useTrackContextMenu,
+  type CtxActionDef,
+} from "../../composables/useTrackContextMenu.js";
 import {
   trackDisplayBasename,
   audioFormatLabel,
@@ -416,22 +416,8 @@ const artistLabel = computed&lt;string&gt;(() =&gt; {
 });
 &nbsp;
 // ── Context menu ───────────────────────────────────────────────────────────
-const ctxOpen = ref(false);
-const ctxX = ref(0);
-const ctxY = ref(0);
-const ctxTrack = shallowRef&lt;Track | null&gt;(null);
 &nbsp;
-function openTrackCtx(e: MouseEvent, t: Track): void {
-  e.preventDefault();
-  ctxX.value = e.clientX;
-  ctxY.value = e.clientY;
-  ctxTrack.value = t;
-  ctxOpen.value = true;
-}
-&nbsp;
-const ctxActions = computed(() =&gt; {
-  const t = ctxTrack.value;
-  if (!t) return [];
+function albumTrackActions(t: Track): CtxActionDef[] {
   const srcLabel = t.kind === "soulseek" ? "Источник (SoulSeek)" : <span class="branch-1 cbranch-no" title="branch not covered" >"Источник (Torrent)";</span>
   const isLiked = props.likedTrackIds.has(t.id);
   return [
@@ -444,18 +430,26 @@ const ctxActions = computed(() =&gt; {
     { id: "download", label: "Скачать",    icon: "download", disabled: !t.hasPlaybackIdentity() },
     { id: "source",   label: srcLabel,     icon: "source" },
   ];
-});
-&nbsp;
-function onCtxAction(id: string): void {
-  const t = ctxTrack.value;
-  <span class="missing-if-branch" title="if path not taken" >I</span>if (!t) <span class="cstat-no" title="statement not covered" >return;</span>
-  if (id === "play")     emit("play-track", t);
-  if (id === "queue")    emit("add-to-queue", t);
-  if (id === "like")     emit("toggle-like-track", t);
-  if (id === "playlist") emit("add-to-playlist", t);
-  if (id === "download") emit("download-track", t);
-  if (id === "source")   emit("open-track-source", t);
 }
+&nbsp;
+const {
+  ctxOpen,
+  ctxX,
+  ctxY,
+  ctxActions,
+  openTrackCtx,
+  onCtxAction,
+} = useTrackContextMenu({
+  actionsFor: albumTrackActions,
+  onAction: (id, t) =&gt; {
+    if (id === "play")     emit("play-track", t);
+    if (id === "queue")    emit("add-to-queue", t);
+    if (id === "like")     emit("toggle-like-track", t);
+    if (id === "playlist") emit("add-to-playlist", t);
+    if (id === "download") emit("download-track", t);
+    if (id === "source")   emit("open-track-source", t);
+  },
+});
 &nbsp;
 // ── Row helpers ────────────────────────────────────────────────────────────
 function isNowPlaying(t: Track): boolean {
@@ -481,7 +475,7 @@ function displayTitle(t: Track): string {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T20:50:24.375Z
+                at 2026-04-23T20:58:25.066Z
             </div>
         <script src="../../../prettify.js"></script>
         <script>
