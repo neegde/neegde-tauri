@@ -64,7 +64,6 @@ export default defineConfig({
         // Torrent export paths — Tauri IPC passthrough, exercised integration-only.
         "src/torrent/torrentExport.ts",
         "src/torrent/torrentSession.ts",
-        "src/torrent/torrentImageCache.ts",
         // HTML template partials — compiled into .vue SFCs, already covered.
         "src/**/*.html",
         // CSS, assets.
