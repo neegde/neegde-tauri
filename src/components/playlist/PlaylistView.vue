@@ -1,65 +1,66 @@
-<script setup>
-import { ref, computed } from "vue";
+<script setup lang="ts">
+import { ref, shallowRef, computed } from "vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
-import CoverThumb from "../shared/CoverThumb.vue";
+import TrackCover from "../shared/TrackCover.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { trackDisplayBasename } from "../../lib/utils.js";
+import { Track } from "../../track/Track.js";
+import type { PlaylistSnapshot } from "../../persistence/playlists.js";
 
-const props = defineProps({
-  playlist:      { type: Object,  required: true },
-  nowPlaying:    { type: Object,  default: null },
-  playerPlaying: { type: Boolean, default: false },
-});
+const props = defineProps<{
+  playlist: PlaylistSnapshot;
+  tracks: Track[];
+  nowPlayingId: string | null;
+  playerPlaying: boolean;
+}>();
 
-const emit = defineEmits([
-  "play",              // startIdx
-  "remove-track",      // { magnet, fileIdx }
-  "delete",
-  "rename",            // newName
-  "add-to-queue",
-  "add-to-playlist",
-  "open-track-source",
-  "download-track",
-  "download-playlist", // all downloadable tracks
-]);
+const emit = defineEmits<{
+  "play": [startIdx: number];
+  "remove-track": [trackId: string];
+  "delete": [];
+  "rename": [newName: string];
+  "add-to-queue": [track: Track];
+  "add-to-playlist": [track: Track];
+  "open-track-source": [track: Track];
+  "download-track": [track: Track];
+  "download-playlist": [];
+}>();
 
-// ── Rename ────────────────────────────────────────────────────────────────────
+// ── Rename ───────────────────────────────────────────────────────────────────
+
 const renaming = ref(false);
 const renameVal = ref("");
-const renameInputRef = ref(null);
+const renameInputRef = ref<HTMLInputElement | null>(null);
 
-function startRename() {
-  renameVal.value = props.playlist.name;
+function startRename(): void {
+  renameVal.value = props.playlist.title;
   renaming.value = true;
   setTimeout(() => renameInputRef.value?.focus(), 0);
 }
 
-function commitRename() {
+function commitRename(): void {
   renaming.value = false;
   const v = renameVal.value.trim();
-  if (v && v !== props.playlist.name) emit("rename", v);
+  if (v && v !== props.playlist.title) emit("rename", v);
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function isPlaying(track) {
-  const np = props.nowPlaying;
-  return np && np.magnet === track.magnet && np.fileIdx === track.fileIdx;
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function isPlaying(track: Track): boolean {
+  return props.nowPlayingId != null && props.nowPlayingId === track.id;
 }
 
-const trackCount = computed(() => props.playlist.tracks.length);
+const trackCount = computed(() => props.tracks.length);
+const firstTrack = computed<Track | null>(() => props.tracks[0] ?? null);
+
+// ── Context menu ─────────────────────────────────────────────────────────────
 
 const ctxOpen = ref(false);
 const ctxX = ref(0);
 const ctxY = ref(0);
-/** @type {import('vue').Ref<object | null>} */
-const ctxTrack = ref(null);
+const ctxTrack = shallowRef<Track | null>(null);
 
-/**
- * @param {MouseEvent} e
- * @param {object} track
- * @returns {void}
- */
-function openTrackCtx(e, track) {
+function openTrackCtx(e: MouseEvent, track: Track): void {
   e.preventDefault();
   ctxX.value = e.clientX;
   ctxY.value = e.clientY;
@@ -68,14 +69,10 @@ function openTrackCtx(e, track) {
 }
 
 const playlistCtxActions = computed(() => {
-  if (!ctxTrack.value) return [];
   const t = ctxTrack.value;
-  const srcLabel =
-    t.source === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
-  const canDownload =
-    (t.source === "soulseek"
-      ? String(t.slskUsername ?? "").trim().length > 0 && String(t.slskFilepath ?? "").trim().length > 0
-      : String(t.magnet ?? "").trim().length > 0 && t.fileIdx != null && Number.isFinite(Number(t.fileIdx)));
+  if (!t) return [];
+  const srcLabel = t.kind === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
+  const canDownload = t.hasPlaybackIdentity();
   return [
     { id: "queue", label: "В очередь", icon: "queue" },
     { id: "playlist", label: "В плейлист", icon: "playlist" },
@@ -85,14 +82,11 @@ const playlistCtxActions = computed(() => {
   ];
 });
 
-/**
- * @returns {void}
- */
-function onCtxAction(id) {
+function onCtxAction(id: string): void {
   const t = ctxTrack.value;
   if (!t) return;
   if (id === "queue") emit("add-to-queue", t);
-  if (id === "playlist") emit("add-to-playlist", { ...t });
+  if (id === "playlist") emit("add-to-playlist", t);
   if (id === "download") emit("download-track", t);
   if (id === "source") emit("open-track-source", t);
 }
@@ -101,4 +95,3 @@ function onCtxAction(id) {
 <template src="./PlaylistView.html"></template>
 
 <style scoped src="./PlaylistView.scoped.css"></style>
-

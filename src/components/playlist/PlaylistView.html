@@ -3,17 +3,7 @@
     <!-- Header -->
     <div class="pl-header">
       <div class="pl-cover">
-        <template v-if="playlist.tracks.length">
-          <CoverThumb
-            :torrent-id="playlist.tracks[0].torrentId"
-            :source="playlist.tracks[0].source"
-            :cover-file-idx="playlist.tracks[0].coverFileIdx ?? null"
-            :magnet="playlist.tracks[0].magnet"
-            :size="120"
-            :radius="12"
-            :fill="true"
-          />
-        </template>
+        <TrackCover v-if="firstTrack" :entity="firstTrack" :fill="true" />
         <div v-else class="pl-cover-empty">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="1.5"
@@ -42,7 +32,7 @@
           />
         </template>
         <h1 v-else class="pl-name" @dblclick="startRename" title="Дважды кликните для переименования">
-          {{ playlist.name }}
+          {{ playlist.title }}
         </h1>
 
         <div class="pl-meta">{{ trackCount }} {{ trackCount === 1 ? 'трек' : trackCount < 5 ? 'трека' : 'треков' }}</div>
@@ -119,8 +109,8 @@
       </div>
 
       <div
-        v-for="(track, i) in playlist.tracks"
-        :key="`${track.magnet}-${track.fileIdx}`"
+        v-for="(track, i) in tracks"
+        :key="track.id"
         :class="['pl-track-row', isPlaying(track) ? 'pl-track-row--playing' : '']"
         @click="emit('play', i)"
         @contextmenu.prevent="openTrackCtx($event, track)"
@@ -141,14 +131,14 @@
           <div class="pl-track-name" :title="trackDisplayBasename(track.fileName)">
             {{ trackDisplayBasename(track.fileName) }}
           </div>
-          <div class="pl-track-sub">{{ track.artist || track.torrentName }}</div>
+          <div class="pl-track-sub">{{ track.artist || track.albumTitle }}</div>
         </div>
 
         <div class="pl-col-actions">
           <button
             class="pl-track-remove"
             title="Убрать из плейлиста"
-            @click.stop="emit('remove-track', { magnet: track.magnet, fileIdx: track.fileIdx })"
+            @click.stop="emit('remove-track', track.id)"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" stroke-width="2"

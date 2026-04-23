@@ -12,33 +12,13 @@
         <div class="likes-hero-title">Мне нравится</div>
         <div class="likes-hero-meta">
           <span v-if="tracks.length > 0">{{ tracksLabel(tracks.length) }}</span>
-          <span v-if="tracks.length > 0 && albums.length > 0" class="likes-hero-dot">·</span>
-          <span v-if="albums.length > 0">{{ albumsLabel(albums.length) }}</span>
-          <span v-if="(tracks.length > 0 || albums.length > 0) && torrents.length > 0" class="likes-hero-dot">·</span>
-          <span v-if="torrents.length > 0">{{ torrentsLabel(torrents.length) }}</span>
-          <span v-if="tracks.length === 0 && albums.length === 0 && torrents.length === 0">Пусто</span>
+          <span v-else>Пусто</span>
         </div>
       </div>
     </div>
 
-    <!-- Tab toggle -->
-    <div class="likes-tabs">
-      <button
-        :class="['likes-tab', tab === 'tracks' ? 'active' : '']"
-        @click="tab = 'tracks'"
-      >Треки</button>
-      <button
-        :class="['likes-tab', tab === 'albums' ? 'active' : '']"
-        @click="tab = 'albums'"
-      >Альбомы</button>
-      <button
-        :class="['likes-tab', tab === 'torrents' ? 'active' : '']"
-        @click="tab = 'torrents'"
-      >Раздачи</button>
-    </div>
-
     <!-- Tracks -->
-    <div v-if="tab === 'tracks'" class="likes-content">
+    <div class="likes-content">
       <p v-if="tracks.length === 0" class="empty-msg">Нет понравившихся треков.</p>
       <template v-else>
         <div class="tracklist-header likes-tracklist-header">
@@ -50,13 +30,13 @@
         </div>
         <div
           v-for="(row, i) in tracksWithLines"
-          :key="row.like.id"
-          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(row.like)]"
-          @click="emit('play', row.like)"
-          @contextmenu.prevent="openTrackCtx($event, row.like)"
+          :key="row.track.id"
+          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(row.track)]"
+          @click="emit('play', row.track)"
+          @contextmenu.prevent="openTrackCtx($event, row.track)"
         >
           <div class="track-num">
-            <PlayingIndicator v-if="isNowPlayingTrack(row.like)" :live="playerPlaying" />
+            <PlayingIndicator v-if="isNowPlayingTrack(row.track)" :live="playerPlaying" />
             <template v-else>
               <span class="track-num-val">{{ i + 1 }}</span>
               <span class="track-num-icon">
@@ -69,26 +49,19 @@
           <div class="likes-track-main">
             <div
               class="likes-thumb-frame"
-              :class="row.like.source === 'soulseek' ? 'likes-thumb-frame--slsk' : 'likes-thumb-frame--rt'"
-              :title="row.like.source === 'soulseek' ? 'SoulSeek' : 'RuTracker'"
+              :class="row.track.kind === 'soulseek' ? 'likes-thumb-frame--slsk' : 'likes-thumb-frame--rt'"
+              :title="row.track.kind === 'soulseek' ? 'SoulSeek' : 'RuTracker'"
             >
-              <CoverThumb
-                :torrent-id="row.like.torrentId"
-                :source="row.like.source"
-                :magnet="row.like.magnet"
-                :cover-file-idx="trackCoverFileIdx(row.like)"
-                :size="40"
-                :radius="4"
-              />
+              <TrackCover :entity="row.track" :size="40" />
             </div>
             <div class="track-info">
               <div class="track-name-wrap">
-                <div class="track-name" :title="likeTrackTooltip(row.like)">{{ row.lines.title }}</div>
+                <div class="track-name" :title="likeTrackTooltip(row.track)">{{ row.lines.title }}</div>
               </div>
               <button
                 v-if="row.lines.subtitle"
                 class="likes-track-sub"
-                @click.stop="emit('open-torrent', row.like)"
+                @click.stop="emit('open-track-source', row.track)"
               >{{ row.lines.subtitle }}</button>
             </div>
           </div>
@@ -96,7 +69,7 @@
             <button
               class="track-btn like-btn liked"
               title="Убрать лайк"
-              @click.stop="emit('toggle-like', row.like)"
+              @click.stop="emit('toggle-like', row.track)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -105,7 +78,7 @@
             <button
               class="track-btn dl"
               title="Скачать"
-              @click.stop="emit('download', row.like)"
+              @click.stop="emit('download', row.track)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 3v13M5 14l7 7 7-7"/>
@@ -114,8 +87,8 @@
             </button>
             <button
               class="track-btn"
-              title="Перейти к раздаче"
-              @click.stop="emit('open-torrent', row.like)"
+              title="Перейти к источнику"
+              @click.stop="emit('open-track-source', row.track)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
@@ -126,89 +99,6 @@
           </div>
         </div>
       </template>
-    </div>
-
-    <!-- Torrents -->
-    <div v-if="tab === 'torrents'" class="likes-content">
-      <p v-if="torrents.length === 0" class="empty-msg">Нет понравившихся раздач.</p>
-      <div v-else class="results-grid likes-albums-grid">
-        <div
-          v-for="like in torrents"
-          :key="like.id"
-          class="album-card"
-          :title="like.torrentName"
-        >
-          <div class="album-art" @click="emit('open-torrent', like)">
-            <img
-              v-if="like.source === 'rutracker' && getCoverReactive(String(like.torrentId))"
-              :src="getCoverReactive(String(like.torrentId))"
-              class="album-art-img"
-              alt=""
-              draggable="false"
-            />
-            <svg v-else class="album-art-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M9 18V5l12-2v13"/>
-              <circle cx="6" cy="18" r="3"/>
-              <circle cx="18" cy="16" r="3"/>
-            </svg>
-            <button
-              type="button"
-              class="album-art-play"
-              title="Открыть раздачу"
-              @click.stop="emit('open-torrent', like)"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <polygon points="5,3 19,12 5,21"/>
-              </svg>
-            </button>
-          </div>
-          <div class="album-name" @click="emit('open-torrent', like)">{{ like.torrentName }}</div>
-          <div class="album-meta likes-album-artist" @click="emit('open-torrent', like)">
-            <span class="likes-track-sub">{{
-              extractTrackArtist(like.torrentName, null, null, like.magnet ?? null)
-            }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Albums -->
-    <div v-if="tab === 'albums'" class="likes-content">
-      <p v-if="albums.length === 0" class="empty-msg">Нет понравившихся альбомов.</p>
-      <div v-else class="results-grid likes-albums-grid">
-        <div
-          v-for="like in albums"
-          :key="like.id"
-          class="album-card"
-          :title="like.albumName || like.torrentName"
-        >
-          <div class="album-art" @click="emit('open-torrent', like)">
-            <CoverThumb
-              :torrent-id="like.torrentId"
-              :source="like.source"
-              :magnet="like.magnet"
-              :cover-file-idx="like.coverFile?.origIdx ?? null"
-              fill
-            />
-            <button
-              type="button"
-              class="album-art-play"
-              title="Слушать"
-              @click.stop="emit('play-album', like)"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <polygon points="5,3 19,12 5,21"/>
-              </svg>
-            </button>
-          </div>
-          <div class="album-name" @click="emit('open-torrent', like)">{{ like.albumName || like.torrentName }}</div>
-          <div class="album-meta likes-album-artist" @click="emit('open-torrent', like)">
-            <span class="likes-track-sub">{{
-              extractTrackArtist(like.torrentName, like.dirPath ?? null, null, like.magnet ?? null)
-            }}</span>
-          </div>
-        </div>
-      </div>
     </div>
 
     <TrackContextMenu

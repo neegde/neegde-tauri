@@ -230,17 +230,15 @@
         <div v-else-if="view === 'likes'" key="likes" class="main-view-surface">
           <KeepAlive>
             <LikesView
-              :likes="Object.values(likes)"
-              :now-playing="nowPlayingMatchForLikes"
+              :tracks="libraryLikedTracks"
+              :now-playing-id="nowPlayingTrackId"
               :player-playing="playerPlaying"
-              @toggle-like="handleToggleLike"
-              @play="handlePlayFromLike"
-              @play-album="handlePlayAlbumFromLike"
-              @open-torrent="handleOpenTorrentFromLike"
-              @open-track-source="handleOpenTrackSource"
-              @download="handleDownloadTrackFromLike"
-              @add-to-queue="handleAddToQueueFromLike"
-              @add-to-playlist="handleShowAddToPlaylist(playlistTrackFromLike($event))"
+              @toggle-like="onToggleLikeTrack"
+              @play="onPlayTrack"
+              @open-track-source="onOpenTrackSource"
+              @download="onDownloadTrack"
+              @add-to-queue="onAddToQueue"
+              @add-to-playlist="onAddTrackToPlaylist"
             />
           </KeepAlive>
         </div>
@@ -279,16 +277,17 @@
         >
           <PlaylistView
             :playlist="currentPlaylist"
-            :now-playing="nowPlayingMatchForLikes"
+            :tracks="currentPlaylistTracks"
+            :now-playing-id="nowPlayingTrackId"
             :player-playing="playerPlaying"
             @play="handlePlayPlaylist"
-            @open-track-source="handleOpenTrackSource"
-            @remove-track="handleRemoveTrackFromPlaylist(currentPlaylistId, $event)"
-            @delete="handleDeletePlaylist(currentPlaylistId)"
-            @rename="handleRenamePlaylist(currentPlaylistId, $event)"
-            @add-to-queue="handleAddToQueueFromPlaylistTrack"
-            @add-to-playlist="handleShowAddToPlaylist($event)"
-            @download-track="handleDownloadTrackFromLike"
+            @open-track-source="onOpenTrackSource"
+            @remove-track="onRemoveTrackFromPlaylist"
+            @delete="onDeleteCurrentPlaylist"
+            @rename="onRenameCurrentPlaylist"
+            @add-to-queue="onAddToQueue"
+            @add-to-playlist="onAddTrackToPlaylist"
+            @download-track="onDownloadTrack"
             @download-playlist="handleDownloadPlaylist"
           />
         </div>

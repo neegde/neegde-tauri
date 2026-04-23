@@ -81,12 +81,6 @@ import {
   setSlskDisconnected,
 } from "./stores/auth.js";
 import { view, returnView, currentPlaylistId } from "./stores/view.js";
-import {
-  likedTrackIds as libraryLikedTrackIds,
-  likedAlbumIds as libraryLikedAlbumIds,
-  likedAt as libraryLikedAt,
-  playlists as libraryPlaylists,
-} from "./stores/library.js";
 import { useAppDebug } from "./composables/useAppDebug.js";
 import { useTheme } from "./composables/useTheme.js";
 import { useMouseSideButtonNav } from "./composables/useMouseSideButtonNav.js";
@@ -98,8 +92,36 @@ import { useNavStack } from "./composables/useNavStack.js";
 import { useMagnetDialog } from "./composables/useMagnetDialog.js";
 import { useAlbumPreview } from "./composables/useAlbumPreview.js";
 import { loadPersistedState } from "./persistence/bootstrap.js";
-import { seedLikesFromSnapshot, seedPlaylistsFromSnapshot } from "./stores/library.js";
-import { seedQueueFromSnapshot } from "./stores/queue.js";
+import {
+  likedTracks as libraryLikedTracks,
+  likedTrackIds as libraryLikedTrackIds,
+  likedAt as libraryLikedAt,
+  toggleLikeTrack,
+  playlists as libraryPlaylists,
+  getPlaylistTracks,
+  addTrackToPlaylist as libAddTrackToPlaylist,
+  removeTrackFromPlaylist as libRemoveTrackFromPlaylist,
+  deletePlaylist as libDeletePlaylist,
+  renamePlaylist as libRenamePlaylist,
+  createPlaylist as libCreatePlaylist,
+  seedLikesFromSnapshot,
+  seedPlaylistsFromSnapshot,
+} from "./stores/library.js";
+import {
+  queueIds as queueStoreIds,
+  queuePos as queueStorePos,
+  nowPlayingTrack as nowPlayingTrackFromStore,
+  nextTrack as nextTrackFromStore,
+  secondNextTrack as secondNextTrackFromStore,
+  hasPrev as queueHasPrev,
+  hasNext as queueHasNext,
+  replaceQueue,
+  enqueueTrack,
+  playTrackNow,
+  seedQueueFromSnapshot,
+} from "./stores/queue.js";
+import { Track } from "./track/Track.js";
+import { getTrack } from "./stores/entities.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
@@ -305,116 +327,126 @@ watch([rtLoggedIn, recentHistory], prefetchRecentRutrackerCoversForHome, { deep:
 const searchHistory = ref(loadSearchHistory());
 
 // ── Playlists ─────────────────────────────────────────────────────────────────
-const playlists = ref(loadPlaylists());
-const currentPlaylist = computed(() => playlists.value.find((p) => p.id === currentPlaylistId.value) ?? null);
-
-// Mirror legacy playlists into the entities-backed store so new code can read
-// Track entities by id. Runs once per mutation; still cheap for normal sizes.
-watch(
-  playlists,
-  (lst) => {
-    const out = [];
-    for (const pl of lst) {
-      const trackIds = [];
-      for (const t of pl.tracks ?? []) {
-        let ent = null;
-        if (t.source === "soulseek" && t.slskUsername && t.slskFilepath) {
-          ent = buildSlskTrackEntity({
-            username: t.slskUsername,
-            filepath: t.slskFilepath,
-            size: t.slskFilesize ?? 0,
-            filename: t.fileName,
-            artist: t.artist ?? null,
-            cover: null,
-            albumTitle: t.torrentName,
-          });
-        } else {
-          const btih = t.source === "magnet" ? parseBtihFromMagnet(t.magnet ?? "") : null;
-          ent = buildRtTrackEntity(
-            { origIdx: t.fileIdx, path: t.fileName, size: 0 },
-            { id: t.torrentId, name: t.torrentName, artist: t.artist ?? null, source: t.source },
-            t.magnet ?? "",
-            btih,
-            t.coverFileIdx ?? null,
-            t.albumDirPath ?? null,
-          );
-        }
-        const id = registerAndGetId(ent);
-        if (id) trackIds.push(id);
-      }
-      out.push({
-        type: "playlist",
-        id: pl.id,
-        title: pl.name ?? pl.title ?? "Без названия",
-        coverUrl: null,
-        createdAt: pl.createdAt ?? Date.now(),
-        updatedAt: pl.updatedAt ?? Date.now(),
-        trackIds,
-      });
-    }
-    libraryPlaylists.value = out;
-  },
-  { immediate: true, deep: true },
+// Playlist state is owned by `stores/library` (v2 persistence). App.vue reads
+// derived views (currentPlaylist, currentPlaylistTracks) and delegates all
+// mutations to library store functions (see onAddTrackToPlaylist etc.).
+const currentPlaylist = computed(
+  () => libraryPlaylists.value.find((p) => p.id === currentPlaylistId.value) ?? null,
+);
+const currentPlaylistTracks = computed(() =>
+  currentPlaylistId.value ? getPlaylistTracks(currentPlaylistId.value) : [],
 );
 
-const {
-  addToPlaylistModal,
-  addToPlaylistTrack,
-  openPlaylist,
-  handleCreatePlaylist,
-  handleDeletePlaylist,
-  handleRenamePlaylist,
-  handleRemoveTrackFromPlaylist,
-  handleShowAddToPlaylist,
-  handleAddToPlaylist,
-  handleAddToPlaylistNew,
-} = usePlaylistManager({ playlists, currentPlaylistId, view });
+// ── Playlist handlers (thin wrappers around stores/library) ────────────────
+const addToPlaylistModal = ref(false);
+/** @type {import('vue').ShallowRef<Track | null>} */
+const addToPlaylistTrack = shallowRef(null);
 
-function handlePlayPlaylist(startIdx) {
-  const pl = currentPlaylist.value;
-  if (!pl?.tracks?.length) return;
-  allowPlayerAutoplay();
-  queue.value = pl.tracks.map((t) => {
-    const row = {
-      magnet: t.magnet,
-      fileIdx: t.fileIdx,
-      fileName: t.fileName,
-      torrentName: t.torrentName,
-      torrentId: t.torrentId,
-      source: t.source,
-      artist: t.artist ?? null,
-      coverFileIdx: t.coverFileIdx ?? null,
-      albumDirPath: t.albumDirPath ?? null,
-    };
-    if (t.source === "soulseek" && t.slskUsername && t.slskFilepath) {
-      row.slskUsername = t.slskUsername;
-      row.slskFilepath = t.slskFilepath;
-      row.slskFilesize = t.slskFilesize ?? 0;
-      row.trackId = registerAndGetId(buildSlskTrackEntity({
-        username: t.slskUsername,
-        filepath: t.slskFilepath,
-        size: t.slskFilesize ?? 0,
-        filename: t.fileName,
-        artist: t.artist ?? null,
-        cover: null,
-        albumTitle: t.torrentName,
-      }));
-    } else {
-      const btih = t.source === "magnet" ? parseBtihFromMagnet(t.magnet) : null;
-      row.trackId = registerAndGetId(buildRtTrackEntity(
-        { origIdx: t.fileIdx, path: t.fileName, size: 0 },
-        { id: t.torrentId, name: t.torrentName, artist: t.artist, source: t.source },
-        t.magnet,
-        btih,
-        t.coverFileIdx ?? null,
-        t.albumDirPath ?? null,
-      ));
-    }
-    return row;
-  });
-  queuePos.value = startIdx ?? 0;
+function openPlaylist(id) {
+  currentPlaylistId.value = id;
+  view.value = "playlist";
 }
 
+function handleCreatePlaylist() {
+  const pl = libCreatePlaylist(`Плейлист ${libraryPlaylists.value.length + 1}`);
+  openPlaylist(pl.id);
+}
+
+function handleDeletePlaylist(id) {
+  libDeletePlaylist(id);
+  if (currentPlaylistId.value === id) {
+    currentPlaylistId.value = null;
+    view.value = "home";
+  }
+}
+
+function handleRenamePlaylist(id, name) {
+  libRenamePlaylist(id, name);
+}
+
+function handleRemoveTrackFromPlaylist(id, trackId) {
+  libRemoveTrackFromPlaylist(id, trackId);
+}
+
+/** User picked a track for the "add to playlist" modal. */
+function handleShowAddToPlaylist(track) {
+  if (!(track instanceof Track)) return;
+  addToPlaylistTrack.value = track;
+  addToPlaylistModal.value = true;
+}
+
+function handleAddToPlaylist(playlistId) {
+  const t = addToPlaylistTrack.value;
+  if (!t) return;
+  libAddTrackToPlaylist(playlistId, t);
+  addToPlaylistModal.value = false;
+  addToPlaylistTrack.value = null;
+}
+
+function handleAddToPlaylistNew() {
+  const pl = libCreatePlaylist(`Плейлист ${libraryPlaylists.value.length + 1}`);
+  const t = addToPlaylistTrack.value;
+  if (t) libAddTrackToPlaylist(pl.id, t);
+  addToPlaylistModal.value = false;
+  addToPlaylistTrack.value = null;
+  openPlaylist(pl.id);
+}
+
+// ── Per-track actions from LikesView / PlaylistView / search ───────────────
+
+const nowPlayingTrackId = computed(() => nowPlayingTrackFromStore.value?.id ?? null);
+
+function onToggleLikeTrack(track) {
+  if (!(track instanceof Track)) return;
+  toggleLikeTrack(track);
+}
+
+function onPlayTrack(track) {
+  if (!(track instanceof Track)) return;
+  allowPlayerAutoplay();
+  playTrackNow(track);
+}
+
+function onOpenTrackSource(track) {
+  if (!(track instanceof Track)) return;
+  const target = track.navigationTarget();
+  if (target) handleOpenTorrentFromPlayer(target);
+}
+
+function onDownloadTrack(track) {
+  if (!(track instanceof Track)) return;
+  downloadOverlayExpanded.value = true;
+  void track.exportToDisk((p) => { downloadProgress.value = p; });
+}
+
+function onAddToQueue(track) {
+  if (!(track instanceof Track)) return;
+  enqueueTrack(track);
+}
+
+function onAddTrackToPlaylist(track) {
+  if (!(track instanceof Track)) return;
+  handleShowAddToPlaylist(track);
+}
+
+function onRemoveTrackFromPlaylist(trackId) {
+  if (currentPlaylistId.value) libRemoveTrackFromPlaylist(currentPlaylistId.value, trackId);
+}
+
+function onDeleteCurrentPlaylist() {
+  if (currentPlaylistId.value) handleDeletePlaylist(currentPlaylistId.value);
+}
+
+function onRenameCurrentPlaylist(newName) {
+  if (currentPlaylistId.value) libRenamePlaylist(currentPlaylistId.value, newName);
+}
+
+function handlePlayPlaylist(startIdx) {
+  const tracks = currentPlaylistTracks.value;
+  if (!tracks.length) return;
+  allowPlayerAutoplay();
+  replaceQueue(tracks, Math.max(0, Math.min(startIdx ?? 0, tracks.length - 1)));
+}
 
 // ── Search ────────────────────────────────────────────────────────────────────
 // Reactive surface lives in src/stores/search.js. We only keep UI-local bits
@@ -520,60 +552,36 @@ watch(downloadProgress, (v) => {
   }
 });
 
-// ── Likes (persisted locally) ────────────────────────────────────────────────
-const likes = ref(loadLikes());
-watch(likes, (v) => saveLikes(v), { deep: true });
-
-// Mirror legacy likes into the entities-registry-based library store: every
-// liked row is converted to a Track/Album entity, registered, and its id
-// tracked in `likedTrackIds` / `likedAlbumIds`. Keeps the new store in sync
-// with the legacy storage until the UI switches over wholesale.
-watch(
-  likes,
-  (v) => {
-    const trackIds = new Set();
-    const albumIds = new Set();
-    const at = new Map();
-    for (const key of Object.keys(v)) {
-      const like = v[key];
-      if (!like) continue;
-      at.set(like.id ?? key, like.addedAt ?? 0);
-      if (like.type === "track") {
-        let ent = null;
-        if (like.source === "soulseek") {
-          ent = buildSlskTrackEntity({
-            username: like.slskUsername,
-            filepath: like.slskFilepath,
-            size: like.slskFilesize ?? 0,
-            filename: like.fileName,
-            artist: like.artist ?? null,
-            cover: null,
-            albumTitle: like.torrentName,
-          });
-        } else {
-          const btih = like.source === "magnet" ? parseBtihFromMagnet(like.magnet ?? "") : null;
-          ent = buildRtTrackEntity(
-            { origIdx: like.fileIdx, path: like.fileName, size: 0 },
-            { id: like.torrentId, name: like.torrentName, artist: like.artist ?? null, source: like.source },
-            like.magnet ?? "",
-            btih,
-            like.coverFileIdx ?? null,
-            like.albumDirPath ?? null,
-          );
-        }
-        const id = registerAndGetId(ent);
-        if (id) trackIds.add(id);
-      }
-      // Album likes keep their legacy representation for now — the Album
-      // entity model doesn't yet cover the "snapshot of files at like time"
-      // semantics the legacy code expects for offline-open.
-    }
-    libraryLikedTrackIds.value = trackIds;
-    libraryLikedAlbumIds.value = albumIds;
-    libraryLikedAt.value = at;
-  },
-  { immediate: true, deep: true },
-);
+// Likes are owned by `stores/library` (v2 persistence). The library store is
+// seeded on boot from `loadPersistedState()`; this module only reads.
+// NOTE: a small number of legacy handlers below (TorrentView / Player toggle-
+// like paths, `handleDownloadTrackFromLike`, etc.) still expect the old
+// `likes` dict shape. We derive it on the fly from the library store until
+// those consumers migrate too (task #54 / #56). This is a *read-only* view,
+// never written back — the library store remains the single source of truth.
+const likes = computed(() => {
+  const out = {};
+  for (const t of libraryLikedTracks.value) {
+    out[t.id] = {
+      id: t.id,
+      type: "track",
+      source: t.kind,
+      magnet: t.sources?.[0]?.refs?.magnet ?? "",
+      fileIdx: t.sources?.[0]?.refs?.fileIdx ?? 0,
+      fileName: t.fileName,
+      torrentName: t.albumTitle ?? "",
+      torrentId: t.sources?.[0]?.refs?.topicId ?? t.id,
+      artist: t.artist,
+      coverFileIdx: t.sources?.[0]?.refs?.coverFileIdx ?? null,
+      albumDirPath: t.sources?.[0]?.refs?.albumDirPath ?? null,
+      slskUsername: t.sources?.[0]?.refs?.slskUsername,
+      slskFilepath: t.sources?.[0]?.refs?.slskFilepath,
+      slskFilesize: t.size ?? 0,
+      addedAt: libraryLikedAt.value.get(t.id) ?? 0,
+    };
+  }
+  return out;
+});
 
 /** Состояние воспроизведения из плеера — подсветка и анимация в списках. */
 const playerPlaying = ref(true);
@@ -1275,14 +1283,55 @@ function handleQueueRemove(i) {
   queuePos.value = pos;
 }
 
-function handleToggleLike(like) {
-  const likesBefore = Object.keys(likes.value).length;
-  const next = { ...likes.value };
-  if (next[like.id]) delete next[like.id];
-  else next[like.id] = { ...like, addedAt: Date.now() };
-  const likesAfter = Object.keys(next).length;
-  likes.value = next;
-  recordLikeChange(likesAfter, likesBefore);
+/**
+ * Legacy toggle-like bridge — consumed by TorrentView / Player which still
+ * emit the old row shape. Resolves / synthesizes a Track and delegates to
+ * the library store. Will be removed once those components migrate to
+ * emitting Track instances directly.
+ */
+function handleToggleLike(payload) {
+  if (!payload) return;
+  if (payload instanceof Track) {
+    const before = libraryLikedTrackIds.value.size;
+    toggleLikeTrack(payload);
+    recordLikeChange(libraryLikedTrackIds.value.size, before);
+    return;
+  }
+  // Row shape — find by id, or synthesize a Track from the row.
+  const id = payload.id ?? `track:${payload.source}:${payload.torrentId}:${payload.fileIdx}`;
+  let track = getTrack(id);
+  if (!track) {
+    let ent = null;
+    if (payload.source === "soulseek" && payload.slskUsername && payload.slskFilepath) {
+      ent = buildSlskTrackEntity({
+        username: payload.slskUsername,
+        filepath: payload.slskFilepath,
+        size: payload.slskFilesize ?? 0,
+        filename: payload.fileName,
+        artist: payload.artist ?? null,
+        cover: null,
+        albumTitle: payload.torrentName,
+      });
+    } else {
+      const btih = payload.source === "magnet" ? parseBtihFromMagnet(payload.magnet ?? "") : null;
+      ent = buildRtTrackEntity(
+        { origIdx: payload.fileIdx, path: payload.fileName, size: 0 },
+        { id: payload.torrentId, name: payload.torrentName, artist: payload.artist ?? null, source: payload.source },
+        payload.magnet ?? "",
+        btih,
+        payload.coverFileIdx ?? null,
+        payload.albumDirPath ?? null,
+      );
+    }
+    if (ent) {
+      registerAndGetId(ent);
+      track = getTrack(ent.id);
+    }
+  }
+  if (!track) return;
+  const before = libraryLikedTrackIds.value.size;
+  toggleLikeTrack(track);
+  recordLikeChange(libraryLikedTrackIds.value.size, before);
 }
 
 const { handleOpenAlbumPreview, applyAlbumScopeForTrack } = useAlbumPreview({
