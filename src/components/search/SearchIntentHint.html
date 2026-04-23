@@ -1,0 +1,39 @@
+  <div v-if="resolving" class="sih sih--resolving">
+    <span class="sih-spin" aria-hidden="true" />
+    <span>Распознаём запрос…</span>
+  </div>
+
+  <div v-else-if="hasCanonical" class="sih">
+    <span class="sih-label">
+      {{ isArtistCanonical ? "Распознали артиста:" : "Распознали как:" }}
+    </span>
+    <strong class="sih-canonical">
+      <template v-if="isArtistCanonical">{{ resolved.canonical.artist }}</template>
+      <template v-else>{{ resolved.canonical.artist }} — {{ resolved.canonical.title }}</template>
+    </strong>
+    <span v-if="intentLabel" class="sih-chip">{{ intentLabel }}</span>
+    <span v-if="sourcesText" class="sih-sources">· {{ sourcesText }}</span>
+    <button
+      type="button"
+      class="sih-revert"
+      title="Искать введённую строку как есть"
+      @click="emit('revert-to-raw')"
+    >
+      искать как строку
+    </button>
+    <div v-if="alternatives.length" class="sih-alts">
+      <span class="sih-alts-label">ещё варианты:</span>
+      <span
+        v-for="c in alternatives"
+        :key="`${c.artist}|${c.title}`"
+        class="sih-alt"
+      >
+        {{ c.artist }} — {{ c.title }}
+        <span class="sih-alt-sources">({{ c.sources.join(", ") }})</span>
+      </span>
+    </div>
+  </div>
+
+  <div v-else-if="resolved && resolved.intent === 'raw'" class="sih sih--muted">
+    <span>Каталоги ничего не распознали — ищу введённую строку.</span>
+  </div>

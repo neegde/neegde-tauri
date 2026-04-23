@@ -1,0 +1,106 @@
+.sih {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.10);
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  line-height: 1.35;
+}
+
+.sih--resolving {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+}
+[data-theme="light"] .sih--resolving {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.sih--muted {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+[data-theme="light"] .sih--muted {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.sih-label {
+  color: var(--muted);
+}
+
+.sih-canonical {
+  font-weight: 600;
+}
+
+.sih-chip {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(var(--accent-rgb), 0.22);
+  color: var(--accent);
+}
+
+.sih-sources {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sih-revert {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sih-revert:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+[data-theme="light"] .sih-revert {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.sih-alts {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.sih-alts-label {
+  color: var(--muted2);
+}
+.sih-alt-sources {
+  color: var(--muted2);
+  font-variant-numeric: tabular-nums;
+  margin-left: 2px;
+}
+
+.sih-spin {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(var(--accent-rgb), 0.3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sih-spin 0.8s linear infinite;
+}
+@keyframes sih-spin {
+  to { transform: rotate(360deg); }
+}

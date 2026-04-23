@@ -1,0 +1,133 @@
+import { invoke } from "@tauri-apps/api/core";
+import { message, open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
+import { Track } from "./Track.js";
+import type { NavigationTarget, SoulseekRefs, TrackSource } from "./types.js";
+import {
+  getSlskCoverReactive,
+  getSlskCoverDataUrl,
+  peekSlskCover,
+} from "../soulseek/coverCache.js";
+import { getAlbum, entitiesVersion } from "../stores/entities.js";
+
+interface SlskCoverRef {
+  slsk_username: string;
+  slsk_filepath: string;
+  size?: number;
+}
+
+export class SoulseekTrack extends Track {
+  private get refs(): SoulseekRefs {
+    return (this.source as TrackSource & { kind: "soulseek" }).refs;
+  }
+
+  private get rawAny(): { cover?: SlskCoverRef | null; peers?: number } {
+    return (this.source.raw ?? {}) as { cover?: SlskCoverRef | null; peers?: number };
+  }
+
+  /**
+   * Best cover ref: parent Album's cover (for album-child tracks), else the
+   * track's own ref (set by provider for orphan singletons).
+   */
+  private coverRef(): SlskCoverRef | null {
+    const own = this.rawAny.cover ?? null;
+    if (own) return own;
+    if (this.albumId) {
+      const parent = getAlbum(this.albumId);
+      const pc = parent?.sources?.[0]?.raw?.cover as SlskCoverRef | undefined;
+      if (pc) return pc;
+    }
+    return null;
+  }
+
+  override hasPlaybackIdentity(): boolean {
+    return Boolean(this.refs.slskUsername && this.refs.slskFilepath);
+  }
+
+  override async prepareStream(): Promise<string> {
+    if (!this.hasPlaybackIdentity()) return "";
+    const ready = await invoke<{ url: string }>("soulseek_prepare_stream", {
+      username: this.refs.slskUsername,
+      filepath: this.refs.slskFilepath,
+      filesize: Number(this.size ?? 0),
+    });
+    return ready?.url ?? "";
+  }
+
+  override coverUrl(): string | null {
+    // Touch the entity-registry version so re-registration of the parent
+    // album (e.g. its `raw.cover` getting stamped later) refreshes us.
+    entitiesVersion.value;
+    const ref = this.coverRef();
+    if (!ref?.slsk_username || !ref?.slsk_filepath) return null;
+    return getSlskCoverReactive(ref.slsk_username, ref.slsk_filepath);
+  }
+
+  override startCoverFetch(): void {
+    const ref = this.coverRef();
+    if (!ref?.slsk_username || !ref?.slsk_filepath) return;
+    if (peekSlskCover(ref.slsk_username, ref.slsk_filepath) !== undefined) return;
+    void getSlskCoverDataUrl(ref.slsk_username, ref.slsk_filepath, ref.size ?? 0).catch(() => {});
+  }
+
+  override async exportToDisk(onProgress?: (p: unknown) => void): Promise<void> {
+    if (!this.hasPlaybackIdentity()) {
+      await message("У трека нет данных SoulSeek.", { title: "Скачивание", kind: "error" });
+      return;
+    }
+    const picked = await open({ directory: true, multiple: false, title: "Выберите папку" });
+    if (picked === null) return;
+    const destDir = Array.isArray(picked) ? picked[0] : picked;
+    const filename = this.refs.slskFilepath.split(/[\\\/]/).pop() || this.fileName || "track";
+    const filesize = Number(this.size ?? 0);
+
+    onProgress?.({
+      phase: "preparing",
+      torrentState: "",
+      progressBytes: 0,
+      totalBytes: filesize,
+      pct: 0,
+      queueLabels: [filename],
+      message: "Подключение к пиру…",
+    });
+
+    let unlisten: () => void = () => {};
+    try {
+      unlisten = await listen("slsk-export-progress", (ev) => onProgress?.(ev.payload));
+      const savedPath = await invoke<string>("soulseek_export_file", {
+        username: this.refs.slskUsername,
+        filepath: this.refs.slskFilepath,
+        filesize,
+        destDir,
+        fileName: filename,
+      });
+      const saved = String(savedPath).split(/[\\\/]/).pop() ?? String(savedPath);
+      await message(`Сохранено: ${saved}`, { title: "Скачивание" });
+    } catch (e) {
+      const s = String(e);
+      if (/остановлено/i.test(s)) {
+        await message("Скачивание остановлено.", { title: "Скачивание", kind: "info" });
+      } else {
+        await message(s, { title: "Ошибка скачивания", kind: "error" });
+      }
+    } finally {
+      unlisten();
+      onProgress?.(null);
+    }
+  }
+
+  override navigationTarget(): NavigationTarget | null {
+    if (!this.refs.slskUsername) return null;
+    return {
+      torrentId: this.id,
+      torrentName: this.fileName ?? this.title ?? "",
+      source: "soulseek",
+      magnet: "",
+      fileIdx: 0,
+      albumDirPath: null,
+      slskUsername: this.refs.slskUsername,
+      slskFilepath: this.refs.slskFilepath ?? null,
+    };
+  }
+
+}

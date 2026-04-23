@@ -1,0 +1,53 @@
+.track-ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19990;
+  background: transparent;
+}
+.track-ctx-panel {
+  position: fixed;
+  z-index: 19991;
+  min-width: 210px;
+  padding: 5px;
+  border-radius: 10px;
+  background: var(--surface, #1e1c1a);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+}
+.track-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  margin: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.track-ctx-item:hover:not(.track-ctx-item--disabled) {
+  background: rgba(255,255,255,0.09);
+}
+.track-ctx-item--disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.track-ctx-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--muted, #b3b3b3);
+}
+.track-ctx-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin: 4px 2px;
+}

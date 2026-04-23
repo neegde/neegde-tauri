@@ -5,6 +5,7 @@ mod cache_settings;
 mod cover_art;
 mod discord_presence;
 mod nerd_stats;
+mod resolver;
 mod rutracker;
 mod soulseek;
 mod torrent_image;
@@ -161,6 +162,7 @@ pub fn run() {
 
             app.manage(torrent_image::TorrentImageState::new(app.handle(), image_debug));
             app.manage(DiscordPresenceState::new());
+            app.manage(resolver::ResolverState::new());
 
             // System tray
             let open_item = MenuItem::with_id(app, "open", "Открыть нигде", true, None::<&str>)?;
@@ -251,6 +253,8 @@ pub fn run() {
             torrent_stream::debug_api::app_debug_push,
             discord_presence::discord_presence_sync,
             discord_presence::discord_presence_clear,
+            // ── Query intent resolver ──────────────────────────────────────
+            resolver::resolve_query,
             // ── SoulSeek ───────────────────────────────────────────────────────
             soulseek::soulseek_login,
             soulseek::soulseek_logout,

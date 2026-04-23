@@ -1,0 +1,980 @@
+  <div class="settings-view">
+    <h1 class="settings-title">Настройки</h1>
+
+    <!-- ── Источники ─────────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Источники музыки</div>
+      <p class="settings-section-lead">
+        Подключите те сервисы, которыми пользуетесь: оба независимы — регистрируются отдельно.
+      </p>
+
+      <div class="settings-card settings-card--integration">
+        <!-- ── Logged in: user card + выход ── -->
+        <div v-if="rtLoggedIn" class="settings-card-header">
+          <div class="rt-avatar">
+            <img
+              v-if="props.rtAvatarUrl && !avatarImgFailed"
+              :src="props.rtAvatarUrl"
+              :alt="props.rtUsername || 'R'"
+              @error="avatarImgFailed = true"
+            />
+            <span v-else>{{ (props.rtUsername || 'R').charAt(0).toUpperCase() }}</span>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">{{ props.rtUsername }}</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-on" />
+              Подключено · Rutracker
+            </div>
+          </div>
+          <button
+            type="button"
+            class="settings-action-btn settings-action-btn--ghost"
+            @click="handleRtLogout"
+          >
+            Выйти
+          </button>
+        </div>
+
+        <!-- ── Restoring session: loading skeleton ── -->
+        <div v-else-if="restoringSession" class="settings-card-header">
+          <div class="settings-card-icon rt-loading-icon">
+            <span class="spinner" style="width:20px;height:20px;" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Rutracker</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-loading" />
+              Проверяем доступность…
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Not logged in: generic icon ── -->
+        <div v-else class="settings-card-header">
+          <div class="settings-card-icon">
+            <SystemIcon name="link" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Rutracker</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-off" />
+              Не подключено
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="!rtLoggedIn && !restoringSession"
+          class="settings-integration-banner settings-integration-banner--rt"
+        >
+          <div class="settings-integration-banner__head">
+            <span class="integration-pill integration-pill--rt">Торрент-трекер</span>
+            <span class="integration-pill integration-pill--neutral">Поиск альбомов</span>
+          </div>
+          <p class="settings-integration-banner__text">
+            Нужен <strong>аккаунт форума RuTracker</strong> — тот же логин и пароль, что на
+            rutracker.org / rutracker.net. Если профиля ещё нет, зарегистрируйтесь на официальном зеркале форума.
+          </p>
+          <div class="settings-integration-banner__actions">
+            <button
+              type="button"
+              class="settings-integration-link-btn"
+              @click="openExternalUrl(RUTRACKER_FORUM_URL)"
+            >
+              Открыть форум RuTracker
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p v-else-if="rtLoggedIn" class="settings-integration-compact settings-integration-compact--rt">
+          <span class="integration-pill integration-pill--rt integration-pill--tiny">RuTracker</span>
+          Поиск и прослушивание через торрент-раздачи; вход — ваш логин с форума.
+        </p>
+
+        <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
+          <template v-if="showRutrackerSessionRecovery">
+            <p v-if="rtReconnectMsg" class="rt-reconnect-msg rt-reconnect-msg--error">
+              {{ rtReconnectMsg }}
+            </p>
+            <p v-else class="settings-card-desc rt-session-desc">
+              Уже входили в этом приложении? Можно восстановить сессию без пароля.
+            </p>
+            <div class="rt-session-actions rt-session-actions--failure">
+              <button
+                type="button"
+                class="settings-action-btn settings-action-btn--primary"
+                :disabled="rtReconnectBusy"
+                @click="handleRtReconnect"
+              >
+                <span v-if="rtReconnectBusy" class="spinner" />
+                <template v-else>{{ rtCredentialsHiddenUntilLogout ? "Попробовать снова" : "Переподключиться" }}</template>
+              </button>
+              <button
+                type="button"
+                class="settings-action-btn settings-action-btn--ghost"
+                :disabled="rtReconnectBusy"
+                @click="handleRtLogout"
+              >
+                Выйти из аккаунта
+              </button>
+            </div>
+          </template>
+
+          <template v-if="!rtCredentialsHiddenUntilLogout">
+            <p class="settings-card-desc settings-card-desc--after-reconnect">
+              Введите данные аккаунта Rutracker, чтобы искать и слушать музыку.
+            </p>
+            <form class="settings-login-form" @submit="handleRtLogin">
+              <input
+                class="login-input"
+                type="text"
+                placeholder="Логин"
+                v-model="rtUsername"
+                autocomplete="username"
+              />
+              <input
+                class="login-input"
+                type="password"
+                placeholder="Пароль"
+                v-model="rtPassword"
+                autocomplete="current-password"
+              />
+              <p v-if="rtError" class="login-error">{{ rtError }}</p>
+              <button
+                class="login-btn"
+                type="submit"
+                :disabled="rtLoading || !rtUsername.trim() || !rtPassword"
+              >
+                <span v-if="rtLoading" class="spinner" />
+                <template v-else>Войти в Rutracker</template>
+              </button>
+            </form>
+          </template>
+        </div>
+      </div>
+
+      <!-- ── SoulSeek card ── -->
+      <div class="settings-card settings-card--slsk settings-card--integration">
+        <!-- Connected -->
+        <div v-if="slskConnected" class="settings-card-header">
+          <div class="slsk-avatar">
+            <span>S</span>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">{{ slskUsername }}</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-on" />
+              Подключено · SoulSeek
+            </div>
+          </div>
+          <button
+            type="button"
+            class="settings-action-btn settings-action-btn--ghost"
+            @click="emit('slsk-logout')"
+          >
+            Выйти
+          </button>
+        </div>
+
+        <!-- Not connected -->
+        <div v-else class="settings-card-header">
+          <div class="settings-card-icon">
+            <SystemIcon name="music" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">SoulSeek</div>
+            <div class="settings-card-status">
+              <span class="settings-status-dot status-off" />
+              Не подключено
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="!slskConnected"
+          class="settings-integration-banner settings-integration-banner--slsk"
+        >
+          <div class="settings-integration-banner__head">
+            <span class="integration-pill integration-pill--slsk">P2P-сеть</span>
+            <span class="integration-pill integration-pill--neutral">Отдельные треки</span>
+          </div>
+          <p class="settings-integration-banner__text">
+            <strong>Логин и пароль — от сети SoulSeek</strong>, те же, что в клиентах
+            Nicotine+, Soulseek Qt и др. Отдельной «регистрации на сайте» обычно нет: имя пользователя
+            и пароль задаются при первом входе в официальном клиенте. Здесь вводите те же данные.
+            Сброс пароля и справка — на сайте проекта Soulseek.
+          </p>
+          <div class="settings-integration-banner__actions">
+            <button
+              type="button"
+              class="settings-integration-link-btn settings-integration-link-btn--slsk"
+              @click="openExternalUrl(SOULSEEK_ACCOUNT_INFO_URL)"
+            >
+              Справка по аккаунту Soulseek
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p v-else class="settings-integration-compact settings-integration-compact--slsk">
+          <span class="integration-pill integration-pill--slsk integration-pill--tiny">SoulSeek</span>
+          Поиск треков у пользователей сети; учётные данные — от вашего клиента SoulSeek.
+        </p>
+
+        <div v-if="!slskConnected" class="settings-card-body">
+          <p class="settings-card-desc">
+            Войдите, используя логин и пароль от сети SoulSeek (см. плашку выше).
+          </p>
+          <form
+            class="settings-login-form"
+            @submit.prevent="emit('slsk-login', slskFormUser, slskFormPass)"
+          >
+            <input
+              class="login-input"
+              type="text"
+              placeholder="Логин SoulSeek"
+              v-model="slskFormUser"
+              autocomplete="username"
+            />
+            <input
+              class="login-input"
+              type="password"
+              placeholder="Пароль"
+              v-model="slskFormPass"
+              autocomplete="current-password"
+            />
+            <p v-if="slskLoginError" class="login-error">{{ slskLoginError }}</p>
+            <button
+              class="login-btn"
+              type="submit"
+              :disabled="slskLoggingIn || !slskFormUser.trim() || !slskFormPass"
+            >
+              <span v-if="slskLoggingIn" class="spinner" />
+              <template v-else>Войти в SoulSeek</template>
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Внешний вид ────────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Внешний вид</div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="palette" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Тема</div>
+            <div class="settings-card-status">{{ theme === 'light' ? 'Светлая' : theme === 'system' ? 'Системная' : 'Тёмная' }}</div>
+          </div>
+          <div class="theme-toggle">
+            <button
+              :class="['theme-btn', theme === 'dark' ? 'active' : '']"
+              @click="emit('theme-change', 'dark')"
+            >Тёмная</button>
+            <button
+              :class="['theme-btn', theme === 'system' ? 'active' : '']"
+              @click="emit('theme-change', 'system')"
+            >Авто</button>
+            <button
+              :class="['theme-btn', theme === 'light' ? 'active' : '']"
+              @click="emit('theme-change', 'light')"
+            >Светлая</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Звук ─────────────────────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Звук</div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="sliders" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Эквалайзер</div>
+            <div class="settings-card-status">10 полос · Web Audio · локально</div>
+          </div>
+        </div>
+        <div class="settings-card-body settings-card-body--eq">
+          <EqualizerPanel />
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Кэш: быстрая очистка (вне «задротов») ─────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Кэш</div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="trash" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Очистка на диске</div>
+            <div class="settings-card-status">Удалить данные кэша без смены лимитов</div>
+          </div>
+        </div>
+        <div class="settings-card-body">
+          <p class="settings-card-desc cache-quick-desc">
+            Остановится воспроизведение при очистке стриминга. Обложки из торрентов хранятся отдельно.
+          </p>
+          <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
+          <div class="cache-quick-actions">
+            <button
+              type="button"
+              class="ach-btn ach-btn--primary cache-quick-btn"
+              :disabled="cacheClearBusy || cacheSaveBusy"
+              @click="confirmClearStreaming"
+            >
+              <span v-if="cacheClearBusy" class="spinner" />
+              <template v-else>Очистить кэш стриминга</template>
+            </button>
+            <button
+              type="button"
+              class="ach-btn ach-btn--danger cache-quick-btn"
+              :disabled="cacheClearBusy || cacheSaveBusy"
+              @click="confirmClearCoverTorrents"
+            >
+              Очистить кэш обложек (торренты)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Параметры для задротов / Щитпост ─────────────────────────────── -->
+    <div class="settings-section settings-section--bottom-extras">
+      <div class="settings-extra-toggles">
+        <button type="button" class="nerd-toggle nerd-toggle--row" @click="nerdOpen = !nerdOpen">
+          <span class="nerd-toggle-icon" aria-hidden="true">
+            <SystemIcon :name="nerdOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
+          </span>
+          Параметры для задротов
+          <span
+            v-if="hasCustomMirror() || hasHttpProxyConfigured()"
+            class="nerd-custom-dot"
+            title="Нестандартные зеркало или прокси"
+          />
+        </button>
+        <button type="button" class="nerd-toggle nerd-toggle--row" @click="shitpostOpen = !shitpostOpen">
+          <span class="nerd-toggle-icon" aria-hidden="true">
+            <SystemIcon :name="shitpostOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
+          </span>
+          Щитпост
+          <span
+            v-if="achievementsOptIn"
+            class="nerd-custom-dot"
+            title="Достижения включены"
+          />
+        </button>
+      </div>
+
+      <div v-if="shitpostOpen" class="settings-shitpost-panel">
+        <div class="settings-card settings-card--achievements">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="sparkle" :size="22" />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Достижения</div>
+              <div class="settings-card-status">
+                {{
+                  achievementsOptIn
+                    ? `${unlockedAchievementsCount} из ${achievementRowsReal.length}`
+                    : "Выключено"
+                }}
+              </div>
+            </div>
+            <label class="ach-opt-toggle">
+              <input
+                type="checkbox"
+                :checked="achievementsOptIn"
+                class="ach-opt-toggle-input"
+                @change="emit('achievements-opt-in-change', $event.target.checked)"
+              />
+              <span class="ach-opt-toggle-ui" aria-hidden="true" />
+            </label>
+          </div>
+          <div class="settings-card-body settings-card-body--achievements">
+            <p class="settings-card-desc">
+              В
+              <a
+                v-if="telegramChannelUrl"
+                href="#"
+                class="ach-inline-link"
+                @click.prevent="openExternalUrl(telegramChannelUrl)"
+              >щитпост паблике</a>
+              <template v-else>щитпост паблике</template>
+              чел просил «крутые ачивки» (вплоть до рофла про тысячу минут одной песни) — ну на че
+            </p>
+
+            <p v-if="achievementsOptIn" class="settings-card-desc ach-copy ach-copy-tight">
+              Короткий пуш при получении; полный список — по кнопке.
+            </p>
+            <p v-else class="settings-card-desc ach-copy ach-copy--muted ach-copy-tight">
+              Включите переключатель, чтобы считать галочки и пуши; выключите — всё тихо.
+            </p>
+
+            <div v-if="achievementsOptIn" class="ach-actions">
+              <button type="button" class="ach-btn ach-btn--primary" @click="achievementsBrowseOpen = true">
+                Просмотреть достижения…
+              </button>
+              <button type="button" class="ach-btn ach-btn--danger" @click="confirmResetAchievements">
+                Сбросить достижения
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="nerdOpen" class="nerd-stack">
+        <div class="settings-card nerd-card nerd-card--cache-stats">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="clock" :size="22" />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Кэш на диске и статистика</div>
+              <div class="settings-card-status">Лимиты TTL, объёмы и папка данных</div>
+            </div>
+            <button
+              type="button"
+              class="nerd-refresh-stats"
+              :disabled="nerdDiagLoading"
+              title="Обновить статистику"
+              @click="loadNerdDiagnostics"
+            >
+              <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
+              <SystemIcon v-else name="refresh" :size="18" />
+            </button>
+          </div>
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Лимиты задают размер папки стриминга и время жизни неактивных торрентов. Ниже — фактические
+              объёмы RAM и диска (<span class="nerd-inline-ico" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span> обновляет цифры и подтягивает сохранённые лимиты).
+            </p>
+
+            <div class="nerd-merge-label">Лимиты</div>
+            <div class="nerd-cache-fields">
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
+                <input
+                  v-model.number="cacheFormMaxMib"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="50"
+                  max="8192"
+                  step="10"
+                />
+                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
+              </label>
+              <label class="nerd-cache-field">
+                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
+                <input
+                  v-model.number="cacheFormTtlMinutes"
+                  class="login-input nerd-cache-input"
+                  type="number"
+                  min="5"
+                  max="20160"
+                  step="5"
+                />
+                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
+              </label>
+            </div>
+
+            <div class="nerd-cache-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="cacheSaveBusy || cacheClearBusy"
+                @click="saveCacheSettings"
+              >
+                <span v-if="cacheSaveBusy" class="spinner" />
+                <span v-else-if="cacheSaveOk" class="settings-btn-saved">
+                  <SystemIcon name="check" :size="14" />
+                  <span>Сохранено</span>
+                </span>
+                <template v-else>Сохранить лимиты</template>
+              </button>
+            </div>
+
+            <div class="nerd-cache-stats-divider" />
+
+            <p class="settings-card-desc nerd-desc nerd-stats-lead nerd-stats-lead--merge">
+              Оценка RAM и размера каталога данных. «Всего по папке» — полный рекурсивный размер каталога;
+              ниже — два кэша и строка «Прочее» (всё, что не в этих подпапках). Лимит стриминга задаётся
+              выше; при выходе из приложения данные для воспроизведения обычно сбрасываются.
+            </p>
+
+            <p v-if="nerdDiagError" class="login-error nerd-probe-error">{{ nerdDiagError }}</p>
+
+            <div v-else-if="nerdDiagLoading && !nerdDiag" class="nerd-stats-loading">
+              <span class="spinner" />
+              <span>Считаем размеры…</span>
+            </div>
+
+            <div v-else-if="nerdDiag" class="nerd-stats-body">
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Память процесса (RSS)</span>
+                  <span class="nerd-stat-value">
+                    {{
+                      nerdDiag.residentMemoryBytes != null
+                        ? formatBytes(nerdDiag.residentMemoryBytes)
+                        : "—"
+                    }}
+                  </span>
+                </div>
+                <p class="nerd-stat-hint">Оценка «сколько оперативной памяти» занимает приложение сейчас.</p>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Папка данных (всего)</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.totalAppDataBytes) }}</span>
+                </div>
+                <p class="nerd-stat-path">{{ nerdDiag.appDataPath }}</p>
+                <p class="nerd-stat-hint">
+                  Включает все файлы в этом пути, не только папки кэша ниже.
+                </p>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Кэш стриминга</span>
+                  <span class="nerd-stat-value">
+                    {{ formatBytes(nerdDiag.streamCacheBytes) }}
+                    <span class="nerd-stat-of">
+                      / {{ formatBytes(nerdDiag.streamCacheLimitBytes) }}
+                    </span>
+                  </span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Папка «{{ nerdDiag.streamCacheDirLabel }}»: фрагменты треков для воспроизведения.
+                  Старые раздачи могут удаляться, если кэш переполняется или давно не использовались.
+                </p>
+                <div
+                  v-if="nerdDiag.streamCacheLimitBytes > 0"
+                  class="nerd-cache-bar"
+                  :title="`${Math.min(100, Math.round((nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100))}%`"
+                >
+                  <div
+                    class="nerd-cache-bar-fill"
+                    :style="{
+                      width: `${Math.min(
+                        100,
+                        (nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100
+                      )}%`,
+                    }"
+                  />
+                </div>
+              </div>
+
+              <div class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Кэш обложек (торренты)</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.coverTorrentCacheBytes) }}</span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Отдельная папка «{{ nerdDiag.coverCacheDirLabel }}» для обложек из раздач.
+                </p>
+              </div>
+
+              <div v-if="nerdDiagOtherBytes > 0" class="nerd-stat-block">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Прочее в каталоге данных</span>
+                  <span class="nerd-stat-value">{{ formatBytes(nerdDiagOtherBytes) }}</span>
+                </div>
+                <p class="nerd-stat-hint">
+                  Разница между «всего по папке» и суммой двух кэшей выше: базы SQLite, состояние
+                  libtorrent / сессии стриминга, fastresume, журналы и другие файлы вне этих подпапок.
+                </p>
+              </div>
+
+              <div class="nerd-stat-block nerd-stat-block--inline">
+                <div class="nerd-stat-row">
+                  <span class="nerd-stat-label">Торрентов в сессии стриминга</span>
+                  <span class="nerd-stat-value">{{ nerdDiag.streamingTorrentCount }}</span>
+                </div>
+              </div>
+
+              <div class="nerd-policy-box">
+                <div class="nerd-policy-title">Как настроен кэш</div>
+                <ul class="nerd-policy-list">
+                  <li>
+                    Текущий лимит папки стриминга:
+                    <strong>{{ formatBytes(nerdDiag.streamCacheLimitBytes) }}</strong>
+                    — при превышении вытесняются старые неактивные раздачи (лимиты задаются в блоке выше).
+                  </li>
+                  <li>
+                    Неиспользуемые торренты старше
+                    <strong>{{ formatTtlHuman(nerdDiag.streamCacheTtlSecs) }}</strong>
+                    могут быть удалены (пока приложение запущено или при следующем старте).
+                  </li>
+                  <li>
+                    Запись на диск буферизуется примерно
+                    <strong>{{ nerdDiag.deferWritesMb }} МиБ</strong>
+                    — меньше мелких обращений к диску во время прослушивания.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <p v-else class="nerd-stat-hint">
+              Нажми
+              <span class="nerd-inline-ico nerd-inline-ico--btn" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span>
+              чтобы обновить.
+            </p>
+          </div>
+        </div>
+
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="mirror" :size="22" />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Зеркало Rutracker</div>
+              <div class="settings-card-status">Адрес сайта для подключения</div>
+            </div>
+          </div>
+
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Если доступ к основному домену закрыт, включи автовыбор — приложение
+              переберёт известные зеркала и возьмёт первое отвечающее. Либо выбери
+              зеркало вручную из списка или введи свой URL.
+            </p>
+
+            <div class="nerd-mode-row" role="radiogroup" aria-label="Режим зеркала">
+              <label class="nerd-radio">
+                <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_AUTO" />
+                Автовыбор зеркала
+              </label>
+              <label class="nerd-radio">
+                <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_MANUAL" />
+                Вручную
+              </label>
+            </div>
+
+            <template v-if="mirrorMode === MIRROR_MODE_AUTO">
+              <p class="settings-card-desc nerd-desc nerd-active-mirror">
+                Сейчас:
+                <span class="nerd-mirror-host">{{ hostLabel(activeMirrorDisplay) }}</span>
+              </p>
+              <div class="nerd-mirror-actions">
+                <button
+                  type="button"
+                  class="login-btn nerd-save-btn"
+                  :disabled="nerdProbeBusy"
+                  @click="saveMirror"
+                >
+                  <span v-if="nerdProbeBusy" class="spinner" />
+                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
+                    <SystemIcon name="check" :size="14" />
+                    <span>Сохранено</span>
+                  </span>
+                  <template v-else>Сохранить</template>
+                </button>
+                <button
+                  v-if="persistedMirrorMode === MIRROR_MODE_AUTO"
+                  type="button"
+                  class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                  :disabled="nerdProbeBusy"
+                  @click="refreshAutoMirror"
+                >
+                  Обновить зеркало
+                </button>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="nerd-mirror-row nerd-mirror-row--stack">
+                <select
+                  class="login-input nerd-mirror-select"
+                  v-model="mirrorSelect"
+                  @change="onMirrorSelectChange"
+                >
+                  <option v-for="u in KNOWN_MIRRORS" :key="u" :value="u">
+                    {{ hostLabel(u) }}
+                  </option>
+                  <option value="__custom__">Свой URL…</option>
+                </select>
+                <input
+                  v-if="mirrorSelect === '__custom__'"
+                  class="login-input nerd-mirror-input"
+                  type="url"
+                  placeholder="https://…"
+                  v-model="mirrorUrl"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="nerd-mirror-row">
+                <button
+                  type="button"
+                  class="login-btn nerd-save-btn"
+                  :disabled="nerdProbeBusy"
+                  @click="saveMirror"
+                >
+                  <span v-if="nerdProbeBusy" class="spinner" />
+                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
+                    <SystemIcon name="check" :size="14" />
+                    <span>Сохранено</span>
+                  </span>
+                  <template v-else>Сохранить</template>
+                </button>
+              </div>
+            </template>
+
+            <p v-if="nerdProbeError" class="login-error nerd-probe-error">{{ nerdProbeError }}</p>
+
+            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
+              Список зеркал: rutracker.net, rutracker.org, rutracker.nl, rutracker.cr,
+              maintracker.org, rutracker.lib. При смене зеркала сессия может сброситься —
+              войди в Rutracker снова.
+            </p>
+
+            <button
+              v-if="hasCustomMirror()"
+              type="button"
+              class="nerd-reset-btn"
+              @click="doResetMirror"
+            >
+              Сбросить к rutracker.net (ручной режим)
+            </button>
+          </div>
+        </div>
+
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="globe" :size="22" />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">HTTP-прокси</div>
+              <div class="settings-card-status">Тип HTTP · пресеты blockme</div>
+            </div>
+          </div>
+          <div class="settings-card-body">
+            <p class="settings-card-desc nerd-desc">
+              Исходящие запросы бэкенда (Rutracker, обложки iTunes) пойдут через выбранный
+              прокси. Торренты и стриминг к ним не относятся.
+            </p>
+            <div class="nerd-mirror-row nerd-mirror-row--stack">
+              <select v-model="proxySelect" class="login-input nerd-mirror-select">
+                <option :value="PROXY_SELECT_NONE">Нет</option>
+                <option :value="PROXY_SELECT_PX1">px1.blockme.site · порт 23128</option>
+                <option :value="PROXY_SELECT_PX2">px2.blockme.site · порт 3128</option>
+              </select>
+            </div>
+            <div class="nerd-mirror-actions">
+              <button
+                type="button"
+                class="login-btn nerd-save-btn"
+                :disabled="proxySaveBusy || proxyProbeBusy"
+                @click="saveProxy"
+              >
+                <span v-if="proxySaveBusy" class="spinner" />
+                <span v-else-if="proxySaved" class="settings-btn-saved">
+                  <SystemIcon name="check" :size="14" />
+                  <span>Сохранено</span>
+                </span>
+                <template v-else>Сохранить</template>
+              </button>
+              <button
+                type="button"
+                class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                :disabled="proxyProbeBusy || proxySaveBusy"
+                @click="probeProxy"
+              >
+                <span v-if="proxyProbeBusy" class="spinner" />
+                <template v-else>Проверить</template>
+              </button>
+            </div>
+            <p v-if="proxyProbeOk" class="settings-card-desc nerd-desc nerd-proxy-probe-ok">
+              Запрос к текущему зеркалу (forum/index.php) прошёл — для выбранного варианта прокси
+              соединение работает.
+            </p>
+            <p v-if="proxyProbeError" class="login-error nerd-probe-error">{{ proxyProbeError }}</p>
+            <p v-if="proxySaveError" class="login-error nerd-probe-error">{{ proxySaveError }}</p>
+            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
+              Проверка использует выбранный выше вариант (можно до «Сохранить») и адрес зеркала из
+              блока выше. По умолчанию без прокси. Порты: 23128 — для px1; 3128 — для px2.
+            </p>
+          </div>
+        </div>
+
+        <div class="settings-card nerd-card">
+          <div class="settings-card-header">
+            <div class="settings-card-icon settings-card-icon--app">
+              <SystemIcon name="bug" :size="22" />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Журнал отладки</div>
+              <div class="settings-card-status">Клики, экраны, плеер, торренты</div>
+            </div>
+            <label class="nerd-toggle-inline">
+              <input
+                type="checkbox"
+                :checked="appDebugEnabled"
+                @change="onAppDebugChange"
+              />
+            </label>
+          </div>
+          <div v-if="appDebugEnabled" class="settings-card-body">
+            <button
+              type="button"
+              class="login-btn nerd-save-btn"
+              @click="openAppDebugLogWindow"
+            >
+              Открыть журнал
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <AchievementsModal v-model:open="achievementsBrowseOpen" :rows="achievementRows" />
+    </div>
+
+    <!-- ── О приложении ───────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">О приложении</div>
+
+      <div ref="aboutStackEl" class="settings-about-stack">
+        <div ref="aboutAppCardEl" class="settings-card settings-about-stack__app">
+          <div class="settings-card-header settings-card-header--about">
+            <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
+              <img
+                class="settings-about-logo-img"
+                :src="appIconSrc"
+                alt="Нигде"
+                width="72"
+                height="72"
+              />
+            </div>
+            <div class="settings-card-info">
+              <div class="settings-card-name">Нигде</div>
+            <div class="settings-card-status">Версия {{ appVersion }} · Tauri + Vue 3</div>
+            <div
+              v-if="githubProjectUrl || telegramChannelUrl"
+              class="settings-about-links"
+            >
+              <a
+                v-if="githubProjectUrl"
+                class="settings-about-link"
+                :href="githubProjectUrl"
+                rel="noopener noreferrer"
+                @click.prevent="openExternalUrl(githubProjectUrl)"
+              >Проект на GitHub</a>
+              <span
+                v-if="githubProjectUrl && telegramChannelUrl"
+                class="settings-about-links-sep"
+                aria-hidden="true"
+              >·</span>
+              <a
+                v-if="telegramChannelUrl"
+                class="settings-about-link"
+                :href="telegramChannelUrl"
+                rel="noopener noreferrer"
+                title="Канал в Telegram"
+                @click.prevent="openExternalUrl(telegramChannelUrl)"
+              >Щитпост паблик</a>
+            </div>
+            <div v-if="githubReleaseApiUrl" class="settings-release-check">
+              <template v-if="releaseCheckState === 'loading'">
+                <span class="settings-status-dot status-loading" />
+                <span>Проверяем обновления…</span>
+              </template>
+              <template v-else-if="releaseCheckState === 'error'">
+                <span class="settings-status-dot status-off" />
+                <span>Не удалось проверить обновления</span>
+                <button
+                  type="button"
+                  class="settings-release-retry"
+                  @click="runReleaseCheck"
+                >
+                  Повторить
+                </button>
+              </template>
+              <template v-else-if="releaseCheckState === 'latest'">
+                <span class="settings-status-dot status-on" />
+                <span>Это последняя версия</span>
+              </template>
+              <template v-else-if="releaseCheckState === 'outdated'">
+                <span class="settings-status-dot status-off" />
+                <span>Доступна версия {{ releaseRemoteTag }}</span>
+                <a
+                  v-if="releasePageUrl"
+                  class="settings-release-link"
+                  :href="releasePageUrl"
+                  rel="noopener noreferrer"
+                  @click.prevent="openExternalUrl(releasePageUrl)"
+                >Релиз на GitHub</a>
+              </template>
+              <template v-else-if="releaseCheckState === 'ahead'">
+                <span class="settings-status-dot status-on" />
+                <span>Сборка новее опубликованного релиза ({{ releaseRemoteTag }})</span>
+              </template>
+              <template v-else-if="releaseCheckState === 'none'">
+                <span class="settings-status-dot status-off" />
+                <span>На GitHub пока нет релизов</span>
+              </template>
+            </div>
+          </div>
+        </div>
+        </div>
+
+        <div class="settings-about-connector" aria-hidden="true">
+          <span class="settings-about-connector__rail" />
+          <span class="settings-about-connector__pulse" />
+          <span class="settings-about-connector__pulse settings-about-connector__pulse--echo" />
+        </div>
+
+        <!-- vozduxan -->
+        <div ref="aboutVozCardEl" class="settings-card settings-card--vozduxan">
+        <div class="settings-card-header settings-card-header--about">
+          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo settings-card-icon--vozduxan-logo">
+            <img
+              class="settings-about-logo-img settings-about-vozduxan-img"
+              :src="vozduxanLogoSrc"
+              alt=""
+              width="72"
+              height="72"
+            />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name settings-card-name--with-dep">
+              <span>vozduxan</span>
+              <template v-if="vozduxanVersion">
+                <span class="settings-about-dep-version">v{{ vozduxanVersion }}</span>
+              </template>
+            </div>
+            <div class="settings-card-status">Стриминг аудио из торрент-роёв в реальном времени · C++ · libtorrent</div>
+            <div class="settings-about-links">
+              <a
+                class="settings-about-link"
+                href="https://github.com/neegde/vozduxan"
+                rel="noopener noreferrer"
+                @click.prevent="openExternalUrl('https://github.com/neegde/vozduxan')"
+              >GitHub</a>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+
+  </div>

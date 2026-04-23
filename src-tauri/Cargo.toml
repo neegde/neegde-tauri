@@ -37,6 +37,13 @@ discord-rich-presence = "1.1"
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = "2"
+# Resolver — Brave Search's anti-bot challenge is Argon2id PoW; we need the
+# algorithm, random salt bytes, and hex formatting to solve it.
+argon2 = "0.5"
+rand = "0.8"
+hex = "0.4"
+# HTML title parsing for web-scrape resolver sources (Brave, DDG, Mojeek).
+regex = "1"
 
 [profile.release]
 panic = "abort"
