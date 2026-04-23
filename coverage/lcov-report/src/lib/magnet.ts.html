@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">85.18% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>27/27</span>
+                <span class='fraction'>23/27</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">95% </span>
+                <span class="strong">55% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>19/20</span>
+                <span class='fraction'>11/20</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">86.95% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>23/23</span>
+                <span class='fraction'>20/23</span>
             </div>
         
             
@@ -122,14 +122,14 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">15x</span>
-<span class="cline-any cline-yes">15x</span>
-<span class="cline-any cline-yes">15x</span>
-<span class="cline-any cline-yes">15x</span>
-<span class="cline-any cline-yes">10x</span>
-<span class="cline-any cline-yes">10x</span>
-<span class="cline-any cline-yes">10x</span>
-<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -137,12 +137,12 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">19x</span>
-<span class="cline-any cline-yes">19x</span>
-<span class="cline-any cline-yes">19x</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -150,16 +150,16 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Pure helpers for working with `magnet:?…` URIs.
@@ -171,13 +171,13 @@
  * Returns the URI or null if none found.
  */
 export function extractMagnetUri(raw: unknown): string | null {
-  const s = String(raw ?? "").trim();
+  const s = String(raw ?? <span class="branch-1 cbranch-no" title="branch not covered" >"")</span>.trim();
   const lower = s.toLowerCase();
   const i = lower.indexOf("magnet:?");
   if (i &lt; 0) return null;
   const slice = s.slice(i);
   const end = slice.search(/\s/);
-  const core = end &lt; 0 ? slice : slice.slice(0, end);
+  const core = end &lt; 0 ? slice : <span class="branch-1 cbranch-no" title="branch not covered" >slice.slice(0, end);</span>
   return core.replace(/[),.;&gt;]+$/g, "");
 }
 &nbsp;
@@ -186,12 +186,12 @@ export function extractMagnetUri(raw: unknown): string | null {
  * Returns a lowercase hash string or null.
  */
 export function parseBtihFromMagnet(magnet: unknown): string | null {
-  const u = String(magnet ?? "");
+  const u = String(magnet ?? <span class="branch-1 cbranch-no" title="branch not covered" >"")</span>;
   const hex = /btih:([a-fA-F0-9]{40})/i.exec(u);
-  if (hex) return hex[1]!.toLowerCase();
-  const b32 = /btih:([a-z2-7]{32})/i.exec(u);
-  if (b32) return b32[1]!.toLowerCase();
-  return null;
+  <span class="missing-if-branch" title="else path not taken" >E</span>if (hex) return hex[1]!.toLowerCase();
+  const b32 = <span class="cstat-no" title="statement not covered" >/btih:([a-z2-7]{32})/i.exec(u);</span>
+<span class="cstat-no" title="statement not covered" >  if (b32) <span class="cstat-no" title="statement not covered" >return b32[1]!.toLowerCase();</span></span>
+<span class="cstat-no" title="statement not covered" >  return null;</span>
 }
 &nbsp;
 /**
@@ -199,7 +199,7 @@ export function parseBtihFromMagnet(magnet: unknown): string | null {
  * else a short-hash fallback. Always returns a non-empty string.
  */
 export function magnetTitleFromMagnet(magnet: unknown): string {
-  const u = String(magnet ?? "");
+  const u = String(magnet ?? <span class="branch-1 cbranch-no" title="branch not covered" >"")</span>;
   const dn = /[?&amp;]dn=([^&amp;]+)/.exec(u);
   if (dn) {
     const spaced = dn[1]!.replace(/\+/g, " ");
@@ -208,7 +208,7 @@ export function magnetTitleFromMagnet(magnet: unknown): string {
     <span class="missing-if-branch" title="else path not taken" >E</span>if (t) return t;
   }
   const h = parseBtihFromMagnet(u);
-  return h ? `Раздача ${h.slice(0, 8)}…` : "Раздача по ссылке";
+  return h ? `Раздача ${h.slice(0, 8)}…` : <span class="branch-1 cbranch-no" title="branch not covered" >"Раздача по ссылке";</span>
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -217,7 +217,7 @@ export function magnetTitleFromMagnet(magnet: unknown): string {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T17:48:33.155Z
+                at 2026-04-23T18:54:24.933Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

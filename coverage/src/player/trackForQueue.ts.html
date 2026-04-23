@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">52.63% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>19/19</span>
+                <span class='fraction'>10/19</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">91.42% </span>
+                <span class="strong">42.85% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>32/35</span>
+                <span class='fraction'>15/35</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">75% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>4/4</span>
+                <span class='fraction'>3/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">66.66% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>15/15</span>
+                <span class='fraction'>10/15</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -207,11 +207,11 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">149x</span>
-<span class="cline-any cline-yes">145x</span>
+<span class="cline-any cline-yes">144x</span>
+<span class="cline-any cline-yes">144x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -238,11 +238,11 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">12x</span>
-<span class="cline-any cline-yes">12x</span>
-<span class="cline-any cline-yes">12x</span>
-<span class="cline-any cline-yes">11x</span>
-<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">18x</span>
+<span class="cline-any cline-yes">18x</span>
+<span class="cline-any cline-yes">18x</span>
+<span class="cline-any cline-yes">18x</span>
+<span class="cline-any cline-yes">18x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -283,9 +283,9 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -309,9 +309,9 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">10x</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">18x</span>
+<span class="cline-any cline-yes">18x</span>
+<span class="cline-any cline-yes">18x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Builders + registration helpers that attach a Track entity to the queue.
@@ -332,11 +332,11 @@ export function rtTrackId(
   magnetBtih: string | null | undefined,
   fileIdx: number,
 ): string | null {
-  if (topicId != null &amp;&amp; String(topicId).trim() !== "") {
+  <span class="missing-if-branch" title="else path not taken" >E</span>if (topicId != null &amp;&amp; String(topicId).trim() !== "") {
     return `rt:track:${topicId}:${fileIdx}`;
   }
-  if (magnetBtih) return `magnet:track:${magnetBtih}:${fileIdx}`;
-  return null;
+<span class="cstat-no" title="statement not covered" >  if (magnetBtih) <span class="cstat-no" title="statement not covered" >return `magnet:track:${magnetBtih}:${fileIdx}`;</span></span>
+<span class="cstat-no" title="statement not covered" >  return null;</span>
 }
 &nbsp;
 interface RtFile {
@@ -363,10 +363,10 @@ export function buildRtTrackEntity(
   coverFileIdx: number | null,
   albumDirPath: string | null,
 ): TrackData | null {
-  const topicId = torrent?.__topicId ?? torrent?.id ?? null;
+  const topicId = torrent?.__topicId ?? torrent?.id ?? <span class="branch-2 cbranch-no" title="branch not covered" >null;</span>
   const id = rtTrackId(topicId as string | number | null, magnetBtih, f.origIdx);
-  if (!id) return null;
-  const kind = torrent?.source === "magnet" ? "magnet" : "rutracker";
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (!id) <span class="cstat-no" title="statement not covered" >return null;</span>
+  const kind = torrent?.source === "magnet" ? <span class="branch-0 cbranch-no" title="branch not covered" >"magnet" : "</span>rutracker";
   return {
     type: "track",
     id,
@@ -405,22 +405,22 @@ export interface SlskTrackInput {
   albumTitle?: string | null;
 }
 &nbsp;
-export function buildSlskTrackEntity({
+export function <span class="fstat-no" title="function not covered" >buildSlskTrackEntity({</span>
   username, filepath, size, filename, artist, cover, albumTitle,
 }: SlskTrackInput): TrackData | null {
-  if (!username || !filepath) return null;
-  const id = `slsk:track:${username}|${filepath}`;
-  return {
+<span class="cstat-no" title="statement not covered" >  if (!username || !filepath) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+  const id = <span class="cstat-no" title="statement not covered" >`slsk:track:${username}|${filepath}`;</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
     type: "track",
     id,
     title: filename,
     artist: artist ?? null,
-    albumTitle: albumTitle ?? <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
+    albumTitle: albumTitle ?? null,
     fileName: filename,
     format: null,
     bitrate: null,
     duration: null,
-    size: size ?? <span class="branch-1 cbranch-no" title="branch not covered" >null,</span>
+    size: size ?? null,
     albumId: null,
     sources: [{
       kind: "soulseek",
@@ -434,7 +434,7 @@ export function buildSlskTrackEntity({
 &nbsp;
 /** Register + return the id. Null when the entity couldn't be built. */
 export function registerAndGetId(entity: TrackData | null | undefined): string | null {
-  if (!entity) return null;
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (!entity) <span class="cstat-no" title="statement not covered" >return null;</span>
   registerEntity(entity);
   return entity.id;
 }
@@ -445,7 +445,7 @@ export function registerAndGetId(entity: TrackData | null | undefined): string |
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T17:48:33.122Z
+                at 2026-04-23T18:54:24.905Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

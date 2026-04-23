@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">75% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>16/16</span>
+                <span class='fraction'>12/16</span>
             </div>
         
             
@@ -37,16 +37,16 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">73.33% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>15/15</span>
+                <span class='fraction'>11/15</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">75% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>16/16</span>
+                <span class='fraction'>12/16</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line medium'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -175,33 +175,33 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">230x</span>
+<span class="cline-any cline-yes">270x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">230x</span>
+<span class="cline-any cline-yes">270x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1401x</span>
+<span class="cline-any cline-yes">1269x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">169x</span>
+<span class="cline-any cline-yes">206x</span>
+<span class="cline-any cline-yes">67x</span>
+<span class="cline-any cline-yes">1303x</span>
 <span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">109x</span>
-<span class="cline-any cline-yes">189x</span>
-<span class="cline-any cline-yes">68x</span>
-<span class="cline-any cline-yes">935x</span>
-<span class="cline-any cline-yes">226x</span>
-<span class="cline-any cline-yes">92x</span>
-<span class="cline-any cline-yes">83x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">213x</span>
+<span class="cline-any cline-yes">268x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">618x</span>
+<span class="cline-any cline-yes">593x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">43x</span>
+<span class="cline-any cline-yes">21x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -241,7 +241,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">275x</span>
+<span class="cline-any cline-yes">326x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Abstract Track — base of the per-source class hierarchy.
@@ -272,15 +272,15 @@ export abstract class Track {
   // ── Identity ──────────────────────────────────────────────────────────────
 &nbsp;
   get id(): string            { return this.data.id; }
-  get title(): string         { return this.data.title; }
+  get <span class="fstat-no" title="function not covered" >title(): string         {</span> <span class="cstat-no" title="statement not covered" >return this.data.title; }</span>
   get artist(): string | null { return this.data.artist; }
   get albumId(): string | null { return this.data.albumId; }
   get albumTitle(): string | null { return this.data.albumTitle ?? null; }
   get fileName(): string      { return this.data.fileName; }
   get size(): number | null   { return this.data.size; }
-  get bitrate(): number | null { return this.data.bitrate; }
-  get duration(): number | null { return this.data.duration; }
-  get format(): string | null { return this.data.format; }
+  get <span class="fstat-no" title="function not covered" >bitrate(): number | null {</span> <span class="cstat-no" title="statement not covered" >return this.data.bitrate; }</span>
+  get <span class="fstat-no" title="function not covered" >duration(): number | null {</span> <span class="cstat-no" title="statement not covered" >return this.data.duration; }</span>
+  get <span class="fstat-no" title="function not covered" >format(): string | null {</span> <span class="cstat-no" title="statement not covered" >return this.data.format; }</span>
 &nbsp;
   /** Source kind — the discriminator that drove subclass selection. */
   get kind(): ProviderKind { return this.data.sources[0].kind; }
@@ -340,7 +340,7 @@ export abstract class Track {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T17:48:33.155Z
+                at 2026-04-23T18:54:24.933Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

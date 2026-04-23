@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">5.88% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>17/17</span>
+                <span class='fraction'>1/17</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>16/16</span>
+                <span class='fraction'>0/16</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>3/3</span>
+                <span class='fraction'>0/3</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">8.33% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>12/12</span>
+                <span class='fraction'>1/12</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -114,25 +114,25 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">13x</span>
-<span class="cline-any cline-yes">13x</span>
-<span class="cline-any cline-yes">7x</span>
-<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -141,7 +141,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Small pure formatting helpers used by the player's status UI.
@@ -153,23 +153,23 @@
  *   120    → "~2 мин"
  *   7260   → "~2 ч 1 мин"
  */
-export function fmtEtaHuman(sec: unknown): string | null {
-  const n = Number(sec);
-  if (!Number.isFinite(n) || n &lt;= 0) return null;
-  if (n &lt; 60) return `~${Math.max(1, Math.round(n))} с`;
-  if (n &lt; 3600) return `~${Math.round(n / 60)} мин`;
-  const h = Math.floor(n / 3600);
-  const m = Math.round((n % 3600) / 60);
-  return m ? `~${h} ч ${m} мин` : `~${h} ч`;
+export function <span class="fstat-no" title="function not covered" >fmtEtaHuman(s</span>ec: unknown): string | null {
+  const n = <span class="cstat-no" title="statement not covered" >Number(sec);</span>
+<span class="cstat-no" title="statement not covered" >  if (!Number.isFinite(n) || n &lt;= 0) <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (n &lt; 60) <span class="cstat-no" title="statement not covered" >return `~${Math.max(1, Math.round(n))} с`;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (n &lt; 3600) <span class="cstat-no" title="statement not covered" >return `~${Math.round(n / 60)} мин`;</span></span>
+  const h = <span class="cstat-no" title="statement not covered" >Math.floor(n / 3600);</span>
+  const m = <span class="cstat-no" title="statement not covered" >Math.round((n % 3600) / 60);</span>
+<span class="cstat-no" title="statement not covered" >  return m ? `~${h} ч ${m} мин` : `~${h} ч`;</span>
 }
 &nbsp;
 /**
  * Byte-rate formatter. Returns "1.2 МБ/с" / "450 КБ/с" / "900 Б/с".
  */
-export function fmtRate(bytesPerSec: number): string {
-  if (bytesPerSec &gt;= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} МБ/с`;
-  if (bytesPerSec &gt;= 1024)      return `${Math.round(bytesPerSec / 1024)} КБ/с`;
-  return `${bytesPerSec} Б/с`;
+export function <span class="fstat-no" title="function not covered" >fmtRate(b</span>ytesPerSec: number): string {
+<span class="cstat-no" title="statement not covered" >  if (bytesPerSec &gt;= 1_000_000) <span class="cstat-no" title="statement not covered" >return `${(bytesPerSec / 1_000_000).toFixed(1)} МБ/с`;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (bytesPerSec &gt;= 1024)      <span class="cstat-no" title="statement not covered" >return `${Math.round(bytesPerSec / 1024)} КБ/с`;</span></span>
+<span class="cstat-no" title="statement not covered" >  return `${bytesPerSec} Б/с`;</span>
 }
 &nbsp;
 const MEDIA_ERR_NAMES: Record&lt;number, string&gt; = {
@@ -180,8 +180,8 @@ const MEDIA_ERR_NAMES: Record&lt;number, string&gt; = {
 };
 &nbsp;
 /** HTMLMediaElement `error.code` → readable constant name. */
-export function describeMediaError(code: number): string {
-  return MEDIA_ERR_NAMES[code] ?? `UNKNOWN(${code})`;
+export function <span class="fstat-no" title="function not covered" >describeMediaError(c</span>ode: number): string {
+<span class="cstat-no" title="statement not covered" >  return MEDIA_ERR_NAMES[code] ?? `UNKNOWN(${code})`;</span>
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -190,7 +190,7 @@ export function describeMediaError(code: number): string {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T17:48:33.155Z
+                at 2026-04-23T18:54:24.933Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">78.94% </span>
+                <span class="strong">42.1% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>15/19</span>
+                <span class='fraction'>8/19</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">58.33% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>7/12</span>
+                <span class='fraction'>0/12</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">20% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>5/5</span>
+                <span class='fraction'>1/5</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">76.47% </span>
+                <span class="strong">41.17% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>13/17</span>
+                <span class='fraction'>7/17</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line medium'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -113,7 +113,7 @@
 <a name='L48'></a><a href='#L48'>48</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -123,34 +123,34 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">12x</span>
-<span class="cline-any cline-yes">12x</span>
-<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">12x</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">12x</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -177,27 +177,27 @@ const emit = defineEmits([
 &nbsp;
 const hasCanonical = computed(() =&gt; Boolean(props.resolved?.canonical?.artist));
 const isArtistCanonical = computed(
-  () =&gt; Boolean(props.resolved?.canonical?.artist) &amp;&amp; !props.resolved?.canonical?.title,
+<span class="fstat-no" title="function not covered" >  ()</span> =&gt; <span class="cstat-no" title="statement not covered" >Boolean(props.resolved?.canonical?.artist) &amp;&amp; !props.resolved?.canonical?.title,</span>
 );
 &nbsp;
-const intentLabel = computed(() =&gt; {
-  switch (props.resolved?.intent) {
-    case "track":  return "Трек";
-    case "artist": return "Исполнитель";
-<span class="branch-2 cbranch-no" title="branch not covered" >    case "album":  <span class="cstat-no" title="statement not covered" >return "Альбом";</span></span>
-<span class="branch-3 cbranch-no" title="branch not covered" >    case "lyric":  <span class="cstat-no" title="statement not covered" >return "Текст песни";</span></span>
-<span class="branch-4 cbranch-no" title="branch not covered" >    case "raw":    <span class="cstat-no" title="statement not covered" >return "Как есть";</span></span>
-<span class="branch-5 cbranch-no" title="branch not covered" >    default:       <span class="cstat-no" title="statement not covered" >return "";</span></span>
+const intentLabel = computed(<span class="fstat-no" title="function not covered" >()</span> =&gt; {
+<span class="cstat-no" title="statement not covered" >  switch (props.resolved?.intent) {</span>
+    case "track":  <span class="cstat-no" title="statement not covered" >return "Трек";</span>
+    case "artist": <span class="cstat-no" title="statement not covered" >return "Исполнитель";</span>
+    case "album":  <span class="cstat-no" title="statement not covered" >return "Альбом";</span>
+    case "lyric":  <span class="cstat-no" title="statement not covered" >return "Текст песни";</span>
+    case "raw":    <span class="cstat-no" title="statement not covered" >return "Как есть";</span>
+    default:       <span class="cstat-no" title="statement not covered" >return "";</span>
   }
 });
 &nbsp;
-const sourcesText = computed(() =&gt; {
-  const top = props.resolved?.candidates?.[0];
-  return (top?.sources ?? []).join(", ");
+const sourcesText = computed(<span class="fstat-no" title="function not covered" >()</span> =&gt; {
+  const top = <span class="cstat-no" title="statement not covered" >props.resolved?.candidates?.[0];</span>
+<span class="cstat-no" title="statement not covered" >  return (top?.sources ?? []).join(", ");</span>
 });
 &nbsp;
 /** Debug-only: up to 4 alternative candidates besides the canonical one. */
-const alternatives = computed(() =&gt; (props.resolved?.candidates ?? <span class="branch-1 cbranch-no" title="branch not covered" >[])</span>.slice(1, 5));
+const alternatives = computed(<span class="fstat-no" title="function not covered" >()</span> =&gt; <span class="cstat-no" title="statement not covered" >(props.resolved?.candidates ?? []).slice(1, 5))</span>;
 &lt;/script&gt;
 &nbsp;
 &lt;template src="./SearchIntentHint.html"&gt;&lt;/template&gt;
@@ -211,7 +211,7 @@ const alternatives = computed(() =&gt; (props.resolved?.candidates ?? <span clas
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T17:48:33.155Z
+                at 2026-04-23T18:54:24.933Z
             </div>
         <script src="../../../prettify.js"></script>
         <script>

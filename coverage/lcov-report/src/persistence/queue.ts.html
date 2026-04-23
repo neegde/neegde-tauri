@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">93.75% </span>
+                <span class="strong">81.25% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>15/16</span>
+                <span class='fraction'>13/16</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">62.5% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>5/8</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">75% </span>
-                <span class="quiet">Branches</span>
-                <span class='fraction'>6/8</span>
-            </div>
-        
-            
-            <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>4/4</span>
+                <span class='fraction'>3/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">92.3% </span>
+                <span class="strong">84.61% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>12/13</span>
+                <span class='fraction'>11/13</span>
             </div>
         
             
@@ -107,7 +107,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -115,29 +115,29 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">82x</span>
-<span class="cline-any cline-yes">82x</span>
-<span class="cline-any cline-yes">82x</span>
-<span class="cline-any cline-yes">82x</span>
-<span class="cline-any cline-yes">7x</span>
-<span class="cline-any cline-yes">10x</span>
-<span class="cline-any cline-yes">82x</span>
-<span class="cline-any cline-yes">82x</span>
+<span class="cline-any cline-yes">195x</span>
+<span class="cline-any cline-yes">195x</span>
+<span class="cline-any cline-yes">195x</span>
+<span class="cline-any cline-yes">195x</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">23x</span>
+<span class="cline-any cline-yes">195x</span>
+<span class="cline-any cline-yes">195x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">62x</span>
-<span class="cline-any cline-yes">62x</span>
+<span class="cline-any cline-yes">26x</span>
+<span class="cline-any cline-yes">26x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Persisted playback queue — the Player's session across app restarts.
@@ -160,7 +160,7 @@ export function loadQueueSnapshot(): QueueSnapshot {
     const p = JSON.parse(raw) as Partial&lt;QueueSnapshot&gt;;
     const trackIds = Array.isArray(p.trackIds) ? p.trackIds.filter((x) =&gt; typeof x === "string") : <span class="branch-1 cbranch-no" title="branch not covered" >[];</span>
     const pos = Number.isFinite(p.pos) ? Math.max(0, Math.min(Number(p.pos), trackIds.length - 1)) : <span class="branch-1 cbranch-no" title="branch not covered" >0;</span>
-    return { trackIds, pos: trackIds.length ? pos : 0 };
+    return { trackIds, pos: trackIds.length ? pos : <span class="branch-1 cbranch-no" title="branch not covered" >0 }</span>;
   } catch {
 <span class="cstat-no" title="statement not covered" >    return empty;</span>
   }
@@ -174,8 +174,8 @@ export function saveQueueSnapshot(s: QueueSnapshot): void {
   }
 }
 &nbsp;
-export function clearQueueSnapshot(): void {
-  try { localStorage.removeItem(QUEUE_STORAGE_KEY); } catch { /* ignore */ }
+export function <span class="fstat-no" title="function not covered" >clearQueueSnapshot(): void {</span>
+<span class="cstat-no" title="statement not covered" >  try { <span class="cstat-no" title="statement not covered" >localStorage.removeItem(QUEUE_STORAGE_KEY); }</span> catch { /* ignore */ }</span>
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -184,7 +184,7 @@ export function clearQueueSnapshot(): void {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T17:48:33.155Z
+                at 2026-04-23T18:54:24.933Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
