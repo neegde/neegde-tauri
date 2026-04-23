@@ -46,9 +46,13 @@ describe("entities registry", () => {
   });
 
   it("getAlbum returns album entity; getTrack for an album id returns null", () => {
-    const album: AlbumData = { type: "album", id: "alb", title: "A", artist: null, trackIds: [] };
+    const album: AlbumData = {
+      type: "album", id: "alb", title: "A", artist: null, trackIds: [],
+      sources: [{ kind: "rutracker", refs: { topicId: "alb" } }],
+    };
     registerEntity(album);
-    expect(getAlbum("alb")).toBe(album);
+    expect(getAlbum("alb")?.id).toBe("alb");
+    expect(getAlbum("alb")?.title).toBe("A");
     expect(getTrack("alb")).toBe(null);
   });
 });

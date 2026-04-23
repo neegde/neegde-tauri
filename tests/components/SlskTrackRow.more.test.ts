@@ -30,6 +30,7 @@ describe("SlskTrackRow — peers / ext / size / duration branches", () => {
     const album: AlbumData = {
       type: "album", id: "alb1", title: "A", artist: null, trackIds: ["slsk:t1"],
       peers: 42,
+      sources: [{ kind: "soulseek", refs: { slskUsername: "u", slskFolder: "F" } }],
     };
     registerEntity(album);
     const track = slsk({ albumId: "alb1" });

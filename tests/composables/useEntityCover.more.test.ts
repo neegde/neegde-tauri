@@ -40,7 +40,9 @@ class CaptureIO {
 }
 
 import { useEntityCover } from "../../src/composables/useEntityCover.js";
-import { clearEntities, type AlbumData } from "../../src/stores/entities.js";
+import { buildAlbum } from "../../src/album/factory.js";
+import type { AlbumData } from "../../src/album/types.js";
+import { clearEntities } from "../../src/stores/entities.js";
 
 function mountWith(entityRef: ReturnType<typeof ref>) {
   let api!: ReturnType<typeof useEntityCover>;
@@ -69,44 +71,34 @@ afterEach(() => {
 });
 
 describe("useEntityCover — coverage gaps", () => {
-  it("returns null for an album source with unknown kind", () => {
-    const album: AlbumData = {
-      type: "album", id: "a", title: "A", artist: null, trackIds: [],
-      sources: [{ kind: "magnet", refs: {} }],
-    };
-    const { api } = mountWith(ref(album));
-    expect(api.coverUrl.value).toBe(null);
-  });
-
   it("null for soulseek album when raw.cover is missing", () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
-      sources: [{ kind: "soulseek", raw: {} }],
+      sources: [{ kind: "soulseek", refs: { slskUsername: "u", slskFolder: "X" }, raw: {} }],
     };
-    const { api } = mountWith(ref(album));
+    const { api } = mountWith(ref(buildAlbum(data)));
     expect(api.coverUrl.value).toBe(null);
   });
 
   it("null for rutracker album without a topicId", () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
-      sources: [{ kind: "rutracker", refs: {} }],
+      sources: [{ kind: "rutracker", refs: { topicId: "" } }],
     };
-    const { api } = mountWith(ref(album));
+    const { api } = mountWith(ref(buildAlbum(data)));
     expect(api.coverUrl.value).toBe(null);
   });
 
   it("IntersectionObserver callback triggers startAlbumFetch (soulseek path)", async () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
       sources: [{
         kind: "soulseek",
+        refs: { slskUsername: "u", slskFolder: "X" },
         raw: { cover: { slsk_username: "u", slsk_filepath: "cover.jpg", size: 500 } },
       }],
     };
-    // No cached cover: coverOfEntity returns null (getSlskCoverReactive mocked
-    // to return null by default) so the observer gets wired up.
-    const { api } = mountWith(ref(album));
+    const { api } = mountWith(ref(buildAlbum(data)));
     await nextTick();
     expect(lastIO?.observe).toHaveBeenCalled();
     lastIO?.cb([{ isIntersecting: true, target: document.body }]);
@@ -117,25 +109,26 @@ describe("useEntityCover — coverage gaps", () => {
 
   it("skips IO fetch when peekSlskCover already has a hit", async () => {
     peekSlskMock.mockReturnValueOnce("cached");
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
       sources: [{
         kind: "soulseek",
+        refs: { slskUsername: "u", slskFolder: "X" },
         raw: { cover: { slsk_username: "u", slsk_filepath: "cover.jpg" } },
       }],
     };
-    mountWith(ref(album));
+    mountWith(ref(buildAlbum(data)));
     await nextTick();
     lastIO?.cb([{ isIntersecting: true, target: document.body }]);
     expect(getSlskDataUrlMock).not.toHaveBeenCalled();
   });
 
   it("IntersectionObserver callback triggers startAlbumFetch (rutracker path)", async () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
       sources: [{ kind: "rutracker", refs: { topicId: "100" } }],
     };
-    mountWith(ref(album));
+    mountWith(ref(buildAlbum(data)));
     await nextTick();
     lastIO?.cb([{ isIntersecting: true, target: document.body }]);
     expect(peekRutrackerMock).toHaveBeenCalledWith("100");
@@ -143,75 +136,67 @@ describe("useEntityCover — coverage gaps", () => {
   });
 
   it("IntersectionObserver fires noop when entry is not intersecting", async () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
       sources: [{ kind: "rutracker", refs: { topicId: "100" } }],
     };
-    mountWith(ref(album));
+    mountWith(ref(buildAlbum(data)));
     await nextTick();
     lastIO?.cb([{ isIntersecting: false, target: document.body }]);
     expect(getRutrackerDataUrlMock).not.toHaveBeenCalled();
   });
 
   it("observer is disconnected on unmount", async () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
       sources: [{ kind: "rutracker", refs: { topicId: "100" } }],
     };
-    const { wrapper } = mountWith(ref(album));
+    const { wrapper } = mountWith(ref(buildAlbum(data)));
     await nextTick();
     wrapper.unmount();
     expect(lastIO?.disconnect).toHaveBeenCalled();
   });
 
   it("startAlbumFetch noops when raw.cover has no filepath", async () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
-      sources: [{ kind: "soulseek", raw: { cover: { slsk_username: "u" } } }],
+      sources: [{
+        kind: "soulseek",
+        refs: { slskUsername: "u", slskFolder: "X" },
+        raw: { cover: { slsk_username: "u" } },
+      }],
     };
-    mountWith(ref(album));
+    mountWith(ref(buildAlbum(data)));
     await nextTick();
     lastIO?.cb([{ isIntersecting: true, target: document.body }]);
-    expect(getSlskDataUrlMock).not.toHaveBeenCalled();
-  });
-
-  it("startAlbumFetch noops for unknown source kind", async () => {
-    const album: AlbumData = {
-      type: "album", id: "a", title: "A", artist: null, trackIds: [],
-      sources: [{ kind: "magnet", refs: {} }],
-    };
-    mountWith(ref(album));
-    await nextTick();
-    lastIO?.cb([{ isIntersecting: true, target: document.body }]);
-    expect(getRutrackerDataUrlMock).not.toHaveBeenCalled();
     expect(getSlskDataUrlMock).not.toHaveBeenCalled();
   });
 
   it("arm returns early when entity already has a cached cover URL", () => {
-    const album: AlbumData = {
+    const data: AlbumData = {
       type: "album", id: "a", title: "A", artist: null, trackIds: [],
       coverUrl: "data:cached",
+      sources: [{ kind: "rutracker", refs: { topicId: "1" } }],
     };
-    mountWith(ref(album));
-    // arm sees coverOfEntity returns truthy, so it never creates an observer.
+    mountWith(ref(buildAlbum(data)));
+    // arm sees coverUrl() returns truthy, so no observer is created.
     expect(lastIO).toBe(null);
   });
 
   it("re-arms when the entity id changes", async () => {
-    const entityRef = ref<AlbumData | null>({
+    const entityRef = ref(buildAlbum({
       type: "album", id: "a1", title: "A", artist: null, trackIds: [],
       sources: [{ kind: "rutracker", refs: { topicId: "1" } }],
-    });
+    }));
     mountWith(entityRef);
     await nextTick();
     const firstIO = lastIO;
-    entityRef.value = {
+    entityRef.value = buildAlbum({
       type: "album", id: "a2", title: "B", artist: null, trackIds: [],
       sources: [{ kind: "rutracker", refs: { topicId: "2" } }],
-    };
+    });
     await nextTick();
     expect(firstIO?.disconnect).toHaveBeenCalled();
-    // A fresh observer is constructed for the new entity.
     expect(lastIO).not.toBe(firstIO);
   });
 });

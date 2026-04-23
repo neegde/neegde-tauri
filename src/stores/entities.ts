@@ -2,9 +2,9 @@
  * Global entity registry — one source of truth for every Track / Album
  * the user has ever touched (search feed, likes, playlists, queue).
  *
- * Track instances are class-backed (`Track` + subclasses); Album stays plain
- * for now until we OOP-ify it in a later pass. Both are looked up by `id`;
- * queues, likes, playlists store ids and resolve here.
+ * Both Track and Album are class-backed; providers emit plain data and the
+ * registry hydrates on `registerEntity(...)`. Queue, likes, playlists store
+ * ids and resolve here.
  *
  * Reactivity: the backing `Map` is wrapped in `shallowRef` + `triggerRef`
  * on every mutation. Consumers that read `getTrack(id)` inside a `computed`
@@ -16,35 +16,15 @@ import { shallowRef, triggerRef } from "vue";
 import type { Track } from "../track/Track.js";
 import type { TrackData } from "../track/types.js";
 import { buildTrack } from "../track/factory.js";
+import type { Album } from "../album/Album.js";
+import type { AlbumData } from "../album/types.js";
+import { buildAlbum } from "../album/factory.js";
 import { putTrack } from "../persistence/trackCache.js";
 
-/**
- * Plain album data. Kept non-class for now; one migration at a time.
- * `sources` uses a loose shape so legacy provider payloads still typecheck —
- * a future pass will tighten this when Album becomes a class.
- */
-export interface AlbumData {
-  type: "album";
-  id: string;
-  title: string;
-  artist: string | null;
-  trackIds: string[];
-  peers?: number | null;
-  seeders?: number | null;
-  coverUrl?: string | null;
-  format?: string | null;
-  bitrate?: number | null;
-  size?: number | null;
-  year?: number | null;
-  sources?: Array<{
-    kind: string;
-    refs?: Record<string, unknown>;
-    raw?: { cover?: { slsk_username?: string; slsk_filepath?: string; size?: number } | null; [k: string]: unknown };
-  }>;
-  [key: string]: unknown;
-}
+// Re-export AlbumData so existing consumers don't have to chase a new path.
+export type { AlbumData } from "../album/types.js";
 
-export type Entity = Track | AlbumData;
+export type Entity = Track | Album;
 
 const _byId = shallowRef<Map<string, Entity>>(new Map());
 export const entitiesVersion = shallowRef(0);
@@ -55,9 +35,14 @@ function bump(): void {
 }
 
 /** Coerce raw data to a class instance when needed. */
-function normalize(entity: Track | TrackData | AlbumData): Entity | null {
+function normalize(entity: Track | TrackData | Album | AlbumData): Entity | null {
   if (!entity) return null;
-  if (entity.type === "album") return entity as AlbumData;
+  if (entity.type === "album") {
+    // Already an instance? `coverUrl` is a method on classes, a string/null on data.
+    const asAlbum = entity as Partial<Album>;
+    if (typeof asAlbum.coverUrl === "function") return asAlbum as Album;
+    return buildAlbum(entity as AlbumData);
+  }
   if (entity.type === "track") {
     // Already an instance? `prepareStream` exists on classes, not on plain data.
     const asTrack = entity as Partial<Track>;
@@ -74,7 +59,7 @@ function normalize(entity: Track | TrackData | AlbumData): Entity | null {
  * Track data side-effects: also mirrored into the persistent `trackCache`
  * so references from likes / playlists / queue resolve after an app restart.
  */
-export function registerEntity(entity: Track | TrackData | AlbumData | null | undefined): void {
+export function registerEntity(entity: Track | TrackData | Album | AlbumData | null | undefined): void {
   if (!entity) return;
   const norm = normalize(entity);
   if (!norm?.id) return;
@@ -85,10 +70,10 @@ export function registerEntity(entity: Track | TrackData | AlbumData | null | un
 
 /**
  * Register a batch — single reactivity bump. Returns the normalized entities
- * in input order (Track instances for track data, AlbumData for albums),
- * so callers that need class-backed instances don't have to re-lookup by id.
+ * in input order (class instances), so callers that need them don't have to
+ * re-lookup by id.
  */
-export function registerEntities(entities: Array<Track | TrackData | AlbumData>): Entity[] {
+export function registerEntities(entities: Array<Track | TrackData | Album | AlbumData>): Entity[] {
   if (!entities?.length) return [];
   const out: Entity[] = [];
   const tracksForCache: Track[] = [];
@@ -113,13 +98,13 @@ export function getTrack(id: string): Track | null {
   return e && e.type === "track" ? (e as Track) : null;
 }
 
-export function getAlbum(id: string): AlbumData | null {
+export function getAlbum(id: string): Album | null {
   const e = _byId.value.get(id);
-  return e && e.type === "album" ? (e as AlbumData) : null;
+  return e && e.type === "album" ? (e as Album) : null;
 }
 
 /** Children of an Album, in declared order; silently skips missing ids. */
-export function getTracksOfAlbum(album: AlbumData | null | undefined): Track[] {
+export function getTracksOfAlbum(album: Album | AlbumData | null | undefined): Track[] {
   if (!album?.trackIds) return [];
   const out: Track[] = [];
   for (const id of album.trackIds) {

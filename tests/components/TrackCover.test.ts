@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import "../_setup.js";
 import { mount } from "@vue/test-utils";
 import TrackCover from "../../src/components/shared/TrackCover.vue";
-import { clearEntities, registerEntity, type AlbumData } from "../../src/stores/entities.js";
+import { clearEntities, registerEntity } from "../../src/stores/entities.js";
+import { buildAlbum } from "../../src/album/factory.js";
+import type { AlbumData } from "../../src/album/types.js";
 import { rememberSlskCover, clearSlskCoverCache } from "../../src/soulseek/coverCache.js";
 
 beforeEach(() => {
@@ -18,6 +20,7 @@ const albumData: AlbumData = {
   trackIds: [],
   sources: [{
     kind: "soulseek",
+    refs: { slskUsername: "u", slskFolder: "folder" },
     raw: { cover: { slsk_username: "u", slsk_filepath: "folder/cover.jpg", size: 1024 } },
   }],
 };
@@ -35,9 +38,10 @@ describe("TrackCover", () => {
   });
 
   it("renders entity cover when cached (album path)", () => {
-    registerEntity(albumData);
+    const album = buildAlbum(albumData);
+    registerEntity(album);
     rememberSlskCover("u", "folder/cover.jpg", "data:image/png;base64,AAA");
-    const w = mount(TrackCover, { props: { entity: albumData, size: 80 } });
+    const w = mount(TrackCover, { props: { entity: album, size: 80 } });
     expect(w.find("img").exists()).toBe(true);
   });
 

@@ -9,12 +9,13 @@
 
 import { ref, computed } from "vue";
 import type { Track } from "../track/Track.js";
+import type { Album } from "../album/Album.js";
+import type { AlbumData } from "../album/types.js";
 import {
   getTrack,
   getAlbum,
   registerEntity,
   entitiesVersion,
-  type AlbumData,
 } from "./entities.js";
 import { putTrack } from "../persistence/trackCache.js";
 import {
@@ -44,11 +45,11 @@ export const likedTracks = computed<Track[]>(() => {
   return out;
 });
 
-export const likedAlbums = computed<AlbumData[]>(() => {
+export const likedAlbums = computed<Album[]>(() => {
   entitiesVersion.value;
   const ids = Array.from(likedAlbumIds.value);
   ids.sort((a, b) => (likedAt.value.get(b) ?? 0) - (likedAt.value.get(a) ?? 0));
-  const out: AlbumData[] = [];
+  const out: Album[] = [];
   for (const id of ids) {
     const a = getAlbum(id);
     if (a) out.push(a);
@@ -87,7 +88,7 @@ export function toggleLikeTrack(track: Track): boolean {
   return liked;
 }
 
-export function toggleLikeAlbum(album: AlbumData): boolean {
+export function toggleLikeAlbum(album: Album | AlbumData): boolean {
   if (!album?.id) return false;
   registerEntity(album);
   const set = new Set(likedAlbumIds.value);

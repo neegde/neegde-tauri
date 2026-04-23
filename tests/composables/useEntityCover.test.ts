@@ -5,7 +5,9 @@ import { mount } from "@vue/test-utils";
 
 import { useEntityCover } from "../../src/composables/useEntityCover.js";
 import { buildTrack } from "../../src/track/factory.js";
-import { clearEntities, registerEntity, type AlbumData } from "../../src/stores/entities.js";
+import { buildAlbum } from "../../src/album/factory.js";
+import type { AlbumData } from "../../src/album/types.js";
+import { clearEntities, registerEntity } from "../../src/stores/entities.js";
 import { rememberSlskCover, clearSlskCoverCache } from "../../src/soulseek/coverCache.js";
 import { rememberRutrackerCover, clearRutrackerCoverCache } from "../../src/rutracker/coverCache.js";
 
@@ -38,9 +40,9 @@ describe("useEntityCover", () => {
     const album: AlbumData = {
       type: "album", id: "a1", title: "T", artist: null, trackIds: [],
       coverUrl: "data:inline",
-      sources: [{ kind: "rutracker", refs: {} }],
+      sources: [{ kind: "rutracker", refs: { topicId: "1" } }],
     };
-    const { coverUrl } = mountWith(ref(album));
+    const { coverUrl } = mountWith(ref(buildAlbum(album)));
     expect(coverUrl.value).toBe("data:inline");
   });
 
@@ -49,11 +51,12 @@ describe("useEntityCover", () => {
       type: "album", id: "a2", title: "T", artist: null, trackIds: [],
       sources: [{
         kind: "soulseek",
+        refs: { slskUsername: "u", slskFolder: "X" },
         raw: { cover: { slsk_username: "u", slsk_filepath: "cover.jpg" } },
       }],
     };
     rememberSlskCover("u", "cover.jpg", "data:slsk");
-    const { coverUrl } = mountWith(ref(album));
+    const { coverUrl } = mountWith(ref(buildAlbum(album)));
     expect(coverUrl.value).toBe("data:slsk");
   });
 
@@ -63,7 +66,7 @@ describe("useEntityCover", () => {
       sources: [{ kind: "rutracker", refs: { topicId: "42" } }],
     };
     rememberRutrackerCover("42", "data:rt");
-    const { coverUrl } = mountWith(ref(album));
+    const { coverUrl } = mountWith(ref(buildAlbum(album)));
     expect(coverUrl.value).toBe("data:rt");
   });
 

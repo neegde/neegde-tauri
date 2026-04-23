@@ -25,7 +25,10 @@ function slsk(id: string): TrackData {
 }
 
 function album(id: string, trackIds: string[] = []): AlbumData {
-  return { type: "album", id, title: id, artist: null, trackIds };
+  return {
+    type: "album", id, title: id, artist: null, trackIds,
+    sources: [{ kind: "rutracker", refs: { topicId: id } }],
+  };
 }
 
 beforeEach(() => {
@@ -38,7 +41,10 @@ describe("entities registry — edge paths", () => {
     const before = entitiesVersion.value;
     registerEntity(null);
     registerEntity(undefined);
-    registerEntity({ type: "album", id: "", title: "", artist: null, trackIds: [] });
+    registerEntity({
+      type: "album", id: "", title: "", artist: null, trackIds: [],
+      sources: [{ kind: "rutracker", refs: { topicId: "x" } }],
+    });
     expect(entitiesVersion.value).toBe(before);
     expect(allEntities()).toEqual([]);
   });
