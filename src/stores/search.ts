@@ -7,9 +7,12 @@
  * registry, so queue / likes / playlists can resolve them by id later.
  */
 
-import { ref, shallowRef, watch, type Ref, type WatchStopHandle } from "vue";
-import { createSearchEngine } from "../search/engine.js";
-import { registerEntities, type Entity } from "./entities.js";
+import { ref, shallowRef, watch, type WatchStopHandle } from "vue";
+import { createSearchEngine, type SearchEngine } from "../search/engine.js";
+import type { SearchSession } from "../search/session.js";
+import { registerEntities, type Entity, type AlbumData } from "./entities.js";
+import type { Track } from "../track/Track.js";
+import type { TrackData } from "../track/types.js";
 import { appDebugLog } from "../appDebugLog.js";
 
 // ── Reactive surface ─────────────────────────────────────────────────────────
@@ -35,28 +38,9 @@ export const searchProviderQuery = ref<string>("");
 
 // ── Internals ────────────────────────────────────────────────────────────────
 
-interface ProviderStatusMap { rutracker?: string; soulseek?: string; [k: string]: string | undefined }
-interface ProviderErrorMap  { rutracker?: string | null; soulseek?: string | null; [k: string]: string | null | undefined }
-
-interface SearchSession {
-  results: Ref<Entity[]>;
-  providerStatus: Ref<ProviderStatusMap>;
-  providerError: Ref<ProviderErrorMap>;
-  resolved?: unknown;
-  query?: string;
-}
-
-interface SearchEngine {
-  query: (
-    q: string,
-    providers: { rutracker: boolean; soulseek: boolean },
-    opts?: { skipResolver?: boolean },
-  ) => Promise<SearchSession>;
-}
-
 const engine: SearchEngine = createSearchEngine({
   log: (tag: string, msg: string) => appDebugLog(`search:${tag}`, msg),
-}) as SearchEngine;
+});
 
 let _activeSession: SearchSession | null = null;
 let _stopWatcher: WatchStopHandle | null = null;
@@ -72,7 +56,7 @@ function _detach(): void {
 function _applyFromSession(session: SearchSession, authFlags: { rtLoggedIn: boolean; slskConnected: boolean }): void {
   if (_activeSession !== session) return;
 
-  const entities = session.results.value;
+  const entities = session.results.value as Array<Track | TrackData | AlbumData>;
   searchEntities.value = registerEntities(entities);
 
   const ps = session.providerStatus.value;

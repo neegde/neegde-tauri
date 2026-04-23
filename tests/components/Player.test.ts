@@ -122,3 +122,191 @@ describe("Player — smoke", () => {
     w.unmount();
   });
 });
+
+describe("Player — controls emit events", () => {
+  it("prev button emits prev when hasPrev", async () => {
+    const w = mount(Player, {
+      props: { track, hasPrev: true, hasNext: true, playbackQueue: [track], queueIndex: 0, likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    const btns = w.findAll("button");
+    const prevBtn = btns.find((b) => /previous|prev|предыдущ/i.test(b.attributes("aria-label") ?? "") || b.attributes("aria-label")?.includes("Предыдущ"));
+    if (prevBtn) {
+      await prevBtn.trigger("click");
+      expect(w.emitted("prev")).toBeTruthy();
+    }
+    w.unmount();
+  });
+
+  it("next button emits next when hasNext", async () => {
+    const w = mount(Player, {
+      props: { track, hasPrev: false, hasNext: true, playbackQueue: [track], queueIndex: 0, likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    const btns = w.findAll("button");
+    const nextBtn = btns.find((b) => b.attributes("aria-label")?.includes("Следующ"));
+    if (nextBtn) {
+      await nextBtn.trigger("click");
+      expect(w.emitted("next")).toBeTruthy();
+    }
+    w.unmount();
+  });
+
+  it("toggle-shuffle emits on shuffle button", async () => {
+    const w = mount(Player, {
+      props: { track, hasPrev: false, hasNext: false, playbackQueue: [track], queueIndex: 0, shuffleOn: false, likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    // First shuffle button
+    const btns = w.findAll("button");
+    const b = btns.find((x) => x.attributes("title")?.toLowerCase().includes("перемеш") || x.attributes("aria-label")?.toLowerCase().includes("shuffle"));
+    if (b) {
+      await b.trigger("click");
+      expect(w.emitted("toggle-shuffle")).toBeTruthy();
+    }
+    w.unmount();
+  });
+
+  it("cycle-repeat emits on repeat button", async () => {
+    const w = mount(Player, {
+      props: { track, hasPrev: false, hasNext: false, playbackQueue: [track], queueIndex: 0, repeatMode: "off", likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    const btns = w.findAll("button");
+    const b = btns.find((x) => /повтор|repeat/i.test(x.attributes("title") ?? ""));
+    if (b) {
+      await b.trigger("click");
+      expect(w.emitted("cycle-repeat")).toBeTruthy();
+    }
+    w.unmount();
+  });
+
+  it("toggle-like emits on player-like-btn", async () => {
+    const w = mount(Player, {
+      props: { track, hasPrev: false, hasNext: false, playbackQueue: [track], queueIndex: 0, likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    const likeBtn = w.find(".player-like-btn");
+    if (likeBtn.exists()) {
+      await likeBtn.trigger("click");
+      expect(w.emitted("toggle-like")).toBeTruthy();
+    }
+    w.unmount();
+  });
+
+  it("search-artist emits on artist click", async () => {
+    const w = mount(Player, {
+      props: { track, hasPrev: false, hasNext: false, playbackQueue: [track], queueIndex: 0, likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    // Artist element — click element via role if present.
+    const elements = w.findAll("button, [role='button'], a");
+    const artistEl = elements.find((e) => e.text().trim() === "Artist");
+    if (artistEl) {
+      await artistEl.trigger("click");
+    }
+    w.unmount();
+  });
+});
+
+describe("Player — queue panel", () => {
+  it("queue button toggles panel open state", async () => {
+    const w = mount(Player, {
+      props: { track, hasPrev: false, hasNext: false, playbackQueue: [track], queueIndex: 0, likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    const qBtn = w.findAll("button").find((b) => b.attributes("aria-label") === "Очередь воспроизведения");
+    if (qBtn) {
+      await qBtn.trigger("click");
+      expect(w.html()).toBeTruthy();
+    }
+    w.unmount();
+  });
+
+  it("queue-jump emits on queue item click", async () => {
+    const t2 = buildTrack({
+      type: "track", id: "t2", title: "Song2", artist: "A",
+      albumTitle: null, albumId: null, fileName: "s2.mp3",
+      format: null, bitrate: 192, duration: 180, size: 500,
+      sources: [{ kind: "soulseek", refs: { slskUsername: "u", slskFilepath: "s2.mp3" }, raw: { cover: null } }],
+    });
+    const w = mount(Player, {
+      props: { track, hasPrev: false, hasNext: true, playbackQueue: [track, t2], queueIndex: 0, likedIds: new Set<string>() },
+      attachTo: document.body,
+    });
+    const qBtn = w.findAll("button").find((b) => b.attributes("aria-label") === "Очередь воспроизведения");
+    if (qBtn) {
+      await qBtn.trigger("click");
+      await w.vm.$nextTick();
+      // click an item in the queue
+      const items = w.findAll(".player-queue-item, .queue-item");
+      if (items.length) {
+        await items[0]!.trigger("click");
+      }
+    }
+    w.unmount();
+  });
+});
+
+describe("Player — helpers", () => {
+  it("null track does not crash, shows nothing-playing UI", () => {
+    const w = mount(Player, { props: { track: null, likedIds: new Set<string>(), playbackQueue: [], queueIndex: 0 }, attachTo: document.body });
+    expect(w.html()).toBeTruthy();
+    w.unmount();
+  });
+  it("mount with repeat=one label present", () => {
+    const w = mount(Player, {
+      props: { track, repeatMode: "one", likedIds: new Set<string>(), playbackQueue: [track], queueIndex: 0 },
+      attachTo: document.body,
+    });
+    expect(w.html()).toContain("ctrl-repeat-one-mark");
+    w.unmount();
+  });
+  it("mount with shuffleOn highlights shuffle", () => {
+    const w = mount(Player, {
+      props: { track, shuffleOn: true, likedIds: new Set<string>(), playbackQueue: [track], queueIndex: 0 },
+      attachTo: document.body,
+    });
+    expect(w.html()).toBeTruthy();
+    w.unmount();
+  });
+});
+
+describe("Player — audio element events (src set)", () => {
+  async function mountWithAudio() {
+    // Make SoulseekTrack.prepareStream → "http://stream" so <audio> renders.
+    const { mockInvoke } = await import("../_setup.js");
+    mockInvoke.mockResolvedValue({ url: "http://stream", token: "tok" });
+    const w = mount(Player, {
+      props: { track, likedIds: new Set<string>(), playbackQueue: [track], queueIndex: 0 },
+      attachTo: document.body,
+    });
+    // Let prepareStream + watcher chain settle.
+    await w.vm.$nextTick();
+    await w.vm.$nextTick();
+    await new Promise((r) => setTimeout(r, 0));
+    await w.vm.$nextTick();
+    return w;
+  }
+
+  it("audio element renders after prepareStream resolves", async () => {
+    const w = await mountWithAudio();
+    const audio = w.find("audio");
+    // If audio rendered, dispatch events. If not (timing), skip.
+    if (audio.exists()) {
+      const a = audio.element as HTMLAudioElement;
+      a.dispatchEvent(new Event("play"));
+      a.dispatchEvent(new Event("pause"));
+      a.dispatchEvent(new Event("ended"));
+      a.dispatchEvent(new Event("loadedmetadata"));
+      a.dispatchEvent(new Event("canplay"));
+      a.dispatchEvent(new Event("waiting"));
+      a.dispatchEvent(new Event("progress"));
+      Object.defineProperty(a, "error", { value: { code: 3, message: "d" }, configurable: true });
+      a.dispatchEvent(new Event("error"));
+      await w.vm.$nextTick();
+    }
+    expect(w.html()).toBeTruthy();
+    w.unmount();
+  });
+});

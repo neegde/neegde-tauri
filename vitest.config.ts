@@ -75,10 +75,10 @@ export default defineConfig({
       // 98% lines / 95% branches; current floor is what the suite passes
       // today so CI doesn't block work while coverage ramps up.
       thresholds: {
-        lines: 60,
-        statements: 60,
-        functions: 60,
-        branches: 45,
+        lines: 75,
+        statements: 72,
+        functions: 74,
+        branches: 55,
       },
     },
   },

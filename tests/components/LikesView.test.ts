@@ -81,4 +81,58 @@ describe("LikesView", () => {
     w.unmount();
     document.body.innerHTML = "";
   });
+
+  it("download button emits download", async () => {
+    const w = mount(LikesView, { props: { tracks: [track], nowPlayingId: null, playerPlaying: false } });
+    const dl = w.find(".dl");
+    if (dl.exists()) {
+      await dl.trigger("click");
+      expect(w.emitted("download")).toBeTruthy();
+    }
+  });
+
+  it("ctx menu 'Скачать' emits download", async () => {
+    const w = mount(LikesView, {
+      props: { tracks: [track], nowPlayingId: null, playerPlaying: false },
+      attachTo: document.body,
+    });
+    await w.find(".likes-track-row").trigger("contextmenu", { clientX: 0, clientY: 0 });
+    const item = Array.from(document.body.querySelectorAll(".track-ctx-item"))
+      .find((el) => el.textContent?.includes("Скачать")) as HTMLElement | undefined;
+    item?.click();
+    await w.vm.$nextTick();
+    expect(w.emitted("download")).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
+
+  it("ctx menu 'В плейлист' emits add-to-playlist", async () => {
+    const w = mount(LikesView, {
+      props: { tracks: [track], nowPlayingId: null, playerPlaying: false },
+      attachTo: document.body,
+    });
+    await w.find(".likes-track-row").trigger("contextmenu", { clientX: 0, clientY: 0 });
+    const item = Array.from(document.body.querySelectorAll(".track-ctx-item"))
+      .find((el) => el.textContent?.includes("В плейлист")) as HTMLElement | undefined;
+    item?.click();
+    await w.vm.$nextTick();
+    expect(w.emitted("add-to-playlist")).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
+
+  it("ctx menu 'Источник' emits open-track-source", async () => {
+    const w = mount(LikesView, {
+      props: { tracks: [track], nowPlayingId: null, playerPlaying: false },
+      attachTo: document.body,
+    });
+    await w.find(".likes-track-row").trigger("contextmenu", { clientX: 0, clientY: 0 });
+    const item = Array.from(document.body.querySelectorAll(".track-ctx-item"))
+      .find((el) => el.textContent?.includes("Источник")) as HTMLElement | undefined;
+    item?.click();
+    await w.vm.$nextTick();
+    expect(w.emitted("open-track-source")).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
 });

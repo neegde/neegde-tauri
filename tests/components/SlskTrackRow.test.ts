@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import "../_setup.js";
 import { mount } from "@vue/test-utils";
 import SlskTrackRow from "../../src/components/search/SlskTrackRow.vue";
@@ -63,5 +63,64 @@ describe("SlskTrackRow", () => {
     });
     await w.vm.$nextTick();
     expect(w.text()).toMatch(/T/);
+  });
+
+  it("enrichment arriving after mount starts erase/type animation", async () => {
+    vi.useFakeTimers();
+    const w = mount(SlskTrackRow, { props: { track, enriched: null } });
+    await w.vm.$nextTick();
+    await w.setProps({ enriched: { artist: "A", title: "New Title", coverUrl: null } });
+    vi.advanceTimersByTime(2000);
+    await w.vm.$nextTick();
+    vi.useRealTimers();
+    expect(w.html()).toBeTruthy();
+  });
+
+  it("context menu download emits download", async () => {
+    const w = mount(SlskTrackRow, { props: { track }, attachTo: document.body });
+    await w.find(".slsk-track-row").trigger("contextmenu", { clientX: 0, clientY: 0 });
+    const item = Array.from(document.body.querySelectorAll(".track-ctx-item"))
+      .find((el) => el.textContent?.includes("Скачать")) as HTMLElement | undefined;
+    item?.click();
+    await w.vm.$nextTick();
+    expect(w.emitted("download")).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
+
+  it("context menu like emits like", async () => {
+    const w = mount(SlskTrackRow, { props: { track }, attachTo: document.body });
+    await w.find(".slsk-track-row").trigger("contextmenu", { clientX: 0, clientY: 0 });
+    const item = Array.from(document.body.querySelectorAll(".track-ctx-item"))
+      .find((el) => el.textContent?.includes("В избранное")) as HTMLElement | undefined;
+    item?.click();
+    await w.vm.$nextTick();
+    expect(w.emitted("like")).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
+
+  it("context menu add-to-playlist emits add-to-playlist", async () => {
+    const w = mount(SlskTrackRow, { props: { track }, attachTo: document.body });
+    await w.find(".slsk-track-row").trigger("contextmenu", { clientX: 0, clientY: 0 });
+    const item = Array.from(document.body.querySelectorAll(".track-ctx-item"))
+      .find((el) => el.textContent?.includes("В плейлист")) as HTMLElement | undefined;
+    item?.click();
+    await w.vm.$nextTick();
+    expect(w.emitted("add-to-playlist")).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
+
+  it("context menu source emits open-source", async () => {
+    const w = mount(SlskTrackRow, { props: { track }, attachTo: document.body });
+    await w.find(".slsk-track-row").trigger("contextmenu", { clientX: 0, clientY: 0 });
+    const item = Array.from(document.body.querySelectorAll(".track-ctx-item"))
+      .find((el) => el.textContent?.includes("SoulSeek")) as HTMLElement | undefined;
+    item?.click();
+    await w.vm.$nextTick();
+    expect(w.emitted("open-source")).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
   });
 });

@@ -9,12 +9,16 @@
  *   2. Load trackCache from localStorage — this populates the in-memory
  *      cache so `hydrateTrack(id)` can resolve ids referenced by likes /
  *      playlists / queue snapshots.
- *   3. Return the snapshots so App.vue can push them into the library /
+ *   3. Hydrate every cached TrackData into a `Track` instance and register
+ *      it in the entities store. Without this step, `likedTracks` / queue
+ *      resolutions yield null on cold start (registry is empty).
+ *   4. Return the snapshots so App.vue can push them into the library /
  *      queue stores.
  */
 
 import { migrateLegacyStorage } from "./migrateLegacy.js";
-import { loadTrackCache } from "./trackCache.js";
+import { loadTrackCache, allTrackIds, hydrateTrack } from "./trackCache.js";
+import { registerEntity } from "../stores/entities.js";
 import { loadLikesSnapshot, type LikesSnapshot } from "./likes.js";
 import { loadPlaylistsSnapshot, type PlaylistSnapshot } from "./playlists.js";
 import { loadQueueSnapshot, type QueueSnapshot } from "./queue.js";
@@ -28,6 +32,10 @@ export interface PersistenceSnapshot {
 export function loadPersistedState(): PersistenceSnapshot {
   migrateLegacyStorage();
   loadTrackCache();
+  for (const id of allTrackIds()) {
+    const track = hydrateTrack(id);
+    if (track) registerEntity(track);
+  }
   return {
     likes: loadLikesSnapshot(),
     playlists: loadPlaylistsSnapshot(),

@@ -45,6 +45,11 @@ class FakeIntersectionObserver {
 (globalThis as unknown as { IntersectionObserver: typeof IntersectionObserver })
   .IntersectionObserver = FakeIntersectionObserver as unknown as typeof IntersectionObserver;
 
+// ── Element.scrollTo shim (jsdom lacks it on HTMLElement prototype).
+if (typeof HTMLElement !== "undefined" && !HTMLElement.prototype.scrollTo) {
+  (HTMLElement.prototype as unknown as { scrollTo: () => void }).scrollTo = () => {};
+}
+
 // ── ResizeObserver shim (jsdom lacks it). Used by layout-measurement code.
 class FakeResizeObserver {
   observe = vi.fn();
