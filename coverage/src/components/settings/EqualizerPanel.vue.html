@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">46.15% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>6/13</span>
+                <span class='fraction'>13/13</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">30% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>3/10</span>
+                <span class='fraction'>10/10</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">50% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>2/4</span>
+                <span class='fraction'>4/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">50% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>5/10</span>
+                <span class='fraction'>10/10</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -111,25 +111,25 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">28x</span>
-<span class="cline-any cline-yes">28x</span>
+<span class="cline-any cline-yes">94x</span>
+<span class="cline-any cline-yes">102x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">280x</span>
-<span class="cline-any cline-yes">280x</span>
-<span class="cline-any cline-yes">280x</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1185x</span>
+<span class="cline-any cline-yes">1176x</span>
+<span class="cline-any cline-yes">1176x</span>
+<span class="cline-any cline-yes">32x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -149,24 +149,24 @@ import {
 } from "../../audio/equalizerState.js";
 &nbsp;
 const presetSelectValue = computed(() =&gt;
-  eqPresetId.value === "custom" ? <span class="branch-0 cbranch-no" title="branch not covered" >"__custom__" </span>: eqPresetId.value
+  eqPresetId.value === "custom" ? "__custom__" : eqPresetId.value
 );
 &nbsp;
 function fmtDb(v) {
-  <span class="missing-if-branch" title="if path not taken" >I</span>if (!Number.isFinite(v)) <span class="cstat-no" title="statement not covered" >return "0";</span>
+  if (!Number.isFinite(v)) return "0";
   const rounded = Math.round(v * 2) / 2;
-  <span class="missing-if-branch" title="else path not taken" >E</span>if (rounded === 0) return "0";
-<span class="cstat-no" title="statement not covered" >  return rounded &gt; 0 ? `+${rounded}` : String(rounded);</span>
+  if (rounded === 0) return "0";
+  return rounded &gt; 0 ? `+${rounded}` : String(rounded);
 }
 &nbsp;
-function <span class="fstat-no" title="function not covered" >onSliderInput(</span>index, ev) {
-<span class="cstat-no" title="statement not covered" >  setEqBand(index, Number(ev.target.value));</span>
+function onSliderInput(index, ev) {
+  setEqBand(index, Number(ev.target.value));
 }
 &nbsp;
-function <span class="fstat-no" title="function not covered" >onPresetSelect(</span>ev) {
-  const v = <span class="cstat-no" title="statement not covered" >ev.target.value;</span>
-<span class="cstat-no" title="statement not covered" >  if (v === "__custom__") <span class="cstat-no" title="statement not covered" >return;</span></span>
-<span class="cstat-no" title="statement not covered" >  applyEqPreset(v);</span>
+function onPresetSelect(ev) {
+  const v = ev.target.value;
+  if (v === "__custom__") return;
+  applyEqPreset(v);
 }
 &lt;/script&gt;
 &nbsp;
@@ -181,7 +181,7 @@ function <span class="fstat-no" title="function not covered" >onPresetSelect(</s
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T18:54:24.905Z
+                at 2026-04-23T19:04:22.232Z
             </div>
         <script src="../../../prettify.js"></script>
         <script>

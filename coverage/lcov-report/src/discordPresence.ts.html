@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">95.83% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/24</span>
+                <span class='fraction'>23/24</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">87.5% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/16</span>
+                <span class='fraction'>14/16</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">66.66% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/6</span>
+                <span class='fraction'>4/6</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/19</span>
+                <span class='fraction'>19/19</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -110,14 +110,11 @@
 <a name='L45'></a><a href='#L45'>45</a>
 <a name='L46'></a><a href='#L46'>46</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">8x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -130,36 +127,39 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { invoke } from "@tauri-apps/api/core";
 &nbsp;
-const DEBOUNCE_MS = <span class="cstat-no" title="statement not covered" >4500;</span>
-let debounceTimer: ReturnType&lt;typeof setTimeout&gt; | null = <span class="cstat-no" title="statement not covered" >null;</span>
+const DEBOUNCE_MS = 4500;
+let debounceTimer: ReturnType&lt;typeof setTimeout&gt; | null = null;
 &nbsp;
-function <span class="fstat-no" title="function not covered" >isTauriRuntime(): boolean {</span>
-<span class="cstat-no" title="statement not covered" >  return typeof window !== "undefined" &amp;&amp; "__TAURI_INTERNALS__" in window;</span>
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" &amp;&amp; "__TAURI_INTERNALS__" in window;
 }
 &nbsp;
 export interface DiscordPresencePayload {
@@ -171,32 +171,32 @@ export interface DiscordPresencePayload {
 }
 &nbsp;
 /** Pushes the current playback state to Discord (debounced unless `immediate`). */
-export function <span class="fstat-no" title="function not covered" >syncDiscordPresence(</span>
+export function syncDiscordPresence(
   payload: DiscordPresencePayload,
-  options: { immediate?: boolean } = <span class="branch-0 cbranch-no" title="branch not covered" >{},</span>
+  options: { immediate?: boolean } = {},
 ): Promise&lt;void&gt; {
-<span class="cstat-no" title="statement not covered" >  if (!isTauriRuntime()) <span class="cstat-no" title="statement not covered" >return Promise.resolve();</span></span>
-  const { immediate = <span class="branch-0 cbranch-no" title="branch not covered" >false }</span> = <span class="cstat-no" title="statement not covered" >options;</span>
-  const run = <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >(): Promise&lt;void&gt; =&gt; {</span></span>
-<span class="cstat-no" title="statement not covered" >    debounceTimer = null;</span>
-<span class="cstat-no" title="statement not covered" >    return invoke&lt;void&gt;("discord_presence_sync", { payload }).catch(<span class="fstat-no" title="function not covered" >() =&gt; {</span>});</span>
+  if (!isTauriRuntime()) return Promise.resolve();
+  const { immediate = false } = options;
+  const run = (): Promise&lt;void&gt; =&gt; {
+    debounceTimer = null;
+    return invoke&lt;void&gt;("discord_presence_sync", { payload }).catch(<span class="fstat-no" title="function not covered" >() =&gt; {</span>});
   };
-<span class="cstat-no" title="statement not covered" >  if (immediate) {</span>
-<span class="cstat-no" title="statement not covered" >    if (debounceTimer) <span class="cstat-no" title="statement not covered" >clearTimeout(debounceTimer);</span></span>
-<span class="cstat-no" title="statement not covered" >    debounceTimer = null;</span>
-<span class="cstat-no" title="statement not covered" >    return run();</span>
+  if (immediate) {
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (debounceTimer) <span class="cstat-no" title="statement not covered" >clearTimeout(debounceTimer);</span>
+    debounceTimer = null;
+    return run();
   }
-<span class="cstat-no" title="statement not covered" >  if (debounceTimer) <span class="cstat-no" title="statement not covered" >clearTimeout(debounceTimer);</span></span>
-<span class="cstat-no" title="statement not covered" >  debounceTimer = setTimeout(run, DEBOUNCE_MS);</span>
-<span class="cstat-no" title="statement not covered" >  return Promise.resolve();</span>
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(run, DEBOUNCE_MS);
+  return Promise.resolve();
 }
 &nbsp;
 /** Clears Discord Rich Presence and cancels any pending debounced sync. */
-export function <span class="fstat-no" title="function not covered" >clearDiscordPresence(): Promise&lt;void&gt; {</span>
-<span class="cstat-no" title="statement not covered" >  if (!isTauriRuntime()) <span class="cstat-no" title="statement not covered" >return Promise.resolve();</span></span>
-<span class="cstat-no" title="statement not covered" >  if (debounceTimer) <span class="cstat-no" title="statement not covered" >clearTimeout(debounceTimer);</span></span>
-<span class="cstat-no" title="statement not covered" >  debounceTimer = null;</span>
-<span class="cstat-no" title="statement not covered" >  return invoke&lt;void&gt;("discord_presence_clear").catch(<span class="fstat-no" title="function not covered" >() =&gt; {</span>});</span>
+export function clearDiscordPresence(): Promise&lt;void&gt; {
+  if (!isTauriRuntime()) return Promise.resolve();
+  <span class="missing-if-branch" title="else path not taken" >E</span>if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = null;
+  return invoke&lt;void&gt;("discord_presence_clear").catch(<span class="fstat-no" title="function not covered" >() =&gt; {</span>});
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -205,7 +205,7 @@ export function <span class="fstat-no" title="function not covered" >clearDiscor
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T18:54:24.933Z
+                at 2026-04-23T19:04:22.262Z
             </div>
         <script src="../prettify.js"></script>
         <script>

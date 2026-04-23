@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">37.03% </span>
+                <span class="strong">96.29% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>10/27</span>
+                <span class='fraction'>26/27</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">11.76% </span>
+                <span class="strong">94.11% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>2/17</span>
+                <span class='fraction'>16/17</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">50% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>2/4</span>
+                <span class='fraction'>4/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">43.47% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>10/23</span>
+                <span class='fraction'>23/23</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -166,43 +166,43 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-yes">112x</span>
+<span class="cline-any cline-yes">160x</span>
+<span class="cline-any cline-yes">160x</span>
+<span class="cline-any cline-yes">160x</span>
+<span class="cline-any cline-yes">160x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-yes">112x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">160x</span>
+<span class="cline-any cline-yes">156x</span>
+<span class="cline-any cline-yes">156x</span>
+<span class="cline-any cline-yes">156x</span>
+<span class="cline-any cline-yes">156x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">112x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">160x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -245,18 +245,18 @@ export function useQueueContextMenu(ctx: UseQueueContextMenuOptions) {
   const queueCtxY = ref(0);
   const queueCtxIdx = ref&lt;number | null&gt;(null);
 &nbsp;
-  function <span class="fstat-no" title="function not covered" >openQueueCtx(e</span>: MouseEvent, idx: number): void {
-<span class="cstat-no" title="statement not covered" >    e.preventDefault();</span>
-<span class="cstat-no" title="statement not covered" >    queueCtxX.value = e.clientX;</span>
-<span class="cstat-no" title="statement not covered" >    queueCtxY.value = e.clientY;</span>
-<span class="cstat-no" title="statement not covered" >    queueCtxIdx.value = idx;</span>
-<span class="cstat-no" title="statement not covered" >    queueCtxOpen.value = true;</span>
+  function openQueueCtx(e: MouseEvent, idx: number): void {
+    e.preventDefault();
+    queueCtxX.value = e.clientX;
+    queueCtxY.value = e.clientY;
+    queueCtxIdx.value = idx;
+    queueCtxOpen.value = true;
   }
 &nbsp;
   const queueCtxActions = computed&lt;QueueCtxAction[]&gt;(() =&gt; {
     const idx = queueCtxIdx.value;
-    const t = idx != null ? <span class="branch-0 cbranch-no" title="branch not covered" >ctx.playbackQueue.value?.[idx] : n</span>ull;
-    const canDownload = !!t &amp;&amp; <span class="branch-1 cbranch-no" title="branch not covered" >typeof t.hasPlaybackIdentity === "function" &amp;&amp; <span class="branch-2 cbranch-no" title="branch not covered" >t</span>.hasPlaybackIdentity();</span>
+    const t = idx != null ? ctx.playbackQueue.value?.[idx] : null;
+    const canDownload = !!t &amp;&amp; typeof t.hasPlaybackIdentity === "function" &amp;&amp; t.hasPlaybackIdentity();
     return [
       { id: "download", label: "Скачать",   icon: "download", disabled: !canDownload },
       { id: "divider" },
@@ -264,15 +264,15 @@ export function useQueueContextMenu(ctx: UseQueueContextMenuOptions) {
     ];
   });
 &nbsp;
-  function <span class="fstat-no" title="function not covered" >onQueueCtxAction(i</span>d: string): void {
-    const idx = <span class="cstat-no" title="statement not covered" >queueCtxIdx.value;</span>
-<span class="cstat-no" title="statement not covered" >    if (idx == null) <span class="cstat-no" title="statement not covered" >return;</span></span>
-    const t = <span class="cstat-no" title="statement not covered" >ctx.playbackQueue.value?.[idx];</span>
-<span class="cstat-no" title="statement not covered" >    if (!t) <span class="cstat-no" title="statement not covered" >return;</span></span>
-<span class="cstat-no" title="statement not covered" >    if (id === "playlist") <span class="cstat-no" title="statement not covered" >ctx.onAddToPlaylist(t);</span></span>
-<span class="cstat-no" title="statement not covered" >    if (id === "download") {</span>
-<span class="cstat-no" title="statement not covered" >      if (typeof t.hasPlaybackIdentity === "function" &amp;&amp; !t.hasPlaybackIdentity()) <span class="cstat-no" title="statement not covered" >return;</span></span>
-<span class="cstat-no" title="statement not covered" >      ctx.onDownload(t);</span>
+  function onQueueCtxAction(id: string): void {
+    const idx = queueCtxIdx.value;
+    if (idx == null) return;
+    const t = ctx.playbackQueue.value?.[idx];
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (!t) <span class="cstat-no" title="statement not covered" >return;</span>
+    if (id === "playlist") ctx.onAddToPlaylist(t);
+    if (id === "download") {
+      if (typeof t.hasPlaybackIdentity === "function" &amp;&amp; !t.hasPlaybackIdentity()) return;
+      ctx.onDownload(t);
     }
   }
 &nbsp;
@@ -292,7 +292,7 @@ export function useQueueContextMenu(ctx: UseQueueContextMenuOptions) {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T18:54:24.933Z
+                at 2026-04-23T19:04:22.262Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

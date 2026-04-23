@@ -655,9 +655,19 @@ describe("App.vue — search + navigation", () => {
 });
 
 describe("App.vue — album select toggle + legacy topic", () => {
+  /** Prime search so Results is mounted. */
+  async function primeSearch(w: ReturnType<typeof mount>) {
+    const sb = w.findComponent({ name: "SearchBar" });
+    if (sb.exists()) {
+      await sb.vm.$emit("search", "query", "100");
+      await flushPromises();
+    }
+  }
+
   it("Results select album creates currentAlbum, clicking same album deselects", async () => {
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
+    await primeSearch(w);
     const results = w.findComponent({ name: "Results" });
     const album = {
       type: "album", id: "alb-x", title: "Album Title", artist: "A",
@@ -678,6 +688,7 @@ describe("App.vue — album select toggle + legacy topic", () => {
   it("Results select two different albums stacks nav history", async () => {
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
+    await primeSearch(w);
     const results = w.findComponent({ name: "Results" });
     if (results.exists()) {
       await results.vm.$emit("select", {
@@ -766,9 +777,18 @@ describe("App.vue — album select toggle + legacy topic", () => {
 });
 
 describe("App.vue — album view handlers", () => {
+  async function primeSearch(w: ReturnType<typeof mount>) {
+    const sb = w.findComponent({ name: "SearchBar" });
+    if (sb.exists()) {
+      await sb.vm.$emit("search", "q", "100");
+      await flushPromises();
+    }
+  }
+
   it("select album then play-all / toggle-like-album / download-album", async () => {
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
+    await primeSearch(w);
     const results = w.findComponent({ name: "Results" });
     const album = {
       type: "album", id: "alb-x", title: "X", artist: "A",
@@ -795,6 +815,7 @@ describe("App.vue — album view handlers", () => {
   it("album view play-track / toggle-like / add-to-queue / add-to-playlist / download-track / open-track-source", async () => {
     const w = mount(App, { attachTo: document.body });
     await flushPromises();
+    await primeSearch(w);
     const results = w.findComponent({ name: "Results" });
     if (results.exists()) {
       await results.vm.$emit("select", {
@@ -1796,6 +1817,64 @@ describe("App.vue — LikesView toggle-like + empty noop paths", () => {
     // Emit plain payload (not a Track instance)
     await lv.vm.$emit("add-to-queue", { id: "x", type: "not-a-track" });
     await flushPromises();
+    expect(w.html()).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
+});
+
+describe("App.vue — album select RT path with full metadata", () => {
+  async function primeSearch(w: ReturnType<typeof mount>) {
+    const sb = w.findComponent({ name: "SearchBar" });
+    if (sb.exists()) {
+      await sb.vm.$emit("search", "q", "100");
+      await flushPromises();
+    }
+  }
+
+  it("selecting an RT album with topicRow + details adds to recent history", async () => {
+    const w = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await primeSearch(w);
+    const results = w.findComponent({ name: "Results" });
+    if (results.exists()) {
+      await results.vm.$emit("select", {
+        type: "album", id: "alb-rt-1", title: "Album Title", artist: "ArtistName",
+        trackIds: [],
+        sources: [{
+          kind: "rutracker",
+          refs: { topicId: "777" },
+          raw: {
+            topicRow: { name: "Some Full Name", id: "777" },
+            details: { magnet: "magnet:?xt=urn:btih:XYZ", artist: "ArtistName" },
+          },
+        }],
+      });
+      await flushPromises();
+    }
+    expect(w.html()).toBeTruthy();
+    w.unmount();
+    document.body.innerHTML = "";
+  });
+
+  it("selecting an album then a different album stacks nav and keeps backStack", async () => {
+    const w = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await primeSearch(w);
+    const results = w.findComponent({ name: "Results" });
+    if (results.exists()) {
+      await results.vm.$emit("select", {
+        type: "album", id: "alb-first", title: "First", artist: null, trackIds: [],
+        sources: [{ kind: "rutracker", refs: { topicId: "1" }, raw: {} }],
+      });
+      await flushPromises();
+      // Second different album → backStack gets snapshotAlbumForBack
+      await results.vm.$emit("select", {
+        type: "album", id: "alb-second", title: "Second", artist: null, trackIds: [],
+        sources: [{ kind: "rutracker", refs: { topicId: "2" }, raw: {} }],
+      });
+      await flushPromises();
+    }
     expect(w.html()).toBeTruthy();
     w.unmount();
     document.body.innerHTML = "";

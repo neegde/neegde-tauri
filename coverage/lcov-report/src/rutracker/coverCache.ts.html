@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">35.71% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>5/14</span>
+                <span class='fraction'>14/14</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">75% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/4</span>
+                <span class='fraction'>3/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">50% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>4/8</span>
+                <span class='fraction'>8/8</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">35.71% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>5/14</span>
+                <span class='fraction'>14/14</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -122,42 +122,42 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">55x</span>
+<span class="cline-any cline-yes">135x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">47x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">21x</span>
+<span class="cline-any cline-yes">32x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">26x</span>
+<span class="cline-any cline-yes">85x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">15x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">14x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { invoke } from "@tauri-apps/api/core";
 import { getMirror } from "./config.js";
@@ -174,15 +174,15 @@ function cacheKey(topicId: unknown): string {
 }
 &nbsp;
 const cache = makeCoverCache({
-  async <span class="fstat-no" title="function not covered" >fetch(k</span>ey) {
-    const parts = <span class="cstat-no" title="statement not covered" >key.split("\n", 2);</span>
-    const topicId = <span class="cstat-no" title="statement not covered" >parts[1] ?? "";</span>
-    const <span class="cstat-no" title="statement not covered" >mirror = getMirror();</span>
-<span class="cstat-no" title="statement not covered" >    void appDebugLog("cover", `rutracker cover: fetching — topicId=${topicId} mirror=${mirror}`);</span>
-    const u = <span class="cstat-no" title="statement not covered" >await invoke&lt;string | null&gt;("rutracker_get_cover", { mirror, topicId });</span>
-<span class="cstat-no" title="statement not covered" >    return u ?? null;</span>
+  async fetch(key) {
+    const parts = key.split("\n", 2);
+    const topicId = parts[1] ?? <span class="branch-1 cbranch-no" title="branch not covered" >"";</span>
+    const mirror = getMirror();
+    void appDebugLog("cover", `rutracker cover: fetching — topicId=${topicId} mirror=${mirror}`);
+    const u = await invoke&lt;string | null&gt;("rutracker_get_cover", { mirror, topicId });
+    return u ?? null;
   },
-  log: <span class="fstat-no" title="function not covered" >(t</span>ag, msg) =&gt; <span class="cstat-no" title="statement not covered" >void appDebugLog(tag, `rutracker ${msg}`),</span>
+  log: (tag, msg) =&gt; void appDebugLog(tag, `rutracker ${msg}`),
   maxEntries: 1024,
   maxBytes: 64 * 1024 * 1024,
   negativeTtlMs: 90_000,
@@ -200,12 +200,12 @@ export function rememberRutrackerCover(topicId: unknown, dataUrl: string | null)
   cache.remember(cacheKey(topicId), dataUrl);
 }
 &nbsp;
-export function <span class="fstat-no" title="function not covered" >getRutrackerCoverDataUrl(t</span>opicId: unknown): Promise&lt;string | null&gt; {
-<span class="cstat-no" title="statement not covered" >  return cache.getOrFetch(cacheKey(topicId));</span>
+export function getRutrackerCoverDataUrl(topicId: unknown): Promise&lt;string | null&gt; {
+  return cache.getOrFetch(cacheKey(topicId));
 }
 &nbsp;
-export function <span class="fstat-no" title="function not covered" >clearRutrackerCoverCache(): void {</span>
-<span class="cstat-no" title="statement not covered" >  cache.clear();</span>
+export function clearRutrackerCoverCache(): void {
+  cache.clear();
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -214,7 +214,7 @@ export function <span class="fstat-no" title="function not covered" >clearRutrac
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T18:54:24.933Z
+                at 2026-04-23T19:04:22.262Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">57.14% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>4/7</span>
+                <span class='fraction'>7/7</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">33.33% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>2/6</span>
+                <span class='fraction'>6/6</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">50% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>1/2</span>
+                <span class='fraction'>2/2</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">57.14% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>4/7</span>
+                <span class='fraction'>7/7</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line medium'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -110,22 +110,22 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">270x</span>
-<span class="cline-any cline-yes">270x</span>
-<span class="cline-any cline-yes">218x</span>
-<span class="cline-any cline-yes">52x</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">530x</span>
+<span class="cline-any cline-yes">530x</span>
+<span class="cline-any cline-yes">441x</span>
+<span class="cline-any cline-yes">78x</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * `buildTrack(data)` — the only public way to get a Track instance.
@@ -146,9 +146,9 @@ export function buildTrack(data: TrackData): Track {
   switch (kind) {
     case "soulseek":  return new SoulseekTrack(data);
     case "rutracker": return new RutrackerTrack(data);
-<span class="branch-2 cbranch-no" title="branch not covered" >    case "magnet":    <span class="cstat-no" title="statement not covered" >return new MagnetTrack(data);</span></span>
-<span class="branch-3 cbranch-no" title="branch not covered" >    default:</span>
-<span class="cstat-no" title="statement not covered" >      throw new Error(`buildTrack: unsupported source kind "${kind}" on track "${data.id}"`);</span>
+    case "magnet":    return new MagnetTrack(data);
+    default:
+      throw new Error(`buildTrack: unsupported source kind "${kind}" on track "${data.id}"`);
   }
 }
 &nbsp;
@@ -156,8 +156,8 @@ export function buildTrack(data: TrackData): Track {
  * Accepts either already-hydrated `Track` or raw `TrackData`. Useful at store
  * boundaries where data arrives from many origins.
  */
-export function <span class="fstat-no" title="function not covered" >ensureTrack(t</span>: Track | TrackData): Track {
-<span class="cstat-no" title="statement not covered" >  return typeof (t as Track).prepareStream === "function" ? (t as Track) : buildTrack(t as TrackData);</span>
+export function ensureTrack(t: Track | TrackData): Track {
+  return typeof (t as Track).prepareStream === "function" ? (t as Track) : buildTrack(t as TrackData);
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -166,7 +166,7 @@ export function <span class="fstat-no" title="function not covered" >ensureTrack
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T18:54:24.933Z
+                at 2026-04-23T19:04:22.262Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

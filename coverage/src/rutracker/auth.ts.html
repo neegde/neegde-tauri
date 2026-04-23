@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/6</span>
+                <span class='fraction'>6/6</span>
             </div>
         
             
@@ -37,16 +37,16 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/4</span>
+                <span class='fraction'>4/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/6</span>
+                <span class='fraction'>6/6</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -118,24 +118,24 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { invoke } from "@tauri-apps/api/core";
 import { getMirror } from "./config.js";
@@ -154,25 +154,25 @@ export interface SessionStatus {
 }
 &nbsp;
 /** Log in to Rutracker via the currently configured mirror. */
-export async function <span class="fstat-no" title="function not covered" >login(u</span>sername: string, password: string): Promise&lt;LoginResult&gt; {
-  const <span class="cstat-no" title="statement not covered" >mirror = getMirror();</span>
-<span class="cstat-no" title="statement not covered" >  return invoke&lt;LoginResult&gt;("rutracker_login", { mirror, username, password });</span>
+export async function login(username: string, password: string): Promise&lt;LoginResult&gt; {
+  const mirror = getMirror();
+  return invoke&lt;LoginResult&gt;("rutracker_login", { mirror, username, password });
 }
 &nbsp;
 /** Clear session state and wipe persisted session files. */
-export async function <span class="fstat-no" title="function not covered" >logout(): Promise&lt;void&gt; {</span>
-<span class="cstat-no" title="statement not covered" >  return invoke&lt;void&gt;("rutracker_logout");</span>
+export async function logout(): Promise&lt;void&gt; {
+  return invoke&lt;void&gt;("rutracker_logout");
 }
 &nbsp;
 /** Validate saved cookies with a live HTTP request and restore logged-in state. */
-export async function <span class="fstat-no" title="function not covered" >restoreSession(): Promise&lt;SessionStatus&gt; {</span>
-  const <span class="cstat-no" title="statement not covered" >mirror = getMirror();</span>
-<span class="cstat-no" title="statement not covered" >  return invoke&lt;SessionStatus&gt;("rutracker_restore_session", { mirror });</span>
+export async function restoreSession(): Promise&lt;SessionStatus&gt; {
+  const mirror = getMirror();
+  return invoke&lt;SessionStatus&gt;("rutracker_restore_session", { mirror });
 }
 &nbsp;
 /** Read back the current in-memory session state (no network request). */
-export async function <span class="fstat-no" title="function not covered" >getStatus(): Promise&lt;SessionStatus&gt; {</span>
-<span class="cstat-no" title="statement not covered" >  return invoke&lt;SessionStatus&gt;("rutracker_status");</span>
+export async function getStatus(): Promise&lt;SessionStatus&gt; {
+  return invoke&lt;SessionStatus&gt;("rutracker_status");
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -181,7 +181,7 @@ export async function <span class="fstat-no" title="function not covered" >getSt
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T18:54:24.905Z
+                at 2026-04-23T19:04:22.232Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

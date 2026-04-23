@@ -625,20 +625,6 @@ function handleAchievementsOptInChange(enabled) {
   _handleAchievementsOptInChange(enabled, Object.keys(likes.value).length);
 }
 
-const nowPlayingMatchForLikes = computed(() => {
-  const np = nowPlaying.value;
-  if (!np) return null;
-  if (np.source === "soulseek") {
-    return {
-      source: "soulseek",
-      fileIdx: np.fileIdx,
-      slskUsername: np.slskUsername,
-      slskFilepath: np.slskFilepath,
-    };
-  }
-  return { magnet: np.magnet, fileIdx: np.fileIdx };
-});
-
 /** Подсветка «сейчас играет» только среди файлов текущего экрана (раздача / предпросмотр альбома). */
 const nowPlayingIdxForTorrentView = computed(() => {
   const np = nowPlaying.value;
@@ -954,23 +940,6 @@ function handlePlaySlskTrack(track) {
   playTrackNow(track);
 }
 
-/** Play a full Album entity: resolve trackIds via search results, hand off to queue store. */
-function handlePlaySlskAlbumEntity(album) {
-  allowPlayerAutoplay();
-  if (!album || album.type !== "album") return;
-  const byId = new Map();
-  for (const e of searchEntities.value) byId.set(e.id, e);
-  const tracks = (album.trackIds ?? [])
-    .map((id) => byId.get(id))
-    .filter((t) => t?.type === "track");
-  if (tracks.length === 0) return;
-  // registerEntity normalizes plain data to class instances and returns them via getTrack.
-  for (const t of tracks) registerEntity(t);
-  const trackInstances = tracks.map((t) => getTrack(t.id)).filter(Boolean);
-  if (trackInstances.length === 0) return;
-  replaceQueue(trackInstances, 0);
-}
-
 /** SLSK track-row click → toggle like via the library store. */
 function handleLikeSlskTrack(track) {
   if (!isTrack(track)) return;
@@ -1122,72 +1091,6 @@ const { handleOpenAlbumPreview, applyAlbumScopeForTrack } = useAlbumPreview({
   mainRef,
 });
 
-async function handleOpenTorrentFromLike(like) {
-  if (like?.source === "soulseek" && like.slskUsername) {
-    const prevView = view.value;
-    const prevPlId = currentPlaylistId.value;
-    returnView.value = prevView;
-    forwardStack.value = [];
-    await handleNavigateSoulseekPeer(like.slskUsername);
-    if (prevView === "likes") backStack.value.push({ type: "likes" });
-    else if (prevView === "playlist" && prevPlId) {
-      backStack.value.push({ type: "playlist", playlistId: prevPlId });
-    }
-    return;
-  }
-  resetSearchStateForHomeLibraryNav();
-  forwardStack.value = [];
-  if (selected.value) {
-    backStack.value.push(snapshotTorrentForBack());
-  } else if (view.value === "playlist" && currentPlaylistId.value) {
-    backStack.value.push({ type: "playlist", playlistId: currentPlaylistId.value });
-  } else {
-    backStack.value.push({ type: "likes" });
-  }
-  torrentFilesBeforeAlbumPreview.value = null;
-  torrentSelectedBeforeAlbumPreview.value = null;
-  const m = like.torrentName?.match(/^(.+?)\s+[-–—]\s+/);
-  const tid = like.torrentId != null && like.torrentId !== "" ? String(like.torrentId) : String(like.id ?? "");
-  const torrent = {
-    id: tid,
-    name: like.type === "album" ? (like.albumName || like.torrentName) : like.torrentName,
-    source: like.source, seeders: "?", size: 0, category: "—", added: "—",
-    fromLikes: true, artist: m ? m[1].trim() : "",
-  };
-  returnView.value    = view.value === "playlist" ? "playlist" : "likes";
-  view.value          = "home";
-  selected.value      = torrent;
-  torrentCover.value  = null;
-
-  // If the like already carries the file list (saved album like), use it directly
-  if (like.type === "album" && like.audioFiles?.length) {
-    torrentMagnet.value = like.magnet ?? "";
-    files.value        = like.coverFile ? [...like.audioFiles, like.coverFile] : like.audioFiles;
-    loadingFiles.value = false;
-    return;
-  }
-
-  // Otherwise fetch from Rutracker
-  loadingFiles.value  = true;
-  torrentMagnet.value = like.magnet ?? "";
-  try {
-    const details = await getTorrentDetails(tid);
-    torrentMagnet.value = details.magnet ?? like.magnet ?? "";
-    torrentCover.value  = details.cover_data_url ?? null;
-    files.value = details.files.map((f, i) => ({
-      name: f.path[f.path.length - 1] ?? "",
-      path: f.path.join("/"),
-      size: f.size,
-      idx: i,
-      origIdx: i,
-    }));
-  } catch (e) {
-    console.error("handleOpenTorrentFromLike:", e);
-  } finally {
-    loadingFiles.value = false;
-  }
-}
-
 /**
  * Clears SoulSeek peer-only filter on search results.
  */
@@ -1232,34 +1135,6 @@ function handleOpenTorrentSourceFromView(origIdx) {
 }
 
 /**
- * Builds the same payload as the player emits for `open-torrent` (library / playlist rows).
- *
- * Args:
- *     row: Liked track or playlist track entry.
- *
- * Returns:
- *     Object for `handleOpenTorrentFromPlayer`, or null if not openable.
- */
-function libraryRowToPlayerOpenPayload(row) {
-  if (!row || (!row.torrentId && !row.magnet)) return null;
-  const o = {
-    torrentId: row.torrentId,
-    torrentName: row.torrentName ?? "",
-    source: row.source ?? "rutracker",
-    magnet: row.magnet ?? "",
-    artist: row.artist ?? null,
-    seeders: row.seeders ?? null,
-    fileIdx: row.fileIdx ?? 0,
-    albumDirPath: row.albumDirPath ?? null,
-  };
-  if (row.source === "soulseek" && row.slskUsername) {
-    o.slskUsername = row.slskUsername;
-    o.slskFilepath = row.slskFilepath ?? null;
-  }
-  return o;
-}
-
-/**
  * SoulSeek search row: same as player «open album» for that result.
  *
  * Args:
@@ -1288,17 +1163,6 @@ async function handleNavigateSoulseekPeer(username) {
   torrentMagnet.value = "";
   torrentCover.value = null;
   await handleSearch(u);
-}
-
-/**
- * Opens source for a liked or playlist track — same navigation as the player title click.
- *
- * Args:
- *     row: Like object or playlist track row.
- */
-function handleOpenTrackSource(row) {
-  const p = libraryRowToPlayerOpenPayload(row);
-  if (p) handleOpenTorrentFromPlayer(p);
 }
 
 // Legacy handlers removed — LikesView now emits `onPlayTrack(track)` which
