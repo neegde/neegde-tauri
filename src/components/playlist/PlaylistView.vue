@@ -5,10 +5,10 @@ import TrackCover from "../shared/TrackCover.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { trackDisplayBasename } from "../../lib/utils.js";
 import { Track } from "../../track/Track.js";
-import type { PlaylistSnapshot } from "../../persistence/playlists.js";
+import type { Playlist } from "../../playlist/Playlist.js";
 
 const props = defineProps<{
-  playlist: PlaylistSnapshot;
+  playlist: Playlist;
   tracks: Track[];
   nowPlayingId: string | null;
   playerPlaying: boolean;

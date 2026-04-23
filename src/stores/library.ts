@@ -7,7 +7,7 @@
  * snapshot to localStorage.
  */
 
-import { ref, computed } from "vue";
+import { computed, ref } from "vue";
 import type { Track } from "../track/Track.js";
 import type { Album } from "../album/Album.js";
 import type { AlbumData } from "../album/types.js";
@@ -26,6 +26,8 @@ import {
   savePlaylistsSnapshot,
   type PlaylistSnapshot,
 } from "../persistence/playlists.js";
+import { Library } from "../playlist/Library.js";
+import type { Playlist } from "../playlist/Playlist.js";
 
 // ── Likes ───────────────────────────────────────────────────────────────────
 
@@ -124,15 +126,22 @@ export function seedLikesFromSnapshot(s: LikesSnapshot): void {
 
 // ── Playlists ───────────────────────────────────────────────────────────────
 
-export const playlists = ref<PlaylistSnapshot[]>([]);
+/**
+ * Library singleton. Owns the reactive Playlist collection; named exports
+ * below are thin delegates so existing call sites keep working.
+ */
+export const library = new Library(savePlaylistsSnapshot);
 
-export function getPlaylist(id: string): PlaylistSnapshot | null {
-  return playlists.value.find((p) => p.id === id) ?? null;
+/** Reactive list of Playlist instances. UI components read .title / .trackIds directly. */
+export const playlists = library.playlists;
+
+export function getPlaylist(id: string): Playlist | null {
+  return library.get(id);
 }
 
 export function getPlaylistTracks(playlistId: string): Track[] {
   entitiesVersion.value;
-  const pl = getPlaylist(playlistId);
+  const pl = library.get(playlistId);
   if (!pl) return [];
   const out: Track[] = [];
   for (const id of pl.trackIds) {
@@ -142,78 +151,34 @@ export function getPlaylistTracks(playlistId: string): Track[] {
   return out;
 }
 
-function uuid(): string {
-  return `pl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function createPlaylist(title: string): PlaylistSnapshot {
-  const now = Date.now();
-  const pl: PlaylistSnapshot = {
-    id: uuid(),
-    title: title?.trim() || "Без названия",
-    coverUrl: null,
-    createdAt: now,
-    updatedAt: now,
-    trackIds: [],
-  };
-  playlists.value = [...playlists.value, pl];
-  persistPlaylists();
-  return pl;
+export function createPlaylist(title: string): Playlist {
+  return library.create(title);
 }
 
 export function deletePlaylist(id: string): void {
-  playlists.value = playlists.value.filter((p) => p.id !== id);
-  persistPlaylists();
+  library.delete(id);
 }
 
 export function renamePlaylist(id: string, newTitle: string): void {
-  const trimmed = newTitle?.trim();
-  if (!trimmed) return;
-  playlists.value = playlists.value.map((p) =>
-    p.id === id ? { ...p, title: trimmed, updatedAt: Date.now() } : p,
-  );
-  persistPlaylists();
+  library.rename(id, newTitle);
 }
 
 export function addTrackToPlaylist(playlistId: string, track: Track): void {
   if (!track?.id) return;
   registerEntity(track);
   putTrack(track);
-  playlists.value = playlists.value.map((p) => {
-    if (p.id !== playlistId) return p;
-    if (p.trackIds.includes(track.id)) return p;
-    return { ...p, trackIds: [...p.trackIds, track.id], updatedAt: Date.now() };
-  });
-  persistPlaylists();
+  library.addTrackId(playlistId, track.id);
 }
 
 export function removeTrackFromPlaylist(playlistId: string, trackId: string): void {
-  playlists.value = playlists.value.map((p) => {
-    if (p.id !== playlistId) return p;
-    if (!p.trackIds.includes(trackId)) return p;
-    return { ...p, trackIds: p.trackIds.filter((id) => id !== trackId), updatedAt: Date.now() };
-  });
-  persistPlaylists();
+  library.removeTrackId(playlistId, trackId);
 }
 
 export function movePlaylistTrack(playlistId: string, fromIdx: number, toIdx: number): void {
-  playlists.value = playlists.value.map((p) => {
-    if (p.id !== playlistId) return p;
-    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return p;
-    if (fromIdx >= p.trackIds.length || toIdx >= p.trackIds.length) return p;
-    const next = p.trackIds.slice();
-    const [id] = next.splice(fromIdx, 1);
-    if (id != null) next.splice(toIdx, 0, id);
-    return { ...p, trackIds: next, updatedAt: Date.now() };
-  });
-  persistPlaylists();
-}
-
-function persistPlaylists(): void {
-  savePlaylistsSnapshot(playlists.value);
+  library.reorder(playlistId, fromIdx, toIdx);
 }
 
 /** Populate from persistence snapshot (call once at boot). */
 export function seedPlaylistsFromSnapshot(list: PlaylistSnapshot[]): void {
-  playlists.value = list;
+  library.seedFromSnapshots(list);
 }
