@@ -15,25 +15,6 @@ import {
   buildSlskTrackEntity,
   registerAndGetId,
 } from "./player/trackForQueue.js";
-import { trackCoverFileIdxForLike } from "./library/likesCover.js";
-import { slskFieldsFromTrackEntity } from "./library/slskFieldsFromTrackEntity.js";
-import {
-  playlistTrackFromLike as _playlistTrackFromLike,
-  queueItemToPlaylistTrack,
-} from "./library/rowAdapters.js";
-import {
-  asLikeRowFor,
-  asPlaylistRowFor,
-  asQueueItemFor,
-  navigationTargetFor,
-  exportTrackFor,
-} from "./track/ops.js";
-import { loadLikes, saveLikes } from "./library/libraryStorage.js";
-import {
-  loadPlayerSession,
-  savePlayerSession,
-  clearPlayerSession,
-} from "./player/playerSessionStorage.js";
 import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded } from "./rutracker/config.js";
@@ -86,8 +67,6 @@ import { useTheme } from "./composables/useTheme.js";
 import { useMouseSideButtonNav } from "./composables/useMouseSideButtonNav.js";
 import { useAchievements } from "./composables/useAchievements.js";
 import { useDownloads } from "./composables/useDownloads.js";
-import { usePlaylistManager } from "./composables/usePlaylistManager.js";
-import { useQueueControls } from "./composables/useQueueControls.js";
 import { useNavStack } from "./composables/useNavStack.js";
 import { useMagnetDialog } from "./composables/useMagnetDialog.js";
 import { useAlbumPreview } from "./composables/useAlbumPreview.js";
@@ -95,8 +74,11 @@ import { loadPersistedState } from "./persistence/bootstrap.js";
 import {
   likedTracks as libraryLikedTracks,
   likedTrackIds as libraryLikedTrackIds,
+  likedAlbumIds as libraryLikedAlbumIds,
   likedAt as libraryLikedAt,
   toggleLikeTrack,
+  toggleLikeAlbum as libToggleLikeAlbum,
+  isAlbumLiked as libIsAlbumLiked,
   playlists as libraryPlaylists,
   getPlaylistTracks,
   addTrackToPlaylist as libAddTrackToPlaylist,
@@ -115,12 +97,20 @@ import {
   secondNextTrack as secondNextTrackFromStore,
   hasPrev as queueHasPrev,
   hasNext as queueHasNext,
+  repeatMode,
+  shuffleOn,
   replaceQueue,
   enqueueTrack,
   playTrackNow,
+  jumpTo,
+  removeAt,
+  next as queueNext,
+  prev as queuePrev,
+  clear as clearQueue,
+  setRepeat,
+  toggleShuffle as storeToggleShuffle,
   seedQueueFromSnapshot,
 } from "./stores/queue.js";
-import { Track } from "./track/Track.js";
 import { getTrack } from "./stores/entities.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
@@ -131,6 +121,7 @@ import Results      from "./components/search/Results.vue";
 import SearchIntentHint from "./components/search/SearchIntentHint.vue";
 import TorrentView  from "./components/torrent/TorrentView.vue";
 import LikesView    from "./components/likes/LikesView.vue";
+import AlbumView    from "./components/album/AlbumView.vue";
 import SettingsView from "./components/settings/SettingsView.vue";
 import Player       from "./components/player/Player.vue";
 import NavArrows       from "./components/shell/NavArrows.vue";
@@ -141,93 +132,36 @@ import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory, removeFromRecentHistory } from "./lib/recentHistory.js";
 import { loadSearchHistory, addToSearchHistory, removeFromSearchHistory } from "./lib/searchHistory.js";
-import { loadPlaylists } from "./lib/playlistStorage.js";
 import PlaylistView from "./components/playlist/PlaylistView.vue";
 import AchievementToast from "./components/shell/AchievementToast.vue";
 import SystemIcon from "./components/shared/SystemIcon.vue";
 
-// ── Queue (восстановление последней сессии из localStorage) ──────────────────
-const _savedPlayer = loadPlayerSession();
-const queue = shallowRef(_savedPlayer?.queue ?? []);
-const queuePos = ref(
-  _savedPlayer && _savedPlayer.queue.length
-    ? _savedPlayer.queuePos
-    : 0
+// Queue + repeat/shuffle are owned by `stores/queue`. Auto-persist is handled
+// inside the store. App.vue reads derived values and delegates mutations.
+const nowPlaying = nowPlayingTrackFromStore;  // alias used by useAppDebug
+const { appDebugEnabled } = useAppDebug({ view, queuePos: queueStorePos, nowPlaying });
+
+/** Track[] view over the queue ids — used for the in-player queue panel. */
+const playbackQueueTracks = computed(() =>
+  queueStoreIds.value
+    .map((id) => getTrack(id))
+    .filter((t) => t != null),
 );
 
-function loadRepeatMode() {
-  const v = localStorage.getItem("neegde.player.repeatMode");
-  if (v === "all" || v === "one" || v === "off") return v;
-  return "off";
+/**
+ * HMR-safe Track check. `instanceof Track` breaks after Vite HMR: if the
+ * Track module or any of its subclasses gets re-imported, instances created
+ * by the old module no longer match the new class prototype and silently
+ * fail guards like `if (!(x instanceof Track)) return`. Duck-type on the
+ * API surface instead — it's present on every Track subclass regardless of
+ * reload generation.
+ */
+function isTrack(t) {
+  return !!t && t.type === "track" && typeof t.prepareStream === "function";
 }
 
-function loadShuffleOn() {
-  return localStorage.getItem("neegde.player.shuffle") === "1";
-}
-
-/** `off` → no wrap; `all` → loop queue; `one` → current track restarts (handled in Player). */
-const repeatMode = ref(loadRepeatMode());
-const shuffleOn = ref(loadShuffleOn());
-
-watch(repeatMode, (v) => {
-  localStorage.setItem("neegde.player.repeatMode", v);
-});
-
-const nowPlaying = computed(() => queue.value[queuePos.value] ?? null);
-
-// In-app debug console (Settings → checkbox). Side effects + trace wiring live
-// in useAppDebug; App.vue only holds the reactive toggle.
-const { appDebugEnabled } = useAppDebug({ view, queuePos, nowPlaying });
-const nextInQueue = computed(() => {
-  const q = queue.value;
-  const len = q.length;
-  if (len === 0) return null;
-  const pos = queuePos.value;
-  if (pos < len - 1) return q[pos + 1];
-  if (repeatMode.value === "all") return q[0];
-  return null;
-});
-const secondNextInQueue = computed(() => {
-  const q = queue.value;
-  const len = q.length;
-  if (len < 2) return null;
-  const pos = queuePos.value;
-  if (pos < len - 2) return q[pos + 2];
-  if (pos === len - 2) {
-    return repeatMode.value === "all" ? q[0] : null;
-  }
-  if (repeatMode.value !== "all") return null;
-  return len > 2 ? q[1] : q[0];
-});
-
-const playerHasNext = computed(() => {
-  const len = queue.value.length;
-  if (len === 0) return false;
-  if (queuePos.value < len - 1) return true;
-  return repeatMode.value === "all";
-});
-
-const playerHasPrev = computed(() => {
-  const len = queue.value.length;
-  if (len === 0) return false;
-  if (queuePos.value > 0) return true;
-  return repeatMode.value === "all" && len > 1;
-});
-
-
-watch(
-  [queue, queuePos],
-  () => {
-    savePlayerSession(queue.value, queuePos.value);
-  }
-);
-
-function flushPlayerSessionToStorage() {
-  savePlayerSession(queue.value, queuePos.value);
-}
-
-/** После cold start с восстановленной очередью не запускать трек через HTML autoplay — только по клику ▶ / явной смене трека. */
-const suppressAutoplayAfterSessionRestore = ref(Boolean(_savedPlayer?.queue?.length));
+/** On cold start with a restored queue we don't want HTML autoplay on src assignment. */
+const suppressAutoplayAfterSessionRestore = ref(queueStoreIds.value.length > 0);
 
 function allowPlayerAutoplay() {
   suppressAutoplayAfterSessionRestore.value = false;
@@ -250,7 +184,6 @@ onMounted(async () => {
   seedPlaylistsFromSnapshot(persisted.playlists);
   seedQueueFromSnapshot(persisted.queue);
 
-  window.addEventListener("beforeunload", flushPlayerSessionToStorage);
   const unblockTimer = window.setTimeout(() => {
     restoringSession.value = false;
   }, RESTORE_UI_MAX_MS);
@@ -279,7 +212,6 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  window.removeEventListener("beforeunload", flushPlayerSessionToStorage);
 });
 
 const handleThemeChange = setTheme;
@@ -368,9 +300,49 @@ function handleRemoveTrackFromPlaylist(id, trackId) {
   libRemoveTrackFromPlaylist(id, trackId);
 }
 
+/**
+ * Accepts either a Track instance (new callers: LikesView, PlaylistView,
+ * search Results) or a legacy row (TorrentView's `makePlaylistTrack` /
+ * `makeTrackLike`). Resolves or synthesizes a Track via the entities
+ * registry. Null when the payload can't produce a playable track.
+ */
+function resolveTrackFromPayload(payload) {
+  if (!payload) return null;
+  if (isTrack(payload)) return payload;
+  const id = payload.id ?? `track:${payload.source}:${payload.torrentId}:${payload.fileIdx}`;
+  const existing = getTrack(id);
+  if (existing) return existing;
+  let ent = null;
+  if (payload.source === "soulseek" && payload.slskUsername && payload.slskFilepath) {
+    ent = buildSlskTrackEntity({
+      username: payload.slskUsername,
+      filepath: payload.slskFilepath,
+      size: payload.slskFilesize ?? 0,
+      filename: payload.fileName,
+      artist: payload.artist ?? null,
+      cover: null,
+      albumTitle: payload.torrentName,
+    });
+  } else {
+    const btih = payload.source === "magnet" ? parseBtihFromMagnet(payload.magnet ?? "") : null;
+    ent = buildRtTrackEntity(
+      { origIdx: payload.fileIdx, path: payload.fileName, size: 0 },
+      { id: payload.torrentId, name: payload.torrentName, artist: payload.artist ?? null, source: payload.source },
+      payload.magnet ?? "",
+      btih,
+      payload.coverFileIdx ?? null,
+      payload.albumDirPath ?? null,
+    );
+  }
+  if (!ent) return null;
+  registerAndGetId(ent);
+  return getTrack(ent.id);
+}
+
 /** User picked a track for the "add to playlist" modal. */
-function handleShowAddToPlaylist(track) {
-  if (!(track instanceof Track)) return;
+function handleShowAddToPlaylist(payload) {
+  const track = resolveTrackFromPayload(payload);
+  if (!track) return;
   addToPlaylistTrack.value = track;
   addToPlaylistModal.value = true;
 }
@@ -397,35 +369,35 @@ function handleAddToPlaylistNew() {
 const nowPlayingTrackId = computed(() => nowPlayingTrackFromStore.value?.id ?? null);
 
 function onToggleLikeTrack(track) {
-  if (!(track instanceof Track)) return;
+  if (!isTrack(track)) return;
   toggleLikeTrack(track);
 }
 
 function onPlayTrack(track) {
-  if (!(track instanceof Track)) return;
+  if (!isTrack(track)) return;
   allowPlayerAutoplay();
   playTrackNow(track);
 }
 
 function onOpenTrackSource(track) {
-  if (!(track instanceof Track)) return;
+  if (!isTrack(track)) return;
   const target = track.navigationTarget();
   if (target) handleOpenTorrentFromPlayer(target);
 }
 
 function onDownloadTrack(track) {
-  if (!(track instanceof Track)) return;
+  if (!isTrack(track)) return;
   downloadOverlayExpanded.value = true;
   void track.exportToDisk((p) => { downloadProgress.value = p; });
 }
 
 function onAddToQueue(track) {
-  if (!(track instanceof Track)) return;
+  if (!isTrack(track)) return;
   enqueueTrack(track);
 }
 
 function onAddTrackToPlaylist(track) {
-  if (!(track instanceof Track)) return;
+  if (!isTrack(track)) return;
   handleShowAddToPlaylist(track);
 }
 
@@ -448,6 +420,48 @@ function handlePlayPlaylist(startIdx) {
   replaceQueue(tracks, Math.max(0, Math.min(startIdx ?? 0, tracks.length - 1)));
 }
 
+// ── AlbumView handlers ─────────────────────────────────────────────────────
+
+/** Resolve an album's trackIds to live Track instances via the registry. */
+function currentAlbumTracks() {
+  const alb = currentAlbum.value;
+  if (!alb) return [];
+  const out = [];
+  for (const id of alb.trackIds ?? []) {
+    const t = getTrack(id);
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+function handleAlbumPlayAll() {
+  const tracks = currentAlbumTracks();
+  if (!tracks.length) return;
+  allowPlayerAutoplay();
+  replaceQueue(tracks, 0);
+}
+
+function handleAlbumToggleLike(album) {
+  if (!album) return;
+  libToggleLikeAlbum(album);
+}
+
+function handleAlbumDownloadAll() {
+  const tracks = currentAlbumTracks();
+  if (!tracks.length) return;
+  downloadOverlayExpanded.value = true;
+  for (const t of tracks) {
+    void t.exportToDisk((p) => { downloadProgress.value = p; });
+  }
+}
+
+const currentAlbumLiked = computed(() => {
+  const alb = currentAlbum.value;
+  if (!alb) return false;
+  libraryLikedAlbumIds.value; // reactive dep
+  return libIsAlbumLiked(alb.id);
+});
+
 // ── Search ────────────────────────────────────────────────────────────────────
 // Reactive surface lives in src/stores/search.js. We only keep UI-local bits
 // here (current input text, home-vs-recent toggle, per-peer filter).
@@ -467,6 +481,13 @@ const selected      = ref(null);
 const torrentMagnet = ref("");
 const torrentCover  = ref(null);   // base64 data URL or null
 const files         = shallowRef([]);
+/**
+ * Active Album entity for the new AlbumView path (search → album click).
+ * Mutually exclusive with `selected` (legacy TorrentView path).
+ * Opening an album from search sets this; opening a magnet / deep link /
+ * recent topic sets `selected` instead.
+ */
+const currentAlbum  = shallowRef(null);
 const loadingFiles  = ref(false);
 
 /** Полный список файлов раздачи до предпросмотра одного альбома (как из лайков). */
@@ -480,6 +501,7 @@ const {
   backStack,
   snapshotSearchForBack,
   snapshotTorrentForBack,
+  snapshotAlbumForBack,
   pushCurrentScreenToForwardStack,
   handleBack,
   handleForwardNav,
@@ -487,6 +509,7 @@ const {
 } = useNavStack({
   selected, files, torrentMagnet, torrentCover,
   torrentFilesBeforeAlbumPreview, torrentSelectedBeforeAlbumPreview,
+  currentAlbum,
   view, returnView, currentPlaylistId,
   searchQuery, searchEntities, slskPeerBrowseUser, error,
   mainRef,
@@ -700,7 +723,7 @@ function handleLogout(evt) {
   files.value        = [];
   torrentMagnet.value = "";
   torrentCover.value  = null;
-  queue.value        = [];
+  clearQueue();
   forwardStack.value = [];
   backStack.value    = [];
 }
@@ -783,87 +806,48 @@ const {
  * A reference to the original `__entity` stays attached so we don't lose
  * the connection when TorrentView is finally migrated in Phase 6.
  */
-async function handleSelect(album) {
+/**
+ * Open an Album entity in the new AlbumView — no legacy row transformation.
+ * Tracks resolve through the entities registry; AlbumView reads them by id.
+ * Legacy row payloads (deep link, recent history) still go through
+ * `handleSelectLegacyTopic` + TorrentView.
+ */
+function handleSelect(album) {
   if (!album || album.type !== "album") {
-    // Legacy fallback — called with a synthesized row (e.g. from a deep
-    // link). Delegate to the topic-id opener below.
     return handleSelectLegacyTopic(album);
   }
 
-  if (selected.value?.__entity?.id === album.id) {
+  // Toggle off if clicking the already-open album.
+  if (currentAlbum.value?.id === album.id) {
     forwardStack.value = [];
     backStack.value = [];
-    selected.value = null;
-    files.value = [];
-    torrentMagnet.value = "";
-    torrentCover.value = null;
-    torrentFilesBeforeAlbumPreview.value = null;
-    torrentSelectedBeforeAlbumPreview.value = null;
+    currentAlbum.value = null;
     appDebugLog("search", `album deselected: ${album.id}`);
     return;
   }
+
   appDebugLog("search", `album opened: ${album.id} "${album.title}"`);
-  if (selected.value) backStack.value.push(snapshotTorrentForBack());
-  else                backStack.value.push(snapshotSearchForBack());
+  if (currentAlbum.value) backStack.value.push(snapshotAlbumForBack());
+  else if (selected.value) backStack.value.push(snapshotTorrentForBack());
+  else                     backStack.value.push(snapshotSearchForBack());
   forwardStack.value = [];
+
+  // Clear legacy TorrentView state — the two paths are mutually exclusive.
+  selected.value = null;
+  files.value = [];
+  torrentMagnet.value = "";
+  torrentCover.value = null;
   torrentFilesBeforeAlbumPreview.value = null;
   torrentSelectedBeforeAlbumPreview.value = null;
 
+  currentAlbum.value = album;
+
+  // RT: prewarm torrent file cache + record recent history (topic-level).
   const src = album.sources?.[0];
-  const kind = src?.kind;
-
-  if (kind === "rutracker") {
-    const details = src.raw?.details;
-    const topicRow = src.raw?.topicRow;
+  if (src?.kind === "rutracker") {
     const topicId = src.refs?.topicId;
-    const trackEntities = (album.trackIds ?? [])
-      .map((id) => searchEntities.value.find((e) => e.id === id))
-      .filter(Boolean);
-
-    // TorrentView still reads legacy row fields — build one from the entity.
-    selected.value = {
-      id: String(topicId ?? album.id),
-      name: topicRow?.name ?? album.title,
-      source: "rutracker",
-      artist: album.artist ?? details?.artist ?? null,
-      seeders: album.seeders ?? topicRow?.seeders ?? 0,
-      leechers: album.leechers ?? topicRow?.leechers ?? 0,
-      size: album.size ?? topicRow?.size ?? 0,
-      added: topicRow?.added ?? "",
-      category: topicRow?.category ?? "",
-      __entity: album,
-    };
-    torrentMagnet.value = details?.magnet ?? "";
-    torrentCover.value = album.coverUrl ?? null;
-
-    files.value = trackEntities.map((t) => {
-      const file = t.sources?.[0]?.raw?.file;
-      const fileIdx = t.sources?.[0]?.refs?.fileIdx ?? 0;
-      const pathStr = (file?.path ?? []).join("/") || t.fileName;
-      return {
-        name: t.fileName,
-        path: pathStr,
-        size: t.size ?? file?.size ?? 0,
-        idx: fileIdx,
-        origIdx: fileIdx,
-      };
-    });
-    // Include THIS album's folder cover (cover.jpg / folder.jpg) so
-    // AlbumFolderCover in TorrentView can fetch the per-album image via BT
-    // instead of falling back to the topic's post preview.
-    const albumCoverFile = src.raw?.albumDir?.coverFile;
-    if (albumCoverFile?._origIdx != null) {
-      files.value.push({
-        name: albumCoverFile.path.split("/").pop() ?? "",
-        path: albumCoverFile.path,
-        size: albumCoverFile.size,
-        idx: albumCoverFile._origIdx,
-        origIdx: albumCoverFile._origIdx,
-      });
-    }
-    loadingFiles.value = false;
-    appDebugLog("search", `rt album opened: "${album.title}" tracks=${files.value.length} hasMagnet=${!!details?.magnet}`);
-
+    const topicRow = src.raw?.topicRow;
+    const details = src.raw?.details;
     if (topicId) {
       void torrentFileB64ForTrack({ source: "rutracker", torrentId: topicId });
       if (topicRow) {
@@ -876,64 +860,7 @@ async function handleSelect(album) {
         });
       }
     }
-    return;
   }
-
-  if (kind === "soulseek") {
-    // Resolve Track entities → raw rows for TorrentView's file list.
-    const trackEntities = (album.trackIds ?? [])
-      .map((id) => searchEntities.value.find((e) => e.id === id))
-      .filter(Boolean);
-    const cover = src.raw?.cover ?? null;
-
-    selected.value = {
-      id: album.id,
-      name: album.title,
-      source: "soulseek",
-      artist: album.artist ?? null,
-      seeders: album.peers ?? 1,
-      leechers: 0,
-      size: album.size ?? 0,
-      added: "—",
-      category: album.bitrate ? `MP3 ${album.bitrate} kbps` : "SoulSeek",
-      slsk_username: src.refs?.slskUsername ?? null,
-      slsk_folder: src.refs?.slskFolder ?? null,
-      slsk_cover_username: cover?.slsk_username ?? null,
-      slsk_cover_filepath: cover?.slsk_filepath ?? null,
-      slsk_cover_size: cover?.size ?? 0,
-      __entity: album,
-    };
-
-    // Synthetic common folder so TorrentView's detectAlbums collapses
-    // cross-peer tracks into one group.
-    const albumFolder =
-      (src.refs?.slskFolder?.split("/").pop() || album.title || "album").trim();
-
-    files.value = trackEntities.map((t, i) => {
-      const tsrc = t.sources?.[0];
-      const filepath = (tsrc?.refs?.slskFilepath ?? "").replace(/\\/g, "/");
-      const filename = filepath.split("/").pop() || t.fileName || `track_${i}`;
-      return {
-        name: filename,
-        path: `${albumFolder}/${filename}`,
-        size: t.size ?? 0,
-        idx: i,
-        origIdx: i,
-        slskUsername: tsrc?.refs?.slskUsername,
-        slskFilepath: tsrc?.refs?.slskFilepath,
-        slskFilesize: t.size ?? 0,
-        slskMetaTrackId: t.id,
-        slskFolderCoverUsername: cover?.slsk_username ?? null,
-        slskFolderCoverFilepath: cover?.slsk_filepath ?? null,
-        slskFolderCoverSize: cover?.size ?? 0,
-      };
-    });
-    loadingFiles.value = false;
-    appDebugLog("search", `slsk album opened: "${album.title}" tracks=${files.value.length}`);
-    return;
-  }
-
-  loadingFiles.value = false;
 }
 
 /**
@@ -1020,18 +947,14 @@ async function handleSelectLegacyTopic(torrent) {
   }
 }
 
-/** Play a single track directly from an entity (no TorrentView). */
+/** Play a single Track entity directly from search results. */
 function handlePlaySlskTrack(track) {
-  if (!track || track.type !== "track") return;
+  if (!isTrack(track)) return;
   allowPlayerAutoplay();
-  registerAndGetId(track);
-  const item = asQueueItemFor(track);
-  if (!item) return;
-  queue.value = [item];
-  queuePos.value = 0;
+  playTrackNow(track);
 }
 
-/** Play a full Album entity from search results: resolve trackIds via registry. */
+/** Play a full Album entity: resolve trackIds via search results, hand off to queue store. */
 function handlePlaySlskAlbumEntity(album) {
   allowPlayerAutoplay();
   if (!album || album.type !== "album") return;
@@ -1041,21 +964,24 @@ function handlePlaySlskAlbumEntity(album) {
     .map((id) => byId.get(id))
     .filter((t) => t?.type === "track");
   if (tracks.length === 0) return;
-  for (const t of tracks) registerAndGetId(t);
-  queue.value = tracks.map(asQueueItemFor).filter(Boolean);
-  queuePos.value = 0;
+  // registerEntity normalizes plain data to class instances and returns them via getTrack.
+  for (const t of tracks) registerEntity(t);
+  const trackInstances = tracks.map((t) => getTrack(t.id)).filter(Boolean);
+  if (trackInstances.length === 0) return;
+  replaceQueue(trackInstances, 0);
 }
 
-function playlistTrackFromLike(like) {
-  return _playlistTrackFromLike(like, likes.value);
-}
-
+/** SLSK track-row click → toggle like via the library store. */
 function handleLikeSlskTrack(track) {
-  const like = asLikeRowFor(track);
-  if (like) handleToggleLike(like);
+  if (!isTrack(track)) return;
+  toggleLikeTrack(track);
 }
 
-function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
+/**
+ * Build (or fetch from registry) a Track instance for a file inside the
+ * currently-open torrent / SoulSeek folder.
+ */
+function makeTrackFromFile(f, torrent, magnet, fileList, explicitCoverFileIdx) {
   let coverFileIdx = explicitCoverFileIdx ?? null;
   let albumDirPath = null;
   if (fileList?.length) {
@@ -1068,80 +994,62 @@ function makeQueueItem(f, torrent, magnet, fileList, explicitCoverFileIdx) {
       }
     }
   }
-  const rawSeeds = torrent?.seeders;
-  const seeders =
-    rawSeeds != null && rawSeeds !== "?" && Number.isFinite(Number(rawSeeds))
-      ? Number(rawSeeds)
-      : null;
-  // RT Album cards carry `__topicId` (the underlying rutracker topic id) so
-  // streaming & the .torrent file cache can key by it, even though the row's
-  // display id is the per-album entity id. Fall back to `id` for legacy rows.
-  const torrentId = torrent?.__topicId ?? torrent?.id ?? "";
-  const item = {
-    magnet,
-    fileIdx:      f.origIdx,
-    fileName:     trackDisplayBasename(f.path),
-    torrentName:  torrent?.name   ?? "",
-    torrentId,
-    source:       torrent?.source ?? "rutracker",
-    artist:       torrent?.artist ?? null,
-    coverFileIdx,
-    albumDirPath,
-    seeders,
-  };
-  // Carry SoulSeek-specific fields needed for streaming (per-track, from file object)
   if (torrent?.source === "soulseek") {
-    item.slskUsername = f.slskUsername ?? torrent.slsk_username ?? null;
-    item.slskFilepath = f.slskFilepath ?? f.path ?? null;
-    item.slskFilesize = f.slskFilesize ?? f.size ?? torrent.size ?? 0;
-    item.slskMetaTrackId = f.slskMetaTrackId ?? torrent?.id ?? null;
-    item.slskFolderCoverUsername = f.slskFolderCoverUsername ?? torrent?.slsk_cover_username ?? null;
-    item.slskFolderCoverFilepath = f.slskFolderCoverFilepath ?? torrent?.slsk_cover_filepath ?? null;
-    item.slskFolderCoverSize = f.slskFolderCoverSize ?? torrent?.slsk_cover_size ?? 0;
-    item.trackId = registerAndGetId(buildSlskTrackEntity({
-      username: item.slskUsername,
-      filepath: item.slskFilepath,
-      size: item.slskFilesize,
-      filename: item.fileName,
-      artist: item.artist,
-      cover: (item.slskFolderCoverUsername && item.slskFolderCoverFilepath)
-        ? { slsk_username: item.slskFolderCoverUsername, slsk_filepath: item.slskFolderCoverFilepath, size: item.slskFolderCoverSize }
+    const ent = buildSlskTrackEntity({
+      username: f.slskUsername ?? torrent.slsk_username ?? null,
+      filepath: f.slskFilepath ?? f.path ?? null,
+      size: f.slskFilesize ?? f.size ?? torrent.size ?? 0,
+      filename: trackDisplayBasename(f.path),
+      artist: torrent?.artist ?? null,
+      cover: (f.slskFolderCoverUsername && f.slskFolderCoverFilepath)
+        ? { slsk_username: f.slskFolderCoverUsername, slsk_filepath: f.slskFolderCoverFilepath, size: f.slskFolderCoverSize }
         : null,
-      albumTitle: item.torrentName,
-    }));
-  } else {
-    const btih = torrent?.source === "magnet" ? parseBtihFromMagnet(magnet) : null;
-    item.trackId = registerAndGetId(
-      buildRtTrackEntity(f, torrent, magnet, btih, coverFileIdx, albumDirPath),
-    );
+      albumTitle: torrent?.name ?? "",
+    });
+    const id = registerAndGetId(ent);
+    return id ? getTrack(id) : null;
   }
-  return item;
+  const synthTorrent = {
+    id: torrent?.__topicId ?? torrent?.id ?? "",
+    name: torrent?.name ?? "",
+    artist: torrent?.artist ?? null,
+    source: torrent?.source ?? "rutracker",
+  };
+  const btih = torrent?.source === "magnet" ? parseBtihFromMagnet(magnet) : null;
+  const ent = buildRtTrackEntity(f, synthTorrent, magnet, btih, coverFileIdx, albumDirPath);
+  const id = registerAndGetId(ent);
+  return id ? getTrack(id) : null;
+}
+
+function tracksFromFiles(fileArray, coverIdxOverride) {
+  return fileArray
+    .map((f) => makeTrackFromFile(f, selected.value, torrentMagnet.value, files.value, coverIdxOverride))
+    .filter((t) => t != null);
 }
 
 function handlePlay(fileIdx) {
   allowPlayerAutoplay();
   const audioFiles = orderedAudioFiles(files.value);
   const startIdx = Math.max(0, audioFiles.findIndex((f) => f.origIdx === fileIdx));
-  const fullQueue = audioFiles.map((f) =>
-    makeQueueItem(f, selected.value, torrentMagnet.value, files.value)
-  );
-  const existing = queue.value.findIndex(
-    (q) => q.fileIdx === fileIdx && q.magnet === torrentMagnet.value
-  );
-  if (existing !== -1 && queue.value.length === fullQueue.length) {
-    queuePos.value = existing;
+  const tracks = tracksFromFiles(audioFiles, null);
+  if (tracks.length === 0) return;
+  // If the user clicked the same file that's already first in queue, just jump.
+  const sameQueue = queueStoreIds.value.length === tracks.length
+    && queueStoreIds.value.every((id, i) => id === tracks[i]?.id);
+  if (sameQueue) {
+    jumpTo(startIdx);
     return;
   }
-  queue.value = fullQueue;
-  queuePos.value = startIdx;
+  replaceQueue(tracks, startIdx);
 }
 
 function handlePlayAll() {
   allowPlayerAutoplay();
   const audioFiles = orderedAudioFiles(files.value);
   if (!audioFiles.length) return;
-  queue.value = audioFiles.map((f) => makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
-  queuePos.value = 0;
+  const tracks = tracksFromFiles(audioFiles, null);
+  if (tracks.length === 0) return;
+  replaceQueue(tracks, 0);
 }
 
 function handlePlayAlbum(albumFiles) {
@@ -1156,10 +1064,9 @@ function handlePlayAlbum(albumFiles) {
       break;
     }
   }
-  queue.value = albumFiles.map((f) =>
-    makeQueueItem(f, selected.value, torrentMagnet.value, files.value, coverIdx)
-  );
-  queuePos.value = 0;
+  const tracks = tracksFromFiles(albumFiles, coverIdx);
+  if (tracks.length === 0) return;
+  replaceQueue(tracks, 0);
 }
 
 /**
@@ -1167,120 +1074,32 @@ function handlePlayAlbum(albumFiles) {
  * @param {object} b
  * @returns {boolean}
  */
-function sameQueueItem(a, b) {
-  if (a?.source === "soulseek" && b?.source === "soulseek") {
-    return (
-      String(a.slskUsername) === String(b.slskUsername) &&
-      String(a.slskFilepath) === String(b.slskFilepath)
-    );
-  }
-  return String(a.magnet) === String(b.magnet) && Number(a.fileIdx) === Number(b.fileIdx);
-}
-
-/**
- * Appends a track to the end of the playback queue. Ignores duplicates.
- *
- * @param {object} item - Same shape as `makeQueueItem` output.
- * @returns {void}
- */
-function appendToQueue(item) {
-  if (queue.value.some((q) => sameQueueItem(q, item))) return;
-  const wasEmpty = queue.value.length === 0;
-  queue.value = [...queue.value, item];
-  if (wasEmpty) queuePos.value = 0;
-}
-
-/**
- * @param {number} fileIdx - `origIdx` of an audio file in the open torrent.
- * @returns {void}
- */
+/** Enqueue a track from an audio file in the current torrent. */
 function handleAddToQueueFromTorrent(fileIdx) {
   const audioFiles = orderedAudioFiles(files.value);
   const f = audioFiles.find((x) => x.origIdx === fileIdx);
-  if (!f || !selected.value || !torrentMagnet.value) return;
-  appendToQueue(makeQueueItem(f, selected.value, torrentMagnet.value, files.value));
+  if (!f || !selected.value) return;
+  const track = makeTrackFromFile(f, selected.value, torrentMagnet.value, files.value);
+  if (track) enqueueTrack(track);
 }
 
-/**
- * @param {object} like - Track like from `likes`.
- * @returns {void}
- */
-function handleAddToQueueFromLike(like) {
-  const base = {
-    magnet: like.magnet ?? "",
-    fileIdx: like.fileIdx,
-    fileName: trackDisplayBasename(like.fileName),
-    torrentName: like.torrentName,
-    torrentId: like.torrentId,
-    source: like.source,
-    artist: like.artist ?? null,
-    coverFileIdx: trackCoverFileIdxForLike(like, likes.value),
-    albumDirPath: like.albumDirPath ?? null,
-    seeders: null,
-  };
-  if (like.source === "soulseek" && like.slskUsername && like.slskFilepath) {
-    appendToQueue({
-      ...base,
-      slskUsername: like.slskUsername,
-      slskFilepath: like.slskFilepath,
-      slskFilesize: like.slskFilesize ?? 0,
-      slskMetaTrackId: like.id,
-    });
-    return;
-  }
-  appendToQueue(base);
-}
-
-/**
- * @param {object} track - Saved playlist track row.
- * @returns {void}
- */
-function handleAddToQueueFromPlaylistTrack(track) {
-  const item = {
-    magnet: track.magnet,
-    fileIdx: track.fileIdx,
-    fileName: trackDisplayBasename(track.fileName),
-    torrentName: track.torrentName,
-    torrentId: track.torrentId,
-    source: track.source,
-    artist: track.artist ?? null,
-    coverFileIdx: track.coverFileIdx ?? null,
-    albumDirPath: track.albumDirPath ?? null,
-    seeders: track.seeders ?? null,
-  };
-  if (track.source === "soulseek" && track.slskUsername && track.slskFilepath) {
-    item.slskUsername = track.slskUsername;
-    item.slskFilepath = track.slskFilepath;
-    item.slskFilesize = track.slskFilesize ?? 0;
-  }
-  appendToQueue(item);
-}
-
-/**
- * @param {number} i - Target index in the queue.
- * @returns {void}
- */
-function handleQueueJump(i) {
-  if (i < 0 || i >= queue.value.length) return;
+function onQueueJump(i) {
   allowPlayerAutoplay();
-  queuePos.value = i;
+  jumpTo(i);
 }
 
-/**
- * @param {number} i - Index to remove.
- * @returns {void}
- */
+function onQueueRemove(i) {
+  removeAt(i);
+}
+
+/** Legacy placeholder — gets called from nav stack restore; no-op in v2 because
+ *  the queue is an always-resolvable id list. Kept as a stub so template refs
+ *  to handleQueueRemove don't crash during stale renders. */
 function handleQueueRemove(i) {
-  const cur = queuePos.value;
-  const next = queue.value.filter((_, j) => j !== i);
-  let pos = cur;
-  if (i < cur) pos--;
-  else if (i === cur) {
-    if (next.length === 0) pos = 0;
-    else if (cur >= next.length) pos = next.length - 1;
-  }
-  queue.value = next;
-  queuePos.value = pos;
+  onQueueRemove(i);
+}
+function handleQueueJump(i) {
+  onQueueJump(i);
 }
 
 /**
@@ -1290,44 +1109,7 @@ function handleQueueRemove(i) {
  * emitting Track instances directly.
  */
 function handleToggleLike(payload) {
-  if (!payload) return;
-  if (payload instanceof Track) {
-    const before = libraryLikedTrackIds.value.size;
-    toggleLikeTrack(payload);
-    recordLikeChange(libraryLikedTrackIds.value.size, before);
-    return;
-  }
-  // Row shape — find by id, or synthesize a Track from the row.
-  const id = payload.id ?? `track:${payload.source}:${payload.torrentId}:${payload.fileIdx}`;
-  let track = getTrack(id);
-  if (!track) {
-    let ent = null;
-    if (payload.source === "soulseek" && payload.slskUsername && payload.slskFilepath) {
-      ent = buildSlskTrackEntity({
-        username: payload.slskUsername,
-        filepath: payload.slskFilepath,
-        size: payload.slskFilesize ?? 0,
-        filename: payload.fileName,
-        artist: payload.artist ?? null,
-        cover: null,
-        albumTitle: payload.torrentName,
-      });
-    } else {
-      const btih = payload.source === "magnet" ? parseBtihFromMagnet(payload.magnet ?? "") : null;
-      ent = buildRtTrackEntity(
-        { origIdx: payload.fileIdx, path: payload.fileName, size: 0 },
-        { id: payload.torrentId, name: payload.torrentName, artist: payload.artist ?? null, source: payload.source },
-        payload.magnet ?? "",
-        btih,
-        payload.coverFileIdx ?? null,
-        payload.albumDirPath ?? null,
-      );
-    }
-    if (ent) {
-      registerAndGetId(ent);
-      track = getTrack(ent.id);
-    }
-  }
+  const track = resolveTrackFromPayload(payload);
   if (!track) return;
   const before = libraryLikedTrackIds.value.size;
   toggleLikeTrack(track);
@@ -1484,7 +1266,8 @@ function libraryRowToPlayerOpenPayload(row) {
  *     track: Grouped SoulSeek row with `id` and `slsk_username`.
  */
 function handleOpenSoulseekSourceFromResults(track) {
-  const payload = navigationTargetFor(track);
+  if (!isTrack(track)) return;
+  const payload = track.navigationTarget();
   if (payload) handleOpenTorrentFromPlayer(payload);
 }
 
@@ -1518,98 +1301,9 @@ function handleOpenTrackSource(row) {
   if (p) handleOpenTorrentFromPlayer(p);
 }
 
-function handlePlayFromLike(like) {
-  allowPlayerAutoplay();
-  const likedTracks = Object.values(likes.value)
-    .filter((l) => l.type === "track").sort((a, b) => b.addedAt - a.addedAt);
-  const startIdx = Math.max(0, likedTracks.findIndex((l) => l.id === like.id));
-  const fullQueue = likedTracks.map((l) => {
-    const coverFileIdx = trackCoverFileIdxForLike(l, likes.value);
-    const row = {
-      magnet: l.magnet ?? "",
-      fileIdx: l.fileIdx,
-      fileName: l.fileName,
-      torrentName: l.torrentName,
-      torrentId: l.torrentId,
-      source: l.source,
-      coverFileIdx,
-    };
-    if (l.source === "soulseek" && l.slskUsername && l.slskFilepath) {
-      row.slskUsername = l.slskUsername;
-      row.slskFilepath = l.slskFilepath;
-      row.slskFilesize = l.slskFilesize ?? 0;
-      row.slskMetaTrackId = l.id;
-      row.trackId = registerAndGetId(buildSlskTrackEntity({
-        username: l.slskUsername,
-        filepath: l.slskFilepath,
-        size: l.slskFilesize ?? 0,
-        filename: l.fileName,
-        artist: l.artist ?? null,
-        cover: null,
-        albumTitle: l.torrentName,
-      }));
-      return row;
-    }
-    const btih = l.source === "magnet" ? parseBtihFromMagnet(l.magnet ?? "") : null;
-    row.trackId = registerAndGetId(buildRtTrackEntity(
-      { origIdx: l.fileIdx, path: l.fileName, size: 0 },
-      { id: l.torrentId, name: l.torrentName, artist: l.artist ?? null, source: l.source },
-      l.magnet ?? "",
-      btih,
-      coverFileIdx,
-      l.albumDirPath ?? null,
-    ));
-    return row;
-  });
-  const existing = queue.value.findIndex((q) => {
-    if (like.source === "soulseek") {
-      return (
-        q.source === "soulseek" &&
-        String(q.slskUsername) === String(like.slskUsername) &&
-        String(q.slskFilepath) === String(like.slskFilepath)
-      );
-    }
-    return (
-      q.fileIdx === like.fileIdx &&
-      q.magnet === like.magnet &&
-      q.torrentId === like.torrentId
-    );
-  });
-  if (existing !== -1 && queue.value.length === fullQueue.length) {
-    queuePos.value = existing;
-    return;
-  }
-  queue.value = fullQueue;
-  queuePos.value = startIdx;
-}
-
-function handlePlayAlbumFromLike(like) {
-  if (!like.audioFiles?.length) return;
-  allowPlayerAutoplay();
-  const coverIdx = like.coverFile?.origIdx ?? null;
-  const btih = like.source === "magnet" ? parseBtihFromMagnet(like.magnet ?? "") : null;
-  queue.value = like.audioFiles.map((f) => {
-    const row = {
-      magnet: like.magnet,
-      fileIdx: f.origIdx,
-      fileName: trackDisplayBasename(f.path),
-      torrentName: like.torrentName,
-      torrentId: like.torrentId,
-      source: like.source,
-      coverFileIdx: coverIdx,
-    };
-    row.trackId = registerAndGetId(buildRtTrackEntity(
-      f,
-      { id: like.torrentId, name: like.torrentName, artist: like.artist ?? null, source: like.source },
-      like.magnet ?? "",
-      btih,
-      coverIdx,
-      null,
-    ));
-    return row;
-  });
-  queuePos.value = 0;
-}
+// Legacy handlers removed — LikesView now emits `onPlayTrack(track)` which
+// resolves directly through the queue store. Album likes aren't wired in v2
+// (the Likes view intentionally only shows track likes now).
 
 function handleSearchArtist(artist) {
   if (!artist?.trim()) return;
@@ -1736,14 +1430,55 @@ async function handleDeepLink(urlStr) {
   }
 }
 
-const {
-  shuffleQueueInPlaceKeepingCurrent,
-  toggleShuffle,
-  cycleRepeatMode,
-  handlePlayerNext,
-  handleTrackEnded,
-  handlePrev,
-} = useQueueControls({ queue, queuePos, repeatMode, shuffleOn, allowPlayerAutoplay });
+function handlePrev() {
+  allowPlayerAutoplay();
+  queuePrev();
+}
+
+function handlePlayerNext() {
+  allowPlayerAutoplay();
+  const len = queueStoreIds.value.length;
+  if (len === 0) return;
+  if (queueStorePos.value < len - 1) queueNext();
+  else if (repeatMode.value === "all") queueNext();
+  else clearQueue();
+}
+
+/** Natural track end — `repeat-one` is handled in Player. */
+function handleTrackEnded() {
+  handlePlayerNext();
+}
+
+function cycleRepeatMode() {
+  const order = ["off", "all", "one"];
+  const i = order.indexOf(repeatMode.value);
+  setRepeat(order[(i + 1) % order.length]);
+}
+
+function toggleShuffle() {
+  if (queueStoreIds.value.length < 2) return;
+  const wasOn = shuffleOn.value;
+  storeToggleShuffle();
+  if (!wasOn) shuffleQueueInPlaceKeepingCurrent();
+}
+
+/** Randomise the queue ids in place, keeping the current track at pos 0. */
+function shuffleQueueInPlaceKeepingCurrent() {
+  const ids = queueStoreIds.value;
+  const len = ids.length;
+  if (len < 2) return;
+  const pos = queueStorePos.value;
+  if (pos < 0 || pos >= len) return;
+  const cur = ids[pos];
+  const rest = ids.filter((_, i) => i !== pos);
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = rest[i]; rest[i] = rest[j]; rest[j] = t;
+  }
+  // Reseed the store directly with the reshuffled ids.
+  const tracks = [cur, ...rest].map((id) => getTrack(id)).filter(Boolean);
+  if (tracks.length === len) replaceQueue(tracks, 0);
+}
 
 function handleOpenRecent(item) {
   // Полный сброс режима поиска как при пустой строке, но без handleSearch(""):

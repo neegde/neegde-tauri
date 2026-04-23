@@ -23,6 +23,7 @@ import { ref } from "vue";
  *   torrentCover: import("vue").Ref<string | null>,
  *   torrentFilesBeforeAlbumPreview: import("vue").Ref<Array<object> | null>,
  *   torrentSelectedBeforeAlbumPreview: import("vue").Ref<object | null>,
+ *   currentAlbum: import("vue").Ref<object | null>,
  *   view: import("vue").Ref<string>,
  *   returnView: import("vue").Ref<string>,
  *   currentPlaylistId: import("vue").Ref<string | null>,
@@ -67,7 +68,21 @@ export function useNavStack(ctx) {
     };
   }
 
+  /** Snapshot the AlbumView path. The Album entity lives in the registry,
+   *  so only the id is stored — the ref is re-resolved on restore. */
+  function snapshotAlbumForBack() {
+    return { type: "album", album: ctx.currentAlbum.value };
+  }
+
   function pushCurrentScreenToForwardStack() {
+    if (ctx.currentAlbum.value) {
+      forwardStack.value.push({
+        type: "album",
+        album: ctx.currentAlbum.value,
+        restoreLikesView: ctx.returnView.value === "likes",
+      });
+      return;
+    }
     forwardStack.value.push({
       type: "torrent",
       selected: { ...ctx.selected.value },
@@ -91,6 +106,7 @@ export function useNavStack(ctx) {
     ctx.torrentCover.value = null;
     ctx.torrentFilesBeforeAlbumPreview.value = null;
     ctx.torrentSelectedBeforeAlbumPreview.value = null;
+    ctx.currentAlbum.value = null;
   }
 
   function handleBack() {
@@ -128,6 +144,14 @@ export function useNavStack(ctx) {
         ctx.torrentCover.value = entry.cover;
         ctx.torrentFilesBeforeAlbumPreview.value = entry.torrentFilesBeforeAlbumPreview;
         ctx.torrentSelectedBeforeAlbumPreview.value = entry.torrentSelectedBeforeAlbumPreview;
+        ctx.currentAlbum.value = null;
+        ctx.view.value = "home";
+      } else if (entry.type === "album") {
+        ctx.currentAlbum.value = entry.album;
+        ctx.selected.value = null;
+        ctx.files.value = [];
+        ctx.torrentMagnet.value = "";
+        ctx.torrentCover.value = null;
         ctx.view.value = "home";
       } else if (entry.type === "likes") {
         ctx.view.value = "likes";
@@ -143,7 +167,13 @@ export function useNavStack(ctx) {
       return;
     }
 
-    if (ctx.selected.value) {
+    if (ctx.currentAlbum.value) {
+      forwardStack.value.push({
+        type: "album",
+        album: ctx.currentAlbum.value,
+        restoreLikesView: ctx.returnView.value === "likes",
+      });
+    } else if (ctx.selected.value) {
       forwardStack.value.push({
         type: "torrent",
         selected: { ...ctx.selected.value },
@@ -188,6 +218,15 @@ export function useNavStack(ctx) {
       ctx.torrentCover.value = snap.cover;
       ctx.torrentFilesBeforeAlbumPreview.value = snap.torrentFilesBeforeAlbumPreview ?? null;
       ctx.torrentSelectedBeforeAlbumPreview.value = snap.torrentSelectedBeforeAlbumPreview ?? null;
+      ctx.currentAlbum.value = null;
+    } else if (snap.type === "album") {
+      ctx.view.value = "home";
+      if (snap.restoreLikesView) ctx.returnView.value = "likes";
+      ctx.currentAlbum.value = snap.album;
+      ctx.selected.value = null;
+      ctx.files.value = [];
+      ctx.torrentMagnet.value = "";
+      ctx.torrentCover.value = null;
     }
     scrollMainToTop();
   }
@@ -200,6 +239,7 @@ export function useNavStack(ctx) {
     backStack,
     snapshotSearchForBack,
     snapshotTorrentForBack,
+    snapshotAlbumForBack,
     pushCurrentScreenToForwardStack,
     handleBack,
     handleForwardNav,

@@ -83,18 +83,25 @@ export function registerEntity(entity: Track | TrackData | AlbumData | null | un
   bump();
 }
 
-/** Register a batch — single reactivity bump. */
-export function registerEntities(entities: Array<Track | TrackData | AlbumData>): void {
-  if (!entities?.length) return;
+/**
+ * Register a batch — single reactivity bump. Returns the normalized entities
+ * in input order (Track instances for track data, AlbumData for albums),
+ * so callers that need class-backed instances don't have to re-lookup by id.
+ */
+export function registerEntities(entities: Array<Track | TrackData | AlbumData>): Entity[] {
+  if (!entities?.length) return [];
+  const out: Entity[] = [];
   const tracksForCache: Track[] = [];
   for (const e of entities) {
     const norm = normalize(e);
     if (!norm?.id) continue;
     _byId.value.set(norm.id, norm);
     if (norm.type === "track") tracksForCache.push(norm);
+    out.push(norm);
   }
   for (const t of tracksForCache) putTrack(t);
   bump();
+  return out;
 }
 
 export function getEntity(id: string): Entity | null {

@@ -2,16 +2,7 @@
     <template v-if="hasTrack">
       <!-- Left: track info -->
       <div class="player-left">
-        <CoverThumb
-          :torrent-id="track.torrentId"
-          :source="track.source"
-          :magnet="track.magnet"
-          :cover-file-idx="track.coverFileIdx ?? null"
-          :override-cover-url="playerCoverOverride"
-          :size="56"
-          :radius="4"
-          fallback="♪"
-        />
+        <TrackCover :entity="track" :override-url="playerCoverOverride" :size="56" />
         <div ref="playerTrackInfoRef" class="player-track-info">
           <button
             type="button"

@@ -26,6 +26,8 @@ import AlbumFolderCover from "./AlbumFolderCover.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
+import { parseBtihFromMagnet } from "../../lib/magnet.js";
+import { rtTrackId } from "../../player/trackForQueue.js";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
@@ -199,8 +201,20 @@ function seedsLabel(n) {
   return `${n} сид${n === 1 ? "" : n < 5 ? "а" : "ов"}`;
 }
 
+/**
+ * Stable Track id — MUST match the scheme used by the Track class hierarchy
+ * (see `src/player/trackForQueue.js` + search providers). Lookup into the
+ * `likes` dict keyed by Track id depends on this equality.
+ */
 function trackLikeId(torrent, f) {
-  return `track:${torrent.source}:${torrent.id}:${f.origIdx}`;
+  if (torrent?.source === "soulseek") {
+    const u = f.slskUsername ?? torrent.slsk_username ?? "";
+    const p = f.slskFilepath ?? f.path ?? "";
+    return `slsk:track:${u}|${p}`;
+  }
+  const topicId = torrent?.__topicId ?? torrent?.id ?? null;
+  const btih = torrent?.source === "magnet" ? parseBtihFromMagnet(props.magnet ?? "") : null;
+  return rtTrackId(topicId, btih, f.origIdx) ?? `rt:track:unknown:${f.origIdx}`;
 }
 
 function albumLikeId(torrent, dirPath) {

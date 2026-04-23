@@ -15,14 +15,27 @@ export class RutrackerTrack extends Track {
     return (this.source as TrackSource & { kind: "rutracker" | "magnet" }).refs as RutrackerRefs;
   }
 
+  /**
+   * Resolve magnet: direct refs first, else fall through to `raw.details.magnet`
+   * which the RuTracker search provider stamps on track emissions (the whole
+   * topic shares one magnet; duplicating it per-track refs would bloat the
+   * entity). Null when neither is available.
+   */
+  private getMagnet(): string {
+    if (this.refs.magnet) return this.refs.magnet;
+    const raw = this.source.raw as { details?: { magnet?: string } } | undefined;
+    return raw?.details?.magnet ?? "";
+  }
+
   override hasPlaybackIdentity(): boolean {
-    return Boolean(this.refs.magnet);
+    return Boolean(this.getMagnet());
   }
 
   override async prepareStream(): Promise<string> {
-    if (!this.hasPlaybackIdentity()) return "";
+    const magnet = this.getMagnet();
+    if (!magnet) return "";
     const ready = await invoke<{ url: string } | null>("torrent_prepare_stream", {
-      magnet: this.refs.magnet,
+      magnet,
       fileIdx: this.refs.fileIdx,
       torrentFileB64: null,
     });
@@ -58,7 +71,7 @@ export class RutrackerTrack extends Track {
       torrentId: this.refs.topicId ?? this.id,
       torrentName: this.albumTitle ?? "",
       source: this.sourceKind,
-      magnet: this.refs.magnet ?? "",
+      magnet: this.getMagnet(),
       artist: this.artist,
       seeders: null,
       fileIdx: this.refs.fileIdx ?? 0,

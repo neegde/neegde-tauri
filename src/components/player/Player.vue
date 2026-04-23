@@ -1,9 +1,9 @@
 <script setup>
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from "vue";
 import { listen } from "@tauri-apps/api/event";
-import CoverThumb from "../shared/CoverThumb.vue";
+import TrackCover from "../shared/TrackCover.vue";
 import PlayerVisualizerModal from "./PlayerVisualizerModal.vue";
-import { streamUrl } from "../../torrent/api.js";
+import { Track } from "../../track/Track.js";
 import {
   trackDisplayBasename,
   extractTrackArtist,
@@ -27,7 +27,6 @@ import { appDebugLog } from "../../appDebugLog.js";
 import { clearDiscordPresence } from "../../discordPresence.js";
 import { enrichTrackMeta } from "../../audio/metadataEnrich.js";
 import { slskMeta } from "../../soulseek/slskMetaStore.js";
-import { getSlskCoverReactive, getSlskCoverDataUrl } from "../../soulseek/coverCache.js";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { useVolume } from "../../composables/useVolume.js";
 import { useQueueContextMenu } from "../../composables/useQueueContextMenu.js";
@@ -53,23 +52,29 @@ function fmtTime(secs) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/**
+ * Player props — all track-like fields arrive as `Track` class instances.
+ * Data access is through getters (`track.title`, `.artist`, `.kind`);
+ * playback / export / cover resolution via methods (`track.prepareStream()`,
+ * `track.coverUrl()`).
+ */
 const props = defineProps({
+  /** @type {import('vue').PropType<Track | null>} */
   track: { type: Object, default: null },
-  /** Следующий трек в очереди — для фоновой предзагрузки. */
+  /** @type {import('vue').PropType<Track | null>} */
   nextTrack: { type: Object, default: null },
-  /** Трек через один — для упреждающей предзагрузки после завершения prefetch nextTrack. */
+  /** @type {import('vue').PropType<Track | null>} */
   secondNextTrack: { type: Object, default: null },
   hasPrev: Boolean,
   hasNext: Boolean,
-  /** После восстановления сессии: не использовать HTML autoplay при появлении src. */
+  /** After cold-start session restore we don't want HTML autoplay on src assignment. */
   suppressAutoplay: Boolean,
-  /** Словарь лайков из App.vue — для отображения состояния лайка текущего трека. */
-  likes: { type: Object, default: null },
-  /** Текущая очередь воспроизведения (копия из App). */
+  /** Set of liked Track ids — drives the heart-button state. */
+  /** @type {import('vue').PropType<Set<string> | null>} */
+  likedIds: { type: Object, default: null },
+  /** @type {import('vue').PropType<Track[]>} */
   playbackQueue: { type: Array, default: () => [] },
-  /** Индекс текущего трека в очереди. */
   queueIndex: { type: Number, default: 0 },
-  /** `off` | `all` | `one` — циклическое переключение из App. */
   repeatMode: { type: String, default: "off" },
   shuffleOn: Boolean,
 });
@@ -120,62 +125,21 @@ function onArtistClick() {
 function onTrackClick() {
   const t = props.track;
   if (!t) return;
-  const payload = {
-    torrentId: t.torrentId,
-    torrentName: t.torrentName,
-    source: t.source,
-    magnet: t.magnet,
-    artist: t.artist,
-    seeders: t.seeders ?? null,
-    fileIdx: t.fileIdx,
-    albumDirPath: t.albumDirPath ?? null,
-  };
-  if (t.source === "soulseek" && t.slskUsername) {
-    payload.slskUsername = t.slskUsername;
-    payload.slskFilepath = t.slskFilepath ?? null;
-  }
-  emit("open-torrent", payload);
+  const target = t.navigationTarget();
+  if (target) emit("open-torrent", target);
 }
 
 const hasTrack = computed(() => trackHasPlaybackIdentity(props.track));
 
-const currentLikeId = computed(() => {
-  const t = props.track;
-  if (!t?.torrentId || t.fileIdx == null) return null;
-  return `track:${t.source}:${t.torrentId}:${t.fileIdx}`;
-});
-
 const isCurrentTrackLiked = computed(() => {
-  const id = currentLikeId.value;
-  return id ? Boolean(props.likes?.[id]) : false;
+  const t = props.track;
+  return t ? Boolean(props.likedIds?.has(t.id)) : false;
 });
 
 function toggleCurrentLike() {
   const t = props.track;
-  const id = currentLikeId.value;
-  if (!t || !id) return;
-  const base = {
-    id,
-    type: "track",
-    torrentId: t.torrentId,
-    torrentName: t.torrentName,
-    source: t.source,
-    magnet: t.magnet ?? "",
-    fileIdx: t.fileIdx,
-    fileName: t.fileName,
-    coverFileIdx: t.coverFileIdx ?? null,
-    coverFile: null,
-  };
-  if (t.source === "soulseek" && t.slskUsername && t.slskFilepath) {
-    emit("toggle-like", {
-      ...base,
-      slskUsername: t.slskUsername,
-      slskFilepath: t.slskFilepath,
-      slskFilesize: t.slskFilesize ?? 0,
-    });
-    return;
-  }
-  emit("toggle-like", base);
+  if (!t) return;
+  emit("toggle-like", t);
 }
 
 const audioRef = ref(null);
@@ -485,11 +449,14 @@ watchEffect(() => {
  * Returns:
  *     Object suitable as second arg to syncMediaSessionMetadata, or null.
  */
+/**
+ * Metadata for the OS MediaSession presentation. Track ids for SoulSeek
+ * match exactly what the search provider stored in `slskMeta`, so we look
+ * up by `t.id` directly (no separate `slskMetaTrackId`).
+ */
 function buildSessionEnriched(t) {
-  if (!t || t.source !== "soulseek" || t.slskMetaTrackId == null || t.slskMetaTrackId === "") {
-    return null;
-  }
-  const sm = slskMeta.get(t.slskMetaTrackId);
+  if (!t || t.kind !== "soulseek") return null;
+  const sm = slskMeta.get(t.id);
   if (!sm) return null;
   return {
     artist: sm.artist,
@@ -507,30 +474,27 @@ watch(
       clearMediaSessionPresentation();
       return;
     }
-    if (t.source === "soulseek") {
-      const u = t.slskFolderCoverUsername;
-      const p = t.slskFolderCoverFilepath;
-      if (u && p && !getSlskCoverReactive(u, p)) {
-        void getSlskCoverDataUrl(u, p, t.slskFolderCoverSize ?? 0);
-      }
-    }
+    // Warm the folder cover cache — `track.startCoverFetch()` dispatches by
+    // source. For SoulSeek it fires the peer-fetch; RT looks up by topicId.
+    t.startCoverFetch();
+
     void syncMediaSessionMetadata(t, buildSessionEnriched(t));
-    // MusicBrainz enrichment in background — does NOT block playback
-    let artistLocal = extractTrackArtist(t.torrentName, t.albumDirPath, t.artist, t.magnet);
+    // MusicBrainz enrichment — does NOT block playback.
+    let artistLocal = t.artist || extractTrackArtist(t.albumTitle, null, null, null) || "";
     let titleLocal = trackDisplayBasename(t.fileName);
-    const sm0 = t.slskMetaTrackId ? slskMeta.get(t.slskMetaTrackId) : null;
+    const sm0 = slskMeta.get(t.id);
     if (sm0?.artist && sm0?.title) {
       artistLocal = sm0.artist;
       titleLocal = sm0.title;
     } else {
-      const parsed = parseArtistTitleFromTrackFilename(t.fileName || t.torrentName || "");
+      const parsed = parseArtistTitleFromTrackFilename(t.fileName || t.albumTitle || "");
       if (parsed.artist) {
         artistLocal = parsed.artist;
         titleLocal = parsed.title;
       }
     }
     enrichTrackMeta(artistLocal, titleLocal, (meta) => {
-      if (props.track !== t) return; // track changed while request was in flight
+      if (props.track !== t) return;  // track changed while request was in flight
       enrichedMeta.value = meta;
       void syncMediaSessionMetadata(t, { ...buildSessionEnriched(t), ...meta });
     });
@@ -623,11 +587,8 @@ watch(
   ],
   async ([, , suppressed], _, onCleanup) => {
     const t = props.track;
-    const magnet = t?.magnet;
-    const fileIdx = t?.fileIdx;
-    void appDebugLog("player", `stream-watch: fired — fileIdx=${fileIdx ?? "—"} hasMagnet=${!!magnet} suppressed=${suppressed} phase=${streamPhase.value} activeSig="${activeStreamPrepareSig.value?.slice(0,30)}"`);
-    const isSoulseek = t?.source === "soulseek";
-    if (!t || (!magnet && !isSoulseek)) {
+    void appDebugLog("player", `stream-watch: fired — id=${t?.id ?? "—"} kind=${t?.kind ?? "—"} suppressed=${suppressed} phase=${streamPhase.value} activeSig="${activeStreamPrepareSig.value?.slice(0,30)}"`);
+    if (!t || !t.hasPlaybackIdentity()) {
       activeStreamPrepareSig.value = "";
       stopBufferPoll();
       prepareProgress.value = null;
@@ -686,31 +647,20 @@ watch(
 
     let cancelled = false;
     onCleanup(() => { cancelled = true; });
-    void appDebugLog("player", `stream prepare: start — "${t?.fileName?.slice?.(0,70)}" fileIdx=${fileIdx} torrentId=${t?.torrentId||"—"} attempt=${prepareAttempt.value} suppressAutoplay=${props.suppressAutoplay}`);
+    void appDebugLog("player", `stream prepare: start — "${t.fileName?.slice?.(0,70)}" id=${t.id} kind=${t.kind} attempt=${prepareAttempt.value} suppressAutoplay=${props.suppressAutoplay}`);
     try {
       const preparedKey = queueTrackKey(props.track);
       let nextSrc = "";
       if (prefetchedStream.value.url && prefetchedStream.value.forKey === preparedKey) {
-        // Next-track prefetch hit (pre-fetched while playing the previous track)
         nextSrc = prefetchedStream.value.url;
         prefetchedStream.value = { url: "", forKey: "" };
-        void appDebugLog("player", `stream prepare: prefetch HIT — using pre-warmed URL fileIdx=${fileIdx} url=${nextSrc}`);
+        void appDebugLog("player", `stream prepare: prefetch HIT — using pre-warmed URL id=${t.id} url=${nextSrc}`);
       } else {
-        const fileIdxNorm =
-          fileIdx != null && fileIdx !== "" && Number.isFinite(Number(fileIdx))
-            ? Number(fileIdx)
-            : fileIdx;
-        nextSrc = await streamUrl(magnet, fileIdxNorm, {
-          source: props.track?.source,
-          torrentId: props.track?.torrentId,
-          slskUsername: props.track?.slskUsername,
-          slskFilepath: props.track?.slskFilepath,
-          slskFilesize: props.track?.slskFilesize,
-        });
+        nextSrc = await t.prepareStream();
       }
       void appDebugLog("player", nextSrc
-        ? `stream prepare: done — assigning src fileIdx=${fileIdx} url=${nextSrc} cancelled=${cancelled}`
-        : `stream prepare: done with EMPTY URL — fileIdx=${fileIdx} cancelled=${cancelled} loadCancelledByUser=${loadCancelledByUser.value}`);
+        ? `stream prepare: done — assigning src id=${t.id} url=${nextSrc} cancelled=${cancelled}`
+        : `stream prepare: done with EMPTY URL — id=${t.id} cancelled=${cancelled} loadCancelledByUser=${loadCancelledByUser.value}`);
       if (!cancelled && !loadCancelledByUser.value) {
         src.value = nextSrc;
         streamPhase.value = nextSrc ? "buffering" : "error";
@@ -720,7 +670,7 @@ watch(
           // we don't spin in infinite buffering if the piece never arrives.
           startBufferingWatchdog();
         } else {
-          console.error("[player/stream] empty URL", { magnetLen: magnet?.length, fileIdx });
+          console.error("[player/stream] empty URL", { id: t.id });
           streamError.value = "Пустой URL потока";
         }
       }

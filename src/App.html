@@ -57,7 +57,7 @@
         </div>
         <div class="sidebar-playlists">
           <button
-            v-for="pl in playlists"
+            v-for="pl in libraryPlaylists"
             :key="pl.id"
             :class="['source-btn sidebar-pl-item', currentPlaylistId === pl.id && view === 'playlist' ? 'active' : '']"
             @click="openPlaylist(pl.id)"
@@ -68,7 +68,7 @@
                 <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
               </svg>
             </span>
-            {{ pl.name }}
+            {{ pl.title }}
           </button>
         </div>
 
@@ -144,7 +144,7 @@
           />
 
           <HomeView
-            v-show="!homeSearchActive && !selected"
+            v-show="!homeSearchActive && !selected && !currentAlbum"
             :recent-history="recentHistory"
             @open-recent="handleOpenRecent"
             @remove-recent="handleRemoveFromRecent"
@@ -175,14 +175,14 @@
           </div>
 
           <SearchIntentHint
-            v-if="!selected && homeSearchActive"
+            v-if="!selected && !currentAlbum && homeSearchActive"
             :resolving="searchResolving"
             :resolved="searchResolved"
             @revert-to-raw="handleRevertToRaw"
           />
 
           <Results
-            v-if="!selected && homeSearchActive"
+            v-if="!selected && !currentAlbum && homeSearchActive"
             :search-epoch="searchResultsEpoch"
             :entities="searchEntities"
             :query="searchProviderQuery"
@@ -194,17 +194,37 @@
             :rt-error="searchRtError"
             :slsk-error="searchSlskError"
             :selected-id="null"
+            :now-playing-id="nowPlayingTrackId"
+            :player-playing="playerPlaying"
             @select="handleSelect"
             @play-slsk-track="handlePlaySlskTrack"
             @download-slsk-track="handleDownloadSlskTrack"
             @like-slsk-track="handleLikeSlskTrack"
             @open-slsk-source="handleOpenSoulseekSourceFromResults"
             @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
-            @add-to-playlist-slsk="handleShowAddToPlaylist(asPlaylistRowFor($event))"
+            @add-to-playlist-slsk="handleShowAddToPlaylist"
+          />
+
+          <AlbumView
+            v-if="currentAlbum"
+            :album="currentAlbum"
+            :now-playing-id="nowPlayingTrackId"
+            :player-playing="playerPlaying"
+            :liked-track-ids="libraryLikedTrackIds"
+            :album-liked="currentAlbumLiked"
+            @play-track="onPlayTrack"
+            @play-all="handleAlbumPlayAll"
+            @toggle-like-track="onToggleLikeTrack"
+            @toggle-like-album="handleAlbumToggleLike"
+            @download-track="onDownloadTrack"
+            @download-album="handleAlbumDownloadAll"
+            @add-to-playlist="onAddTrackToPlaylist"
+            @add-to-queue="onAddToQueue"
+            @open-track-source="onOpenTrackSource"
           />
 
           <TorrentView
-            v-if="selected"
+            v-else-if="selected"
             :torrent="selected"
             :files="files"
             :loading="loadingFiles"
@@ -298,17 +318,17 @@
 
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
-      :track="nowPlaying"
-      :next-track="nextInQueue"
-      :second-next-track="secondNextInQueue"
+      :track="nowPlayingTrackFromStore"
+      :next-track="nextTrackFromStore"
+      :second-next-track="secondNextTrackFromStore"
       :suppress-autoplay="suppressAutoplayAfterSessionRestore"
-      :has-prev="playerHasPrev"
-      :has-next="playerHasNext"
+      :has-prev="queueHasPrev"
+      :has-next="queueHasNext"
       :repeat-mode="repeatMode"
       :shuffle-on="shuffleOn"
-      :likes="likes"
-      :playback-queue="queue"
-      :queue-index="queuePos"
+      :liked-ids="libraryLikedTrackIds"
+      :playback-queue="playbackQueueTracks"
+      :queue-index="queueStorePos"
       @prev="handlePrev"
       @next="handlePlayerNext"
       @ended="handleTrackEnded"
@@ -316,13 +336,13 @@
       @toggle-shuffle="toggleShuffle"
       @request-stream="allowPlayerAutoplay"
       @playing-change="playerPlaying = $event"
-      @toggle-like="handleToggleLike"
+      @toggle-like="onToggleLikeTrack"
       @search-artist="handleSearchArtist"
       @open-torrent="handleOpenTorrentFromPlayer"
-      @queue-jump="handleQueueJump"
-      @queue-remove="handleQueueRemove"
-      @queue-add-to-playlist="handleShowAddToPlaylist(queueItemToPlaylistTrack($event))"
-      @queue-download="handleDownloadFromQueue"
+      @queue-jump="onQueueJump"
+      @queue-remove="onQueueRemove"
+      @queue-add-to-playlist="onAddTrackToPlaylist"
+      @queue-download="onDownloadTrack"
     />
 
     <AppSplash :visible="restoringSession" />
@@ -345,7 +365,7 @@
           <div class="pl-modal-title">Добавить в плейлист</div>
           <div class="pl-modal-list">
             <button
-              v-for="pl in playlists"
+              v-for="pl in libraryPlaylists"
               :key="pl.id"
               class="pl-modal-item"
               @click="handleAddToPlaylist(pl.id)"
@@ -354,7 +374,7 @@
                 <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
                 <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
               </svg>
-              {{ pl.name }}
+              {{ pl.title }}
             </button>
             <button class="pl-modal-new" @click="handleAddToPlaylistNew">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

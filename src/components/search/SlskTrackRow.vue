@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted, toRef } from "vue";
 import { getAlbum, entitiesVersion } from "../../stores/entities.js";
 import { useEntityCover } from "../../composables/useEntityCover.js";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
+import PlayingIndicator from "../shared/PlayingIndicator.vue";
 
 /**
  * Row for a SoulSeek Track entity. Reads Track directly; cover info is
@@ -15,6 +16,10 @@ const props = defineProps({
   track: { type: Object, required: true },
   /** Metadata enrichment from iTunes / filename parser: { artist, title, coverUrl? } */
   enriched: { type: Object, default: null },
+  /** This row's track is the currently-playing track in the queue. */
+  nowPlaying: { type: Boolean, default: false },
+  /** Audio element is actively playing (vs paused). */
+  playerPlaying: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["play", "download", "like", "open-source", "add-to-playlist"]);

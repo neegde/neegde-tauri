@@ -1,20 +1,28 @@
 <script setup lang="ts">
-import { ref, toRef, type Ref } from "vue";
+import { ref, toRef, computed, type Ref } from "vue";
 import type { Track } from "../../track/Track.js";
 import type { AlbumData } from "../../stores/entities.js";
 import { useEntityCover } from "../../composables/useEntityCover.js";
 
 const props = defineProps<{
   entity: Track | AlbumData | null;
+  /** Takes priority over the entity's own cover (e.g. MusicBrainz enrichment). */
+  overrideUrl?: string;
   size?: number;
   fill?: boolean;
 }>();
 
 const rootRef = ref<HTMLElement | null>(null);
-const { coverUrl, coverErr } = useEntityCover(
+const { coverUrl: entityCoverUrl, coverErr } = useEntityCover(
   toRef(props, "entity") as Ref<Track | AlbumData | null>,
   rootRef,
 );
+
+const coverUrl = computed<string | null>(() => {
+  const ov = props.overrideUrl?.trim();
+  if (ov) return ov;
+  return entityCoverUrl.value;
+});
 </script>
 
 <template>

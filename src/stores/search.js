@@ -58,9 +58,11 @@ function _applyFromSession(session, { rtLoggedIn, slskConnected }) {
 
   const entities = session.results.value;
   // Register freshly-emitted entities in the global registry so later
-  // lookups by id (from queue, likes, playlists) always resolve.
-  registerEntities(entities);
-  searchEntities.value = entities;
+  // lookups by id (from queue, likes, playlists) always resolve. We use
+  // the normalized output (Track instances for tracks) so consumers like
+  // Results.vue emit class-backed objects to App.vue handlers that gate
+  // on `instanceof Track`.
+  searchEntities.value = registerEntities(entities);
 
   const ps = session.providerStatus.value;
   searchLoadingRt.value = ps.rutracker === "pending" || ps.rutracker === "streaming";

@@ -17,7 +17,14 @@ import {
   exportSlskTrack,
 } from "../torrent/torrentExport.js";
 import { isAudio, trackDisplayBasename } from "../lib/utils.js";
-import { exportTrackFor } from "../track/ops.js";
+/**
+ * HMR-safe Track check. `instanceof Track` breaks after Vite re-imports the
+ * Track module — instances created by the old module no longer match the new
+ * class prototype. Duck-type on the API surface instead.
+ */
+function isTrack(t) {
+  return !!t && t.type === "track" && typeof t.exportToDisk === "function";
+}
 
 /**
  * @param {{
@@ -74,9 +81,9 @@ export function useDownloads(ctx) {
 
   /** Download a track from search results (Track entity, any source). */
   function handleDownloadSlskTrack(track) {
-    if (!track || track.type !== "track") return;
+    if (!isTrack(track)) return;
     downloadOverlayExpanded.value = true;
-    void exportTrackFor(track, setProgress);
+    void track.exportToDisk(setProgress);
   }
 
   function handleDownloadPlaylist() {

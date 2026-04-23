@@ -22,7 +22,8 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.vue",
-    "src/**/*.js"
+    "src/**/*.js",
+    "tests/**/*.ts"
   ],
   "exclude": [
     "node_modules",

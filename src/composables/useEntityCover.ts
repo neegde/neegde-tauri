@@ -12,7 +12,7 @@
  */
 
 import { ref, computed, watch, onMounted, onUnmounted, type Ref } from "vue";
-import { Track } from "../track/Track.js";
+import type { Track } from "../track/Track.js";
 import type { AlbumData } from "../stores/entities.js";
 import { getAlbum, entitiesVersion } from "../stores/entities.js";
 import {
@@ -28,12 +28,22 @@ import {
 
 type Entity = Track | AlbumData | null | undefined;
 
+/**
+ * HMR-safe Track check. `instanceof Track` breaks when Vite re-imports the
+ * Track module: instances created by the old module stop matching the new
+ * class prototype. Duck-type on the API instead so covers keep loading after
+ * a hot-reload.
+ */
+function isTrack(e: Entity): e is Track {
+  return !!e && e.type === "track" && typeof (e as Track).coverUrl === "function";
+}
+
 /** Reactive cover URL for Track (class) or Album (plain data). */
 function coverOfEntity(entity: Entity): string | null {
   if (!entity) return null;
   // Touch the version ref so album-registry updates refresh consumers.
   entitiesVersion.value;
-  if (entity instanceof Track) return entity.coverUrl();
+  if (isTrack(entity)) return entity.coverUrl();
   // AlbumData path
   if (entity.coverUrl) return entity.coverUrl;
   const src = entity.sources?.[0];
@@ -94,7 +104,7 @@ export function useEntityCover(
       ([entry]) => {
         if (!entry?.isIntersecting) return;
         disconnect();
-        if (ent instanceof Track) ent.startCoverFetch();
+        if (isTrack(ent)) ent.startCoverFetch();
         else startAlbumFetch(ent);
       },
       { rootMargin: "400px" },

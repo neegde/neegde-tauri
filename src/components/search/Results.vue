@@ -29,6 +29,9 @@ const props = defineProps({
   selectedId: { default: null },
   /** Canonical query used for similarity ranking in the Tracks tab. */
   query: { type: String, default: "" },
+  /** Id of the currently-playing Track, or null. */
+  nowPlayingId: { type: String, default: null },
+  playerPlaying: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
