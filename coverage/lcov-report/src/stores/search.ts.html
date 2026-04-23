@@ -225,23 +225,10 @@
 <a name='L160'></a><a href='#L160'>160</a>
 <a name='L161'></a><a href='#L161'>161</a>
 <a name='L162'></a><a href='#L162'>162</a>
-<a name='L163'></a><a href='#L163'>163</a>
-<a name='L164'></a><a href='#L164'>164</a>
-<a name='L165'></a><a href='#L165'>165</a>
-<a name='L166'></a><a href='#L166'>166</a>
-<a name='L167'></a><a href='#L167'>167</a>
-<a name='L168'></a><a href='#L168'>168</a>
-<a name='L169'></a><a href='#L169'>169</a>
-<a name='L170'></a><a href='#L170'>170</a>
-<a name='L171'></a><a href='#L171'>171</a>
-<a name='L172'></a><a href='#L172'>172</a>
-<a name='L173'></a><a href='#L173'>173</a>
-<a name='L174'></a><a href='#L174'>174</a>
-<a name='L175'></a><a href='#L175'>175</a>
-<a name='L176'></a><a href='#L176'>176</a>
-<a name='L177'></a><a href='#L177'>177</a>
-<a name='L178'></a><a href='#L178'>178</a>
-<a name='L179'></a><a href='#L179'>179</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L163'></a><a href='#L163'>163</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -275,25 +262,6 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -428,9 +396,12 @@
  * registry, so queue / likes / playlists can resolve them by id later.
  */
 &nbsp;
-import { ref, shallowRef, watch, type Ref, type WatchStopHandle } from "vue";
-import { createSearchEngine } from "../search/engine.js";
-import { registerEntities, type Entity } from "./entities.js";
+import { ref, shallowRef, watch, type WatchStopHandle } from "vue";
+import { createSearchEngine, type SearchEngine } from "../search/engine.js";
+import type { SearchSession } from "../search/session.js";
+import { registerEntities, type Entity, type AlbumData } from "./entities.js";
+import type { Track } from "../track/Track.js";
+import type { TrackData } from "../track/types.js";
 import { appDebugLog } from "../appDebugLog.js";
 &nbsp;
 // ── Reactive surface ─────────────────────────────────────────────────────────
@@ -456,28 +427,9 @@ export const searchProviderQuery = ref&lt;string&gt;("");
 &nbsp;
 // ── Internals ────────────────────────────────────────────────────────────────
 &nbsp;
-interface ProviderStatusMap { rutracker?: string; soulseek?: string; [k: string]: string | undefined }
-interface ProviderErrorMap  { rutracker?: string | null; soulseek?: string | null; [k: string]: string | null | undefined }
-&nbsp;
-interface SearchSession {
-  results: Ref&lt;Entity[]&gt;;
-  providerStatus: Ref&lt;ProviderStatusMap&gt;;
-  providerError: Ref&lt;ProviderErrorMap&gt;;
-  resolved?: unknown;
-  query?: string;
-}
-&nbsp;
-interface SearchEngine {
-  query: (
-    q: string,
-    providers: { rutracker: boolean; soulseek: boolean },
-    opts?: { skipResolver?: boolean },
-  ) =&gt; Promise&lt;SearchSession&gt;;
-}
-&nbsp;
 const engine: SearchEngine = createSearchEngine({
   log: <span class="fstat-no" title="function not covered" >(t</span>ag: string, <span class="cstat-no" title="statement not covered" >msg: string) =&gt; appDebugLog(`search:${tag}`, msg),</span>
-}) as SearchEngine;
+});
 &nbsp;
 let _activeSession: SearchSession | null = null;
 let _stopWatcher: WatchStopHandle | null = null;
@@ -493,7 +445,7 @@ function _detach(): void {
 function _applyFromSession(session: SearchSession, authFlags: { rtLoggedIn: boolean; slskConnected: boolean }): void {
   <span class="missing-if-branch" title="if path not taken" >I</span>if (_activeSession !== session) <span class="cstat-no" title="statement not covered" >return;</span>
 &nbsp;
-  const entities = session.results.value;
+  const entities = session.results.value as Array&lt;Track | TrackData | AlbumData&gt;;
   searchEntities.value = registerEntities(entities);
 &nbsp;
   const ps = session.providerStatus.value;
@@ -604,7 +556,7 @@ export function <span class="fstat-no" title="function not covered" >_debugEngin
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-23T16:42:06.501Z
+                at 2026-04-23T17:48:33.155Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
