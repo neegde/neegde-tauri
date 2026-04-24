@@ -907,11 +907,12 @@ function handleSearchArtist(artist) {
 
 
 function handleOpenTorrentFromPlayer(track) {
-  if (!track?.torrentId && !track?.magnet) return;
-  if (track.source === "soulseek" && track.slskUsername) {
-    void handleNavigateSoulseekPeer(track.slskUsername);
+  if (!track) return;
+  if (track.source === "soulseek") {
+    if (track.slskUsername) void handleNavigateSoulseekPeer(track.slskUsername);
     return;
   }
+  if (!track.torrentId && !track.magnet) return;
   if (selected.value?.id === track.torrentId) {
     view.value = "home";
     if (!torrentFilesBeforeAlbumPreview.value) {

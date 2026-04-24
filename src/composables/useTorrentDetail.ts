@@ -14,6 +14,7 @@
 
 import { ref, shallowRef, computed, type Ref, type ShallowRef, type ComputedRef } from "vue";
 import type { Track } from "../track/Track.js";
+import type { NavigationTarget } from "../track/types.js";
 import {
   detectAlbums,
   orderedAudioFiles,
@@ -80,19 +81,11 @@ export interface NavEntryLike {
   [k: string]: unknown;
 }
 
-/** Payload forwarded to App.vue's "open torrent" bridge for artist / album-nav. */
-export interface OpenTorrentPayload {
-  torrentId: string | number;
-  torrentName: string;
-  source: string;
-  magnet: string;
-  artist: string | null;
-  seeders: number | string | null;
-  fileIdx: number;
-  albumDirPath: string | null;
-  slskUsername?: string | null;
-  slskFilepath?: string | null;
-}
+/**
+ * Payload forwarded to App.vue's "open torrent" bridge. Re-exported from
+ * `track/types.ts` — same discriminated union used by Track.navigationTarget().
+ */
+export type OpenTorrentPayload = NavigationTarget;
 
 export interface UseTorrentDetailOptions {
   // Nav stack
@@ -457,30 +450,37 @@ export function useTorrentDetail(opts: UseTorrentDetailOptions): UseTorrentDetai
     if (!t) return;
     const list = files.value ?? [];
     const f = origIdx != null ? list.find((x) => x.origIdx === origIdx) : null;
+
+    if (t.source === "soulseek") {
+      const fUser = f?.slskUsername as string | undefined;
+      const fPath = f?.slskFilepath as string | undefined;
+      const firstUser = list[0]?.slskUsername as string | undefined;
+      const slskUsername = fUser ?? t.slsk_username ?? firstUser ?? null;
+      if (!slskUsername) return;
+      opts.openTorrentFromPlayer({
+        source: "soulseek",
+        slskUsername,
+        slskFilepath: fPath ?? null,
+      });
+      return;
+    }
+
     let albumDirPath: string | null = null;
     if (list.length && f) {
       const albs = detectAlbums(list);
       const album = albs.find((a) => a.audioFiles.some((af) => af.origIdx === f.origIdx));
       albumDirPath = album?.dirPath ?? null;
     }
-    const payload: OpenTorrentPayload = {
-      torrentId: t.id,
+    opts.openTorrentFromPlayer({
+      source: t.source === "magnet" ? "magnet" : "rutracker",
+      torrentId: String(t.id),
       torrentName: t.name ?? "",
-      source: t.source ?? "rutracker",
       magnet: torrentMagnet.value ?? "",
       artist: t.artist ?? null,
       seeders: (t.seeders ?? null) as number | string | null,
       fileIdx: f?.origIdx ?? origIdx ?? 0,
       albumDirPath,
-    };
-    if (t.source === "soulseek") {
-      const fUser = f?.slskUsername as string | undefined;
-      const fPath = f?.slskFilepath as string | undefined;
-      const firstUser = list[0]?.slskUsername as string | undefined;
-      payload.slskUsername = fUser ?? t.slsk_username ?? firstUser ?? null;
-      payload.slskFilepath = fPath ?? null;
-    }
-    opts.openTorrentFromPlayer(payload);
+    });
   }
 
   // ── AlbumView handlers ──────────────────────────────────────────────────

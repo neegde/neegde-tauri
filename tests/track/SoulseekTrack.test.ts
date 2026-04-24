@@ -166,11 +166,8 @@ describe("SoulseekTrack.navigationTarget", () => {
   it("builds payload with slsk refs", () => {
     const t = buildTrack(slsk());
     const target = t.navigationTarget();
-    expect(target).toMatchObject({
-      torrentId: "slsk:track:alice|music/song.mp3",
+    expect(target).toEqual({
       source: "soulseek",
-      magnet: "",
-      fileIdx: 0,
       slskUsername: "alice",
       slskFilepath: "music/song.mp3",
     });

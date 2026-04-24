@@ -83,15 +83,33 @@ export interface TrackData {
   mergedFrom?: number;
 }
 
-export interface NavigationTarget {
+/**
+ * Payload forwarded by a Track's `navigationTarget()` to the "open source"
+ * bridge in App.vue. Discriminated by `source`:
+ *
+ *   - RuTracker / magnet → needs a torrent id + magnet + file index so the
+ *     app can navigate to the torrent detail view and scope to the right
+ *     album folder.
+ *   - SoulSeek → needs a peer login (and optionally a filepath) so the app
+ *     can kick off a user-browse search. None of the RT-shaped fields apply.
+ */
+export interface RutrackerNavigationTarget {
+  source: "rutracker" | "magnet";
   torrentId: string;
   torrentName: string;
-  source: ProviderKind;
   magnet: string;
   fileIdx: number;
   albumDirPath: string | null;
   artist?: string | null;
-  seeders?: number | null;
-  slskUsername?: string;
-  slskFilepath?: string | null;
+  seeders?: number | string | null;
 }
+
+export interface SoulseekNavigationTarget {
+  source: "soulseek";
+  slskUsername: string;
+  slskFilepath: string | null;
+}
+
+export type NavigationTarget =
+  | RutrackerNavigationTarget
+  | SoulseekNavigationTarget;

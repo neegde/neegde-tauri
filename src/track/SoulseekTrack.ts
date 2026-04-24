@@ -3,7 +3,7 @@ import { message, open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { Track } from "./Track.js";
 import type {
-  NavigationTarget,
+  SoulseekNavigationTarget,
   SoulseekRefs,
   SoulseekTrackSource,
   SlskTrackCoverRef,
@@ -122,15 +122,10 @@ export class SoulseekTrack extends Track {
     }
   }
 
-  override navigationTarget(): NavigationTarget | null {
+  override navigationTarget(): SoulseekNavigationTarget | null {
     if (!this.refs.slskUsername) return null;
     return {
-      torrentId: this.id,
-      torrentName: this.fileName ?? this.title ?? "",
       source: "soulseek",
-      magnet: "",
-      fileIdx: 0,
-      albumDirPath: null,
       slskUsername: this.refs.slskUsername,
       slskFilepath: this.refs.slskFilepath ?? null,
     };

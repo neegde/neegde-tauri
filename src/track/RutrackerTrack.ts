@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { Track } from "./Track.js";
 import type {
-  NavigationTarget,
+  RutrackerNavigationTarget,
   RutrackerRefs,
   RutrackerTrackSource,
   MagnetTrackSource,
@@ -79,11 +79,11 @@ export class RutrackerTrack extends Track {
     );
   }
 
-  override navigationTarget(): NavigationTarget | null {
+  override navigationTarget(): RutrackerNavigationTarget | null {
     return {
+      source: this.sourceKind,
       torrentId: this.refs.topicId ?? this.id,
       torrentName: this.albumTitle ?? "",
-      source: this.sourceKind,
       magnet: this.getMagnet(),
       artist: this.artist,
       seeders: null,

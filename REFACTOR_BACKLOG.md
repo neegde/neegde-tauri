@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `19` "#11 typed .raw accessors on Track subclasses"
+**Последний коммит:** `20` "#10 polymorphic NavigationTarget"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -68,7 +68,7 @@ c53a538 5   — миграция всех .js → .ts
 
 ### MEDIUM (вероятно следующий батч)
 
-- **#10 `NavigationTarget` полиморфный** — `RutrackerTarget` / `SoulseekTarget` подклассы. `src/track/types.ts` сейчас имеет loose union. Track subclasses строят разные формы в `navigationTarget()`. Blast: ~8-12 сайтов.
+- ~~**#10 `NavigationTarget` полиморфный**~~ ✅ commit 20 — discriminated union `RutrackerNavigationTarget | SoulseekNavigationTarget`. SLSK target теперь только `{source, slskUsername, slskFilepath}`, RT/magnet несёт torrentId/magnet/fileIdx/albumDirPath. `handleOpenTorrentFromPlayer` в App.vue и `handleOpenTorrentSourceFromView` в useTorrentDetail ветвятся по `source` сразу. Тесты обновлены.
 
 - ~~**#11 Типизированные `.raw` аксессоры**~~ ✅ commit 19 — `TrackSource` теперь кэнд-generic в `raw`, `SoulseekTrack.getCoverRef()` / `getPeers()` публичны, RutrackerTrack использует `rtRaw?.details?.magnet`. Обновлены SlskTrackRow, Results.
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **19**. Следующий должен быть **20**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **20**. Следующий должен быть **21**.
 
 HEREDOC-стиль:
 
