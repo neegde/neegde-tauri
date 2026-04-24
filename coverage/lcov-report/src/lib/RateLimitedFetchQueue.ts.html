@@ -3,15 +3,15 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for src/githubReleaseCheck.ts</title>
+    <title>Code coverage report for src/lib/RateLimitedFetchQueue.ts</title>
     <meta charset="utf-8" />
-    <link rel="stylesheet" href="../prettify.css" />
-    <link rel="stylesheet" href="../base.css" />
-    <link rel="shortcut icon" type="image/x-icon" href="../favicon.png" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style type='text/css'>
         .coverage-summary .sorter {
-            background-image: url(../sort-arrow-sprite.png);
+            background-image: url(../../sort-arrow-sprite.png);
         }
     </style>
 </head>
@@ -19,34 +19,34 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../index.html">All files</a> / <a href="index.html">src</a> githubReleaseCheck.ts</h1>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/lib</a> RateLimitedFetchQueue.ts</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>34/34</span>
+                <span class='fraction'>21/21</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">89.65% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>26/29</span>
+                <span class='fraction'>4/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>7/7</span>
+                <span class='fraction'>5/5</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>27/27</span>
+                <span class='fraction'>18/18</span>
             </div>
         
             
@@ -118,118 +118,115 @@
 <a name='L53'></a><a href='#L53'>53</a>
 <a name='L54'></a><a href='#L54'>54</a>
 <a name='L55'></a><a href='#L55'>55</a>
-<a name='L56'></a><a href='#L56'>56</a>
-<a name='L57'></a><a href='#L57'>57</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">23x</span>
-<span class="cline-any cline-yes">23x</span>
-<span class="cline-any cline-yes">19x</span>
+<a name='L56'></a><a href='#L56'>56</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">23x</span>
-<span class="cline-any cline-yes">23x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">26x</span>
-<span class="cline-any cline-yes">26x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">9x</span>
-<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">28x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">28x</span>
+<span class="cline-any cline-yes">28x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">28x</span>
+<span class="cline-any cline-yes">28x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">86x</span>
+<span class="cline-any cline-yes">86x</span>
+<span class="cline-any cline-yes">86x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">22x</span>
+<span class="cline-any cline-yes">22x</span>
+<span class="cline-any cline-yes">27x</span>
+<span class="cline-any cline-yes">27x</span>
 <span class="cline-any cline-yes">25x</span>
 <span class="cline-any cline-yes">25x</span>
 <span class="cline-any cline-yes">25x</span>
-<span class="cline-any cline-yes">23x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-yes">5x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">25x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">3x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">18x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/** Strips a leading "v" from a version tag. */
-export function normalizeVersionTag(tag: unknown): string {
-  const t = String(tag).trim();
-  if (t.length &gt; 0 &amp;&amp; (t[0] === "v" || t[0] === "V")) return t.slice(1);
-  return t;
-}
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * RateLimitedFetchQueue — serial task runner with a minimum inter-request gap.
+ *
+ * Callers enqueue arbitrary inputs and receive a promise. The queue pops one
+ * task at a time, waits until at least `intervalMs` has elapsed since the
+ * previous task started, then invokes the user-supplied executor. Executor
+ * errors reject the individual task — they do NOT halt the queue.
+ *
+ * Used by external-API adapters that must respect a polite rate limit
+ * (MusicBrainz ~1 req/s, iTunes ~1 req/s). Each call site instantiates its
+ * own queue with its own interval and executor.
+ */
 &nbsp;
-/** Compares two semver-like dotted version strings (numeric segments). */
-export function compareSemver(a: string, b: string): number {
-  const ca = normalizeVersionTag(a).split("-")[0]!.split("+")[0]!;
-  const cb = normalizeVersionTag(b).split("-")[0]!.split("+")[0]!;
-  const pa = ca.split(".").map((x) =&gt; {
-    const n = parseInt(x, 10);
-    return Number.isFinite(n) ? n : 0;
-  });
-  const pb = cb.split(".").map((x) =&gt; {
-    const n = parseInt(x, 10);
-    return Number.isFinite(n) ? n : <span class="branch-1 cbranch-no" title="branch not covered" >0;</span>
-  });
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i &lt; len; i += 1) {
-    const da = pa[i] ?? 0;
-    const db = pb[i] ?? <span class="branch-1 cbranch-no" title="branch not covered" >0;</span>
-    if (da &lt; db) return -1;
-    if (da &gt; db) return 1;
+export class RateLimitedFetchQueue&lt;TInput, TResult&gt; {
+  private readonly _intervalMs: number;
+  private readonly _executor: (input: TInput) =&gt; Promise&lt;TResult&gt;;
+  private _lastSent = 0;
+  private readonly _pending: Array&lt;{
+    input: TInput;
+    resolve: (v: TResult) =&gt; void;
+    reject: (e: unknown) =&gt; void;
+  }&gt; = [];
+  private _draining = false;
+&nbsp;
+  constructor(opts: {
+    intervalMs: number;
+    executor: (input: TInput) =&gt; Promise&lt;TResult&gt;;
+  }) {
+    this._intervalMs = opts.intervalMs;
+    this._executor = opts.executor;
   }
-  return 0;
-}
 &nbsp;
-export interface GithubReleaseInfo {
-  tagName: string;
-  htmlUrl: string;
-}
-&nbsp;
-/** Fetches the latest published release from the GitHub REST API. */
-export function fetchLatestGithubRelease(apiUrl: string): Promise&lt;GithubReleaseInfo | null&gt; {
-  if (!apiUrl) return Promise.resolve(null);
-  return fetch(apiUrl, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  })
-    .then((res) =&gt; {
-      if (res.status === 404) return null;
-      if (!res.ok) {
-        return Promise.reject(new Error(`GitHub API: ${res.status}`));
-      }
-      return res.json();
-    })
-    .then((data) =&gt; {
-      if (!data || typeof data.tag_name !== "string") return null;
-      const htmlUrl = typeof data.html_url === "string" ? data.html_url : <span class="branch-1 cbranch-no" title="branch not covered" >"";</span>
-      return { tagName: data.tag_name, htmlUrl };
+  enqueue(input: TInput): Promise&lt;TResult&gt; {
+    return new Promise&lt;TResult&gt;((resolve, reject) =&gt; {
+      this._pending.push({ input, resolve, reject });
+      if (!this._draining) void this._drain();
     });
+  }
+&nbsp;
+  private async _drain(): Promise&lt;void&gt; {
+    this._draining = true;
+    while (this._pending.length) {
+      const gap = this._lastSent + this._intervalMs - Date.now();
+      if (gap &gt; 0) await new Promise&lt;void&gt;((r) =&gt; setTimeout(r, gap));
+      const task = this._pending.shift()!;
+      this._lastSent = Date.now();
+      try {
+        task.resolve(await this._executor(task.input));
+      } catch (e) {
+        task.reject(e);
+      }
+    }
+    this._draining = false;
+  }
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -238,16 +235,16 @@ export function fetchLatestGithubRelease(apiUrl: string): Promise&lt;GithubRelea
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-24T01:01:21.171Z
+                at 2026-04-24T01:01:21.207Z
             </div>
-        <script src="../prettify.js"></script>
+        <script src="../../prettify.js"></script>
         <script>
             window.onload = function () {
                 prettyPrint();
             };
         </script>
-        <script src="../sorter.js"></script>
-        <script src="../block-navigation.js"></script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
     </body>
 </html>
     

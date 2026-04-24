@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `24` "#15 AuthManager + AuthProvider"
+**Последний коммит:** `25` "#16 RateLimitedFetchQueue"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -80,7 +80,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#15 `AuthManager` + `AuthProvider`**~~ ✅ commit 24 — `src/auth/`: abstract `AuthProvider` (common `connected`/`username` refs + `connect`/`disconnect`), `RutrackerAuthProvider` (добавляет `avatarUrl`), `SoulseekAuthProvider` (добавляет `loggingIn`/`loginError`; `connect` сбрасывает `loginError`, `disconnect` не трогает). `AuthManager` singleton в `src/stores/auth.ts` с `.rutracker` / `.soulseek` + typed `get(kind)`. Старые exports — тонкие делегаты; 11+ консьюмеров не трогали.
 
-- **#16 `RateLimitedFetchQueue<T>`** — `audio/metadataEnrich.ts` и `audio/coverFetch.ts` дублируют паттерн throttle+queue (MusicBrainz 1.05s, iTunes 1.1s). Выделить в class. Blast: 4 сайта.
+- ~~**#16 `RateLimitedFetchQueue<T>`**~~ ✅ commit 25 — `src/lib/RateLimitedFetchQueue.ts`: generic класс с `intervalMs` + `executor`, последовательный drain с минимальным gap между задачами. Errors rejects-ят отдельные задачи, queue продолжает. `metadataEnrich.ts` (MB 1050ms) и `coverFetch.ts` (iTunes 1100ms) больше не держат свой `lastSent` / `pending` / `draining`. Дубликат ~50 строк удалён.
 
 - **#17 `StreamingExporter` class** — `torrent/torrentExport.ts` имеет 3 функции с ~70% одинаковой логики (dialog → listen → invoke → finally). Blast: 6 сайтов.
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **24**. Следующий должен быть **25**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **25**. Следующий должен быть **26**.
 
 HEREDOC-стиль:
 

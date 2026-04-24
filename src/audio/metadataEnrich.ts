@@ -3,6 +3,7 @@
  */
 
 import { isYearLike } from "../lib/utils.js";
+import { RateLimitedFetchQueue } from "../lib/RateLimitedFetchQueue.js";
 
 const MB  = "https://musicbrainz.org/ws/2";
 const CAA = "https://coverartarchive.org";
@@ -23,43 +24,17 @@ export interface AlbumTracklistMeta {
 
 const cache = new Map<string, unknown>();
 
-let lastSent = 0;
-interface PendingReq { url: string; resolve: (r: Response) => void; reject: (e: unknown) => void }
-const pending: PendingReq[] = [];
-let draining = false;
-
-function enqueue(url: string): Promise<Response> {
-  return new Promise<Response>((resolve, reject) => {
-    pending.push({ url, resolve, reject });
-    if (!draining) void drain();
-  });
-}
-
-async function drain(): Promise<void> {
-  draining = true;
-  while (pending.length) {
-    const gap = lastSent + 1050 - Date.now();
-    if (gap > 0) await sleep(gap);
-    const task = pending.shift()!;
-    lastSent = Date.now();
-    try {
-      const r = await fetch(task.url, {
-        signal: AbortSignal.timeout(9000),
-        headers: { Accept: "application/json" },
-      });
-      task.resolve(r);
-    } catch (e) {
-      task.reject(e);
-    }
-  }
-  draining = false;
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const mbQueue = new RateLimitedFetchQueue<string, Response>({
+  intervalMs: 1050,
+  executor: (url) => fetch(url, {
+    signal: AbortSignal.timeout(9000),
+    headers: { Accept: "application/json" },
+  }),
+});
 
 async function mbGet(url: string): Promise<unknown | null> {
   try {
-    const r = await enqueue(url);
+    const r = await mbQueue.enqueue(url);
     if (!r.ok) return null;
     return r.json();
   } catch {
