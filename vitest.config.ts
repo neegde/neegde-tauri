@@ -46,6 +46,7 @@ export default defineConfig({
         // Canvas / WebGL / audio graph: unrunnable in jsdom without extensive stubs.
         "src/audio/visualizerDrawFrame.ts",
         "src/audio/visualizerBroadcast.ts",
+        "src/audio/Equalizer.ts",
         "src/audio/equalizerGraph.ts",
         "src/audio/equalizerConfig.ts",
         "src/audio/equalizerState.ts",

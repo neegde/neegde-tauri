@@ -1,72 +1,18 @@
-import { ref, watch } from "vue";
-import {
-  EQ_PRESETS, EQ_STORAGE_KEY, parseStoredState, defaultEqGains, clampDb,
-} from "./equalizerConfig.js";
-import { setEqualizerGains } from "./equalizerGraph.js";
+/**
+ * Thin delegate on top of the unified {@link ./Equalizer.ts} singleton.
+ * Reactive state + mutators are methods on the class; this module exposes
+ * them with the legacy names used by the settings panel and main bootstrap.
+ */
 
-function loadInitial(): { gains: number[]; presetId: string } {
-  try {
-    const raw = localStorage.getItem(EQ_STORAGE_KEY);
-    if (raw) {
-      const p = parseStoredState(raw);
-      if (p) return p;
-    }
-  } catch {
-    /* ignore */
-  }
-  return { gains: defaultEqGains(), presetId: "flat" };
-}
-
-const initial = loadInitial();
+import { equalizer, presetGainsById } from "./Equalizer.js";
 
 /** Усиление по полосам, dB */
-export const eqBandsDb = ref<number[]>(initial.gains.map(clampDb));
+export const eqBandsDb = equalizer.bandsDb;
 /** id пресета или "custom" */
-export const eqPresetId = ref<string>(initial.presetId);
+export const eqPresetId = equalizer.presetId;
 
-function save(): void {
-  try {
-    localStorage.setItem(
-      EQ_STORAGE_KEY,
-      JSON.stringify({
-        gains: eqBandsDb.value.map(clampDb),
-        presetId: eqPresetId.value,
-      }),
-    );
-  } catch {
-    /* ignore */
-  }
-}
+export function applyEqPreset(id: string): void { equalizer.applyPreset(id); }
+export function resetEqFlat(): void { equalizer.resetFlat(); }
+export function setEqBand(index: number, db: number): void { equalizer.setBand(index, db); }
 
-watch(
-  [eqBandsDb, eqPresetId],
-  () => {
-    save();
-    setEqualizerGains(eqBandsDb.value);
-  },
-  { deep: true },
-);
-
-export function presetGainsById(id: string): number[] | null {
-  return EQ_PRESETS.find((p) => p.id === id)?.gains ?? null;
-}
-
-export function applyEqPreset(id: string): void {
-  const g = presetGainsById(id);
-  if (!g) return;
-  eqPresetId.value = id;
-  eqBandsDb.value = g.map(clampDb);
-}
-
-export function resetEqFlat(): void {
-  applyEqPreset("flat");
-}
-
-export function setEqBand(index: number, db: number): void {
-  const i = index | 0;
-  if (i < 0 || i >= eqBandsDb.value.length) return;
-  const next = eqBandsDb.value.slice();
-  next[i] = clampDb(db);
-  eqBandsDb.value = next;
-  eqPresetId.value = "custom";
-}
+export { presetGainsById };
