@@ -32,11 +32,8 @@ import { useVolume } from "../../composables/useVolume.js";
 import { useQueueContextMenu } from "../../composables/useQueueContextMenu.js";
 import { useDiscordPresence } from "../../composables/useDiscordPresence.js";
 import { usePlayerEqualizer } from "../../composables/usePlayerEqualizer.js";
-import { useStreamStats } from "../../composables/useStreamStats.js";
 import { useMarquee } from "../../composables/useMarquee.js";
-import { useStreamStatus } from "../../composables/useStreamStatus.js";
-import { useBufferPoll } from "../../composables/useBufferPoll.js";
-import { useBufferingWatchdog } from "../../composables/useBufferingWatchdog.js";
+import { useStreamReadiness } from "../../composables/useStreamReadiness.js";
 import { usePrefetch } from "../../composables/usePrefetch.js";
 import { usePlayerDisplay } from "../../composables/usePlayerDisplay.js";
 import {
@@ -166,12 +163,29 @@ const src = ref("");
 const streamPhase = ref("idle"); // idle | preparing | buffering | ready | error
 const streamError = ref("");
 
+/** Последняя статистика BitTorrent из Tauri (событие torrent-prepare-progress). */
+const prepareProgress = ref(null);
+/** Сохраняем последнее значение, чтобы статус-меню показывало данные и в состоянии ready. */
+const lastPrepareProgress = ref(null);
+
+const isLoading = computed(() => streamPhase.value === "preparing" || streamPhase.value === "buffering");
+
 const {
-  streamDownloadStats,
-  statsHistory,
-  startStatsPolling,
-  stopStatsPolling,
-} = useStreamStats({ src, streamPhase });
+  // Buffer poll
+  bufferedPercent, updateBufferStats, stopBufferPoll,
+  // Stats poll
+  streamDownloadStats, statsHistory, startStatsPolling, stopStatsPolling,
+  // Watchdog
+  startBufferingWatchdog, clearBufferingWatchdog,
+  // Status popup
+  prepareDotClass, prepareHintDetail, streamDotClass,
+  currentPeers, currentRate, sparklineData,
+  streamStatusHeadline, streamStatusBody,
+} = useStreamReadiness({
+  audioRef, src, streamPhase, streamError, duration, isLoading,
+  track, prepareProgress, lastPrepareProgress,
+});
+
 /** Отмена загрузки без смены трека — не применять URL после await. */
 const loadCancelledByUser = ref(false);
 /** Счётчик повторной попытки открыть поток (тот же трек после отмены / ошибки). */
@@ -179,10 +193,6 @@ const prepareAttempt = ref(0);
 /** Matches the in-flight / active prepare — suppresses duplicate watch runs for the same track. */
 const activeStreamPrepareSig = ref("");
 
-/** Последняя статистика BitTorrent из Tauri (событие torrent-prepare-progress). */
-const prepareProgress = ref(null);
-/** Сохраняем последнее значение, чтобы статус-меню показывало данные и в состоянии ready. */
-const lastPrepareProgress = ref(null);
 let unlistenPrepareProgress = () => {};
 
 /** Открыто ли pop-up меню статуса стрима. */
@@ -198,27 +208,9 @@ const { prefetchedStream, resetOnTrackChange: resetPrefetchOnTrackChange, releas
   secondNextTrack: secondNextTrack,
   playing,
   streamPhase,
-  isLoading: computed(() => streamPhase.value === "preparing" || streamPhase.value === "buffering"),
+  isLoading,
   duration,
   current,
-});
-
-const {
-  prepareDotClass,
-  prepareHintDetail,
-  streamDotClass,
-  currentPeers,
-  currentRate,
-  sparklineData,
-  streamStatusHeadline,
-  streamStatusBody,
-} = useStreamStatus({
-  streamPhase,
-  prepareProgress,
-  lastPrepareProgress,
-  streamDownloadStats,
-  statsHistory,
-  track: track,
 });
 
 watch(
@@ -233,17 +225,6 @@ watch(
 );
 
 const progress = computed(() => duration.value > 0 ? current.value / duration.value : 0);
-const isLoading = computed(() => streamPhase.value === "preparing" || streamPhase.value === "buffering");
-
-const { bufferedPercent, updateBufferStats, stopBufferPoll } = useBufferPoll({
-  audioRef, isLoading, streamPhase, duration,
-});
-
-const { startBufferingWatchdog, clearBufferingWatchdog } = useBufferingWatchdog({
-  audioRef, streamPhase, streamError, src,
-  track: track,
-  onStart: () => startStatsPolling(),
-});
 
 /** Без metadata duration неизвестна — не показываем «процент» (он залипает на 95%), только индетерминатный режим в шаблоне */
 const loadingProgress = computed(() => {

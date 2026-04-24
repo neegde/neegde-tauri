@@ -53,10 +53,7 @@ export default defineConfig({
         "src/components/player/PlayerVisualizerModal.vue",
         "src/components/player/visualizerPresets.ts",
         "src/composables/usePlayerEqualizer.ts",
-        "src/composables/useStreamStats.ts",
-        "src/composables/useStreamStatus.ts",
-        "src/composables/useBufferPoll.ts",
-        "src/composables/useBufferingWatchdog.ts",
+        "src/composables/useStreamReadiness.ts",
         "src/composables/useDiscordPresence.ts",
         "src/composables/useMarquee.ts",
         // Static dev fixture.

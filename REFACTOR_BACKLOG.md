@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `28` "#19 usePlaylistCrud + useSearchUI"
+**Последний коммит:** `29` "#20 useStreamReadiness"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -88,7 +88,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#19 `usePlaylistCrud` + `useSearchUI` composables**~~ ✅ commit 28 — `usePlaylistCrud` владеет `addToPlaylistModal` / `addToPlaylistTrack` + `openPlaylist` / `handleCreate/Delete/Rename/RemoveTrack/ShowAddToPlaylist/AddToPlaylist/AddToPlaylistNew` (зависит от `currentPlaylistId` / `view` / `resolveTrackFromPayload`). `useSearchUI` — `searchQuery` / `homeSearchActive` / `slskPeerBrowseUser` + `loading` / `hasSearchResults` computed + `handleSearch` / `handleRevertToRaw` (зависит от `resetViewForSearch` callback + `authFlags` getter + `searchHistory` ref). App.vue −70 строк, темплейт-биндинги не тронуты.
 
-- **#20 Слить `useBufferPoll`/`useBufferingWatchdog`/`useStreamStats`/`useStreamStatus`** → `useStreamReadiness` — все 4 composables в Player наблюдают одни и те же refs (streamPhase, prepareProgress, stats). Цель: объединить ~300 строк в один композабл с когерентными выходами.
+- ~~**#20 `useStreamReadiness`**~~ ✅ commit 29 — 4 композабла (`useBufferPoll`/`useBufferingWatchdog`/`useStreamStats`/`useStreamStatus`) слиты в один. Cross-wiring (watchdog → stats polling) стал внутренним. Player.vue получил один вызов вместо четырёх. Старые файлы удалены, vitest exclude сокращён.
 
 ### LOW (косметика / future-proofing)
 
@@ -110,7 +110,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - Entry points: `main.ts`, `appDebugWindow.ts`, `AppDebugWindow.vue`, `appDebugLog.ts`, `playerVizWindow.ts`, `PlayerVizStandalone.vue`
 - Canvas / WebGL / Audio graph: `visualizerDrawFrame.ts`, `visualizerBroadcast.ts`, `equalizerGraph.ts`, `equalizerConfig.ts`, `equalizerState.ts`, `visualizerPresets.ts`, `PlayerVisualizerModal.vue`
-- IPC-wrapper composables: `usePlayerEqualizer`, `useStreamStats`, `useStreamStatus`, `useBufferPoll`, `useBufferingWatchdog`, `useDiscordPresence`, `useMarquee`
+- IPC-wrapper composables: `usePlayerEqualizer`, `useStreamReadiness`, `useDiscordPresence`, `useMarquee`
 - Equalizer class: `Equalizer.ts` (unified, WebAudio — jsdom не запускает AudioContext)
 - `mockData.ts`, `torrentExport.ts`, `torrentSession.ts`
 
@@ -154,7 +154,15 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **28**. Следующий должен быть **29**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **29**. Следующий должен быть **30**.
+
+---
+
+## 🎉 Все MEDIUM-пункты (#10–#20) сделаны
+
+На момент коммита 29 весь MEDIUM-блок аудита закрыт. Осталась только LOW-секция
+(`BoundedHistory<T>`, `VisualizerPreset abstract`, `useTrackRowActions`,
+`useDownloadProgress`, нейминг событий, и т.д.) — чисто косметика. См. ниже.
 
 HEREDOC-стиль:
 
