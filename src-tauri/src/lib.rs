@@ -3,6 +3,7 @@ mod vozduxan_stream;
 mod cache_commands;
 mod cache_settings;
 mod cover_art;
+mod deezer;
 mod discord_presence;
 mod nerd_stats;
 mod resolver;
@@ -57,6 +58,98 @@ fn kill_vite_dev_server() {
             )
             .status();
     }
+}
+
+/// Dev helper: dump raw wire data from RuTracker + SoulSeek for a single
+/// query. Writes everything into a fresh subdirectory under the app data
+/// dir and returns that path so the user can open it manually to inspect
+/// exactly what the backends give us before any parsing. Contents:
+///
+///   rt_listing_raw.html        — tracker.php?nm=... full HTML response
+///   rt_topic_<id>.html         — viewtopic.php post body for the top hit
+///   rt_<id>.torrent            — raw .torrent bytes for the top hit
+///   slsk_raw_results.json      — SlskFileResult[] from a live peer search
+#[tauri::command]
+async fn dev_dump_raw_search(
+    app: tauri::AppHandle,
+    rt_state: tauri::State<'_, rutracker::RutrackerState>,
+    slsk_state: tauri::State<'_, soulseek::SoulSeekState>,
+    query: String,
+    mirror: String,
+) -> Result<String, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let slug: String = query
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .take(40)
+        .collect();
+    let base_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let dir = base_dir.join("dev_dumps").join(format!("{ts}_{slug}"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+
+    // ── RuTracker ────────────────────────────────────────────────────────────
+    // Prefer the mirror we actually logged into — cookies are host-scoped,
+    // so hitting a different mirror returns a guest-view HTML.
+    let client = rt_state.http_client()?;
+    let base = rutracker::auth_base_for_dev(&rt_state, &mirror);
+
+    // 1) Raw listing HTML
+    let listing_url = format!("{}/forum/tracker.php", base);
+    let listing = client
+        .get(&listing_url)
+        .query(&[("nm", query.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("rt listing: {e}"))?;
+    let listing_bytes = listing.bytes().await.map_err(|e| format!("rt listing body: {e}"))?;
+    std::fs::write(dir.join("rt_listing_raw.html"), &listing_bytes)
+        .map_err(|e| format!("write listing: {e}"))?;
+
+    // 2) Parse listing just enough to pick a top topic id, then fetch its raw page + .torrent.
+    let results = rutracker::search::search_music(&client, &base, &query)
+        .await
+        .unwrap_or_default();
+    if let Some(top) = results.first() {
+        let topic_url = format!("{}/forum/viewtopic.php?t={}", base, top.id);
+        if let Ok(resp) = client.get(&topic_url).send().await {
+            if let Ok(bytes) = resp.bytes().await {
+                let _ = std::fs::write(dir.join(format!("rt_topic_{}.html", top.id)), &bytes);
+            }
+        }
+        let dl_url = format!("{}/forum/dl.php?t={}", base, top.id);
+        if let Ok(resp) = client.get(&dl_url).send().await {
+            if let Ok(bytes) = resp.bytes().await {
+                let _ = std::fs::write(dir.join(format!("rt_{}.torrent", top.id)), &bytes);
+            }
+        }
+        // Run the same parse pipeline the UI uses — lets us eyeball what was
+        // actually extracted (artist / year / genre / tracklist) next to the
+        // raw HTML we just saved.
+        if let Ok(details) = rutracker::topic::get_torrent_details(&client, &base, &top.id).await {
+            let json = serde_json::to_string_pretty(&details)
+                .unwrap_or_else(|e| format!("{{\"error\":\"serialize: {e}\"}}"));
+            let _ = std::fs::write(dir.join(format!("rt_topic_{}_parsed.json", top.id)), json);
+        }
+    }
+
+    // ── SoulSeek ─────────────────────────────────────────────────────────────
+    // Go through the session directly so we get SlskFileResult[] with ALL
+    // fields stamped by the wire parser (slots_free / avg_speed / queue_length
+    // / bitrate / duration) — closer to "raw" than what the UI-facing
+    // SlskSearchResultRow exposes.
+    if let Ok(session) = slsk_state.get_session() {
+        let request_id = 1_000_000u64 + ts; // deterministic-ish id, avoids clash with real searches
+        let results = session.search(query.clone(), None, request_id).await;
+        let json = serde_json::to_string_pretty(&results)
+            .unwrap_or_else(|e| format!("{{\"error\":\"serialize: {e}\"}}"));
+        let _ = std::fs::write(dir.join("slsk_raw_results.json"), json);
+    }
+
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 /// Fetch album cover art via MusicBrainz search + Cover Art Archive.
@@ -241,6 +334,7 @@ pub fn run() {
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,
             fetch_album_cover,
+            dev_dump_raw_search,
             nerd_stats::get_nerd_diagnostics,
             cache_commands::get_user_cache_settings,
             cache_commands::set_user_cache_settings,
@@ -255,6 +349,7 @@ pub fn run() {
             discord_presence::discord_presence_clear,
             // ── Query intent resolver ──────────────────────────────────────
             resolver::resolve_query,
+            deezer::deezer_search,
             // ── SoulSeek ───────────────────────────────────────────────────────
             soulseek::soulseek_login,
             soulseek::soulseek_logout,

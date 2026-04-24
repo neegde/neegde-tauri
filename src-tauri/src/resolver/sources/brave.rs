@@ -44,10 +44,30 @@ struct SolutionPayload<'a> {
     taken_time: u64,
 }
 
-/// Solve Argon2id for every token in the challenge. Returns the payload
-/// Brave expects back, or `None` if we couldn't solve within
-/// `solution_limit` tries per token.
-fn solve_pow(challenge: &Challenge) -> Option<SolutionPayload<'_>> {
+/// Owned variant of {@link SolutionPayload} so the whole thing can cross
+/// thread boundaries when we run PoW on a blocking worker.
+#[derive(serde::Serialize, Debug)]
+struct OwnedSolution {
+    set_token: String,
+    solutions: std::collections::HashMap<String, String>,
+    taken_time: u64,
+}
+
+/// Hard ceiling. An honest Brave challenge on modern hardware finishes well
+/// under a second; anything beyond this means the server escalated
+/// difficulty past the point where solving is worth the latency.
+const POW_MAX_MS: u128 = 3000;
+
+/// Solve Argon2id for every token in the challenge. Runs on the caller's
+/// thread — wrap the call in `spawn_blocking` so the async runtime can
+/// still honour outer timeouts while we grind CPU.
+///
+/// Returns `None` when any of:
+///   1. `Params::new` rejects the challenge's own hash-function params
+///      (pathological values — Brave sometimes sends these).
+///   2. We blow past `POW_MAX_MS` before placing solutions for every token.
+///   3. A single token can't be solved within `solution_limit` tries.
+fn solve_pow_sync(challenge: &Challenge) -> Option<OwnedSolution> {
     let params = Params::new(
         challenge.hash_function_params.memory_size,
         challenge.hash_function_params.iterations,
@@ -67,6 +87,10 @@ fn solve_pow(challenge: &Challenge) -> Option<SolutionPayload<'_>> {
     let mut digest = vec![0u8; hash_len];
 
     for tok in &challenge.tokens {
+        if t0.elapsed().as_millis() > POW_MAX_MS {
+            eprintln!("[brave] PoW budget exceeded — giving up");
+            return None;
+        }
         let mut found: Option<String> = None;
         for _ in 0..limit {
             rng.fill_bytes(&mut salt_bytes);
@@ -90,11 +114,20 @@ fn solve_pow(challenge: &Challenge) -> Option<SolutionPayload<'_>> {
         solutions.insert(tok.clone(), salt);
     }
 
-    Some(SolutionPayload {
-        set_token: &challenge.set_token,
+    Some(OwnedSolution {
+        set_token: challenge.set_token.clone(),
         solutions,
         taken_time: t0.elapsed().as_millis() as u64,
     })
+}
+
+/// Async wrapper around the CPU-bound PoW solver: offloads the grind to a
+/// blocking thread so tokio can respond to timeouts while we hash.
+async fn solve_pow(challenge: Challenge) -> Option<OwnedSolution> {
+    tokio::task::spawn_blocking(move || solve_pow_sync(&challenge))
+        .await
+        .ok()
+        .flatten()
 }
 
 // HTML regex-lite: find "snippet-title"-ish spans. Not a real HTML parser —
@@ -429,8 +462,9 @@ pub async fn lookup(
             .await
             .map_err(|e| format!("brave: challenge decode: {e}"))?;
 
-        let solution = solve_pow(&challenge)
-            .ok_or_else(|| "brave: PoW solve failed (exhausted solution_limit)".to_string())?;
+        let solution = solve_pow(challenge)
+            .await
+            .ok_or_else(|| "brave: PoW solve failed / budget exceeded".to_string())?;
 
         // POST solution — ignore its response body; the ticket is set
         // server-side via cookies.

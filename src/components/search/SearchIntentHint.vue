@@ -9,6 +9,8 @@ const props = defineProps({
    * Shape matches `ResolveResult` from src/search/resolver.js.
    */
   resolved: { type: Object, default: null },
+  /** Original user input (before resolver rewrote it). Shown on the "revert" button. */
+  rawQuery: { type: String, default: "" },
 });
 
 const emit = defineEmits([
@@ -17,28 +19,28 @@ const emit = defineEmits([
 ]);
 
 const hasCanonical = computed(() => Boolean(props.resolved?.canonical?.artist));
-const isArtistCanonical = computed(
-  () => Boolean(props.resolved?.canonical?.artist) && !props.resolved?.canonical?.title,
-);
 
-const intentLabel = computed(() => {
-  switch (props.resolved?.intent) {
-    case "track":  return "Трек";
-    case "artist": return "Исполнитель";
-    case "album":  return "Альбом";
-    case "lyric":  return "Текст песни";
-    case "raw":    return "Как есть";
-    default:       return "";
-  }
+/**
+ * Strip bracketed annotations before quoting — matches `stripBrackets` in
+ * `src/search/engine.ts` so the hint shows exactly what was sent to the
+ * providers, not the raw canonical (which often carries Latin-in-parens
+ * translations like "Леонид Агутин (Leonid Agutin)").
+ */
+function stripBrackets(s) {
+  return String(s ?? "")
+    .replace(/\([^()]*\)/g, "")
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/** What the engine effectively searched for — matches the providerQ formula in engine.ts. */
+const canonicalText = computed(() => {
+  const a = stripBrackets(props.resolved?.canonical?.artist ?? "");
+  const t = stripBrackets(props.resolved?.canonical?.title ?? "");
+  if (a && t) return `${a} ${t}`;
+  return a;
 });
-
-const sourcesText = computed(() => {
-  const top = props.resolved?.candidates?.[0];
-  return (top?.sources ?? []).join(", ");
-});
-
-/** Debug-only: up to 4 alternative candidates besides the canonical one. */
-const alternatives = computed(() => (props.resolved?.candidates ?? []).slice(1, 5));
 </script>
 
 <template src="./SearchIntentHint.html"></template>

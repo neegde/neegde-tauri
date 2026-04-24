@@ -2,7 +2,7 @@ use base64::Engine as _;
 use encoding_rs::WINDOWS_1251;
 use reqwest::{header, Client};
 
-use super::{TorrentDetails, TorrentFile};
+use super::{TopicMeta, TorrentDetails, TorrentFile};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -47,6 +47,8 @@ pub async fn get_torrent_details(
 
     // ── 3. Parse ──────────────────────────────────────────────────────────────
     let (cover_img_url, magnet, artist) = parse_topic_page(topic_html.as_ref(), base);
+    let meta = parse_post_meta(topic_html.as_ref());
+    let album = parse_album_from_post(topic_html.as_ref());
     let files = parse_torrent_bytes(&torrent_bytes)?;
 
     let cover_data_url = match cover_img_url {
@@ -60,6 +62,8 @@ pub async fn get_torrent_details(
         magnet,
         files,
         artist,
+        album,
+        meta,
     })
 }
 
@@ -127,32 +131,38 @@ fn extract_artist_from_post(html: &str) -> Option<String> {
     let area_end = html.floor_char_boundary(raw_end);
     let area = &html[body_start..area_end];
 
-    // Strip HTML tags to plain text for simpler matching
+    // Strip HTML tags to plain text for simpler matching. Note the stripper
+    // inserts a newline at every tag boundary, so "Label:" never matches as
+    // a contiguous substring — we search for the bare label and then step
+    // over whitespace + the colon.
     let text = strip_html_tags_simple(area);
 
-    // Labels to look for (Russian + English, singular + plural)
     const LABELS: &[&str] = &[
-        "Исполнитель:",
-        "Исполнители:",
-        "Артист:",
-        "Артисты:",
-        "Artist:",
-        "Artists:",
-        "Исполнитель :",
-        "Artist :",
+        "Исполнитель", "Исполнители", "Артист", "Артисты", "Artist", "Artists",
     ];
 
     for label in LABELS {
-        if let Some(pos) = text.find(label) {
-            let after = text[pos + label.len()..].trim_start();
-            // Take until newline or next label-like boundary
-            let end = after
+        let mut search_from = 0usize;
+        while let Some(rel) = text[search_from..].find(label) {
+            let start = search_from + rel;
+            let end_of_label = start + label.len();
+            let rest = &text[end_of_label..];
+            let after_ws = rest.trim_start_matches(|c: char| c.is_whitespace());
+            let after_colon = match after_ws.strip_prefix(':') {
+                Some(r) => r.trim_start_matches(|c: char| c.is_whitespace()),
+                None => {
+                    search_from = end_of_label;
+                    continue;
+                }
+            };
+            let line_end = after_colon
                 .find(|c: char| c == '\n' || c == '\r')
-                .unwrap_or(after.len().min(120));
-            let value = after[..end].trim();
+                .unwrap_or(after_colon.len().min(120));
+            let value = after_colon[..line_end].trim();
             if !value.is_empty() && value.len() < 100 {
                 return Some(value.to_string());
             }
+            search_from = end_of_label;
         }
     }
     None
@@ -315,6 +325,106 @@ async fn fetch_image_data_url(client: &Client, url: &str) -> Option<String> {
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Some(format!("data:{};base64,{}", mime, b64))
+}
+
+// ── Post-body structured fields (year / genre / codec / …) ───────────────────
+
+/// Extract `post-b` label → value pairs from the first post body.
+/// HTML shape (one per row):
+///   `<span class="post-b">Label</span>: value<br>`
+///
+/// We strip tags to plain text first, then walk for known labels — same
+/// approach as `extract_artist_from_post`, just broader.
+pub(super) fn parse_post_meta(html: &str) -> TopicMeta {
+    let mut meta = TopicMeta::default();
+    let body_start = match html.find(r#"class="post_body""#) {
+        Some(p) => p,
+        None => return meta,
+    };
+    let raw_end = (body_start + 60_000).min(html.len());
+    let area_end = html.floor_char_boundary(raw_end);
+    let area = &html[body_start..area_end];
+    let text = strip_html_tags_simple(area);
+
+    /// Find a label in the tag-stripped text and return the value that follows.
+    /// The label is the bare name without colon: the HTML shape is
+    /// `<span class="post-b">Label</span>: value<br>`, but our tag-stripper
+    /// injects a newline at the `</span>` boundary, so "Label:" never matches
+    /// as a contiguous substring. Instead: find the label, skip whitespace,
+    /// require a `:`, skip more whitespace, read until the next newline.
+    fn capture(text: &str, labels: &[&str]) -> Option<String> {
+        for label in labels {
+            let mut search_from = 0usize;
+            while let Some(rel) = text[search_from..].find(label) {
+                let start = search_from + rel;
+                let end_of_label = start + label.len();
+                let rest = &text[end_of_label..];
+                let after_ws = rest.trim_start_matches(|c: char| c.is_whitespace());
+                let after_colon = match after_ws.strip_prefix(':') {
+                    Some(r) => r.trim_start_matches(|c: char| c.is_whitespace()),
+                    None => {
+                        search_from = end_of_label;
+                        continue;
+                    }
+                };
+                let line_end = after_colon
+                    .find(|c: char| c == '\n' || c == '\r')
+                    .unwrap_or(after_colon.len().min(160));
+                let value = after_colon[..line_end].trim();
+                if !value.is_empty() && value.len() < 160 {
+                    return Some(value.to_string());
+                }
+                search_from = end_of_label;
+            }
+        }
+        None
+    }
+
+    meta.year = capture(&text, &["Год издания", "Год выпуска", "Year"]);
+    meta.genre = capture(&text, &["Жанр", "Стиль", "Genre"]);
+    meta.country = capture(
+        &text,
+        &["Страна исполнителя (группы)", "Страна исполнителя", "Страна", "Country"],
+    );
+    meta.codec = capture(&text, &["Аудиокодек", "Кодек", "Audio codec"]);
+    meta.rip_type = capture(&text, &["Тип рипа", "Rip type"]);
+    meta.duration = capture(&text, &["Продолжительность", "Total time", "Length"]);
+    meta
+}
+
+// ── Album name ───────────────────────────────────────────────────────────────
+
+/// Pull the album name out of the first post via the explicit `<span class="post-b">Альбом</span>: value<br>`
+/// row. Returns `None` when no such structured label exists — we deliberately
+/// don't try to guess from topic banners / names because those are freeform
+/// ("Artist - Discography / Collection / Rarities") and produce false positives.
+pub(super) fn parse_album_from_post(html: &str) -> Option<String> {
+    let body_start = html.find(r#"class="post_body""#)?;
+    let raw_end = (body_start + 60_000).min(html.len());
+    let area_end = html.floor_char_boundary(raw_end);
+    let area = &html[body_start..area_end];
+    let text = strip_html_tags_simple(area);
+
+    for label in &["Альбом", "Альбомы", "Album"] {
+        let mut from = 0usize;
+        while let Some(rel) = text[from..].find(label) {
+            let start = from + rel;
+            let after_label = &text[start + label.len()..];
+            let after_ws = after_label.trim_start_matches(|c: char| c.is_whitespace());
+            if let Some(rest) = after_ws.strip_prefix(':') {
+                let value_start = rest.trim_start_matches(|c: char| c.is_whitespace());
+                let end = value_start
+                    .find(|c: char| c == '\n' || c == '\r')
+                    .unwrap_or(value_start.len().min(160));
+                let value = value_start[..end].trim();
+                if !value.is_empty() && value.len() < 160 {
+                    return Some(value.to_string());
+                }
+            }
+            from = start + label.len();
+        }
+    }
+    None
 }
 
 // ── Minimal bencode parser ────────────────────────────────────────────────────

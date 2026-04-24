@@ -49,6 +49,15 @@ pub struct SlskSearchResultRow {
     /// True for image files from search (used for folder cover matching).
     #[serde(default)]
     pub slsk_is_image: bool,
+    /// Peer has at least one free upload slot (from FileSearchResponse tail).
+    #[serde(default, rename = "slotsFree")]
+    pub slots_free: bool,
+    /// Peer's advertised average upload speed in bytes/second.
+    #[serde(default, rename = "avgSpeed")]
+    pub avg_speed: u32,
+    /// Current length of the peer's upload queue (0 = free).
+    #[serde(default, rename = "queueLength")]
+    pub queue_length: u64,
 }
 
 #[derive(Serialize)]
@@ -111,7 +120,7 @@ impl SoulSeekState {
         }
     }
 
-    fn get_session(&self) -> Result<Arc<Session>, String> {
+    pub(crate) fn get_session(&self) -> Result<Arc<Session>, String> {
         self.session
             .lock()
             .map_err(|_| "lock error".to_string())?
@@ -228,6 +237,9 @@ pub(super) fn file_results_to_rows(results: Vec<SlskFileResult>) -> Vec<SlskSear
                 bitrate: r.bitrate,
                 duration: r.duration,
                 slsk_is_image: r.is_image,
+                slots_free: r.slots_free,
+                avg_speed: r.avg_speed,
+                queue_length: r.queue_length,
             }
         })
         .collect()

@@ -42,10 +42,23 @@ export interface RutrackerTrackRaw {
   [k: string]: unknown;
 }
 
+/**
+ * Alternative SLSK peer for a singleton track. The provider stores up to
+ * ~5 of these alongside the primary ref so {@link SoulseekTrack.prepareStream}
+ * can fail over to another seed when the primary is down.
+ */
+export interface SlskAltPeer {
+  slskUsername: string;
+  slskFilepath: string;
+  size?: number;
+}
+
 export interface SoulseekTrackRaw {
   row?: unknown;
   cover?: SlskTrackCoverRef | null;
   peers?: number;
+  /** Backup peers (same track, different seed) tried in order on failure. */
+  alternativePeers?: SlskAltPeer[];
   [k: string]: unknown;
 }
 

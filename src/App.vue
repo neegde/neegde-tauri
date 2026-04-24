@@ -36,6 +36,8 @@ import {
 import { getAlbum } from "./stores/entities.js";
 import {
   searchEntities,
+  searchLoadingRt,
+  searchLoadingSlsk,
   searchRtError,
   searchSlskError,
   searchResultsEpoch,
@@ -397,6 +399,7 @@ const {
     selected.value = null;
     files.value = [];
     torrentCover.value = null;
+    currentAlbum.value = null;
     navForwardStack.value = [];
     navBackStack.value = [];
     view.value = "home";
@@ -1009,7 +1012,7 @@ function handleSidebarHome() {
     if (mainRef.value) mainRef.value.scrollTo(0, 0);
     return;
   }
-  if (!homeSearchActive.value && !selected.value) {
+  if (!homeSearchActive.value && !selected.value && !currentAlbum.value) {
     if (mainRef.value) mainRef.value.scrollTo(0, 0);
     return;
   }
@@ -1017,6 +1020,7 @@ function handleSidebarHome() {
   void handleSearch("");
   torrentMagnet.value = "";
   torrentCover.value = null;
+  currentAlbum.value = null;
   forwardStack.value = [];
   backStack.value = [];
   if (mainRef.value) mainRef.value.scrollTo(0, 0);

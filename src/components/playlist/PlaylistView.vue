@@ -11,6 +11,10 @@ import {
   libraryTrackActions,
 } from "../../composables/useTrackContextMenu.js";
 
+function trackLines(t: Track): { title: string; subtitle: string } {
+  return { title: t.title, subtitle: t.artist ?? t.albumTitle ?? "" };
+}
+
 const props = defineProps<{
   playlist: Playlist;
   tracks: Track[];

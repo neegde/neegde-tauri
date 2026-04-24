@@ -7,7 +7,6 @@ import { Track } from "../../track/Track.js";
 import {
   trackDisplayBasename,
   extractTrackArtist,
-  parseArtistTitleFromTrackFilename,
 } from "../../lib/utils.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "../../torrent/torrentSession.js";
 import { resumeEqualizerContext } from "../../audio/equalizerGraph.js";
@@ -466,18 +465,15 @@ watch(
 
     void syncMediaSessionMetadata(t, buildSessionEnriched(t));
     // MusicBrainz enrichment — does NOT block playback.
-    let artistLocal = t.artist || extractTrackArtist(t.albumTitle, null, null, null) || "";
-    let titleLocal = trackDisplayBasename(t.fileName);
     const sm0 = slskMeta.get(t.id);
+    let artistLocal;
+    let titleLocal;
     if (sm0?.artist && sm0?.title) {
       artistLocal = sm0.artist;
       titleLocal = sm0.title;
     } else {
-      const parsed = parseArtistTitleFromTrackFilename(t.fileName || t.albumTitle || "");
-      if (parsed.artist) {
-        artistLocal = parsed.artist;
-        titleLocal = parsed.title;
-      }
+      artistLocal = t.artist || extractTrackArtist(t.albumTitle, null, null, null) || "";
+      titleLocal = t.title || trackDisplayBasename(t.fileName);
     }
     enrichTrackMeta(artistLocal, titleLocal, (meta) => {
       if (track.value !== t) return;  // track changed while request was in flight
@@ -665,11 +661,11 @@ watch(
       const isUserCancel =
         loadCancelledByUser.value ||
         (typeof msg === "string" && msg.includes("отмен"));
-      void appDebugLog("player", `stream prepare: ERROR — "${t?.fileName?.slice?.(0,60)}" fileIdx=${fileIdx} err=${msg} cancelled=${cancelled} isUserCancel=${isUserCancel}`);
+      void appDebugLog("player", `stream prepare: ERROR — "${t?.fileName?.slice?.(0,60)}" id=${t?.id} kind=${t?.kind} err=${msg} cancelled=${cancelled} isUserCancel=${isUserCancel}`);
       if (!cancelled && !isUserCancel) {
-        console.error("[player/stream] torrent_prepare_stream failed", {
-          magnetLen: magnet?.length,
-          fileIdx,
+        console.error("[player/stream] prepareStream failed", {
+          trackId: t?.id,
+          kind: t?.kind,
           error: e,
           message: msg,
         });

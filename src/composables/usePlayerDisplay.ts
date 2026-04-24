@@ -13,7 +13,7 @@
  */
 
 import { computed, type ComputedRef, type Ref } from "vue";
-import { isYearLike, parseArtistTitleFromTrackFilename, trackDisplayBasename } from "../lib/utils.js";
+import { isYearLike } from "../lib/utils.js";
 import { slskMeta } from "../soulseek/slskMetaStore.js";
 import { Track } from "../track/Track.js";
 
@@ -47,8 +47,6 @@ export function usePlayerDisplay(ctx: {
     if (soulseekSearchMeta.value?.artist) return soulseekSearchMeta.value.artist;
     const enrArtist = ctx.enrichedMeta.value?.artist;
     if (enrArtist && !isYearLike(String(enrArtist).trim())) return enrArtist;
-    const parsed = parseArtistTitleFromTrackFilename(t?.fileName ?? "");
-    if (parsed.artist) return parsed.artist;
     return t?.artist ?? "";
   });
 
@@ -56,10 +54,7 @@ export function usePlayerDisplay(ctx: {
     const t = ctx.track.value;
     if (soulseekSearchMeta.value?.title) return soulseekSearchMeta.value.title;
     if (ctx.enrichedMeta.value?.title) return ctx.enrichedMeta.value.title;
-    const path = t?.fileName ?? "";
-    const { artist, title } = parseArtistTitleFromTrackFilename(path);
-    if (artist) return title;
-    return trackDisplayBasename(path);
+    return t?.title ?? "";
   });
 
   /** Enriched/slskMeta cover override; empty string = fall through to Track.coverUrl(). */

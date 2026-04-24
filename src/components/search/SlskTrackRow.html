@@ -23,15 +23,12 @@
     </button>
 
     <div class="slsk-track-name-area">
-      <span v-if="animPhase === 'waiting'" class="slsk-track-name-block">
-        {{ displayText }}<span class="slsk-cursor slsk-cursor--waiting" aria-hidden="true"></span>
-      </span>
-      <div v-else class="slsk-track-name-block slsk-track-name-block--enriched">
+      <div class="slsk-track-name-block slsk-track-name-block--enriched">
         <span
           class="slsk-track-enriched-artist"
           :class="{ 'slsk-track-enriched-artist--show': artistVisible }"
           aria-hidden="!artistVisible"
-        >{{ enriched?.artist ?? '' }}</span>
+        >{{ displayArtist }}</span>
         <span class="slsk-track-enriched-title">
           {{ displayText }}<span
             v-if="animPhase !== 'done'"

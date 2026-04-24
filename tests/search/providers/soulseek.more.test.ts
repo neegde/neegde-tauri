@@ -94,8 +94,8 @@ describe("soulseekProvider — cover selection", () => {
     ]);
     const snaps = await drive(soulseekProvider.search("q", makeCtx()));
     const last = snaps[snaps.length - 1] as Array<{ type: string; sources: Array<{ raw?: { cover?: { slsk_filepath?: string } } }> }>;
-    const album = last.find((e) => e.type === "album");
-    expect(album?.sources[0]?.raw?.cover?.slsk_filepath).toMatch(/front\.jpg$/);
+    const track = last.find((e) => e.type === "track");
+    expect(track?.sources[0]?.raw?.cover?.slsk_filepath).toMatch(/front\.jpg$/);
   });
 
   it("picks biggest image when priority ties (unknown filenames)", async () => {
@@ -107,19 +107,19 @@ describe("soulseekProvider — cover selection", () => {
     ]);
     const snaps = await drive(soulseekProvider.search("q", makeCtx()));
     const last = snaps[snaps.length - 1] as Array<{ type: string; sources: Array<{ raw?: { cover?: { slsk_filepath?: string } } }> }>;
-    const album = last.find((e) => e.type === "album");
-    expect(album?.sources[0]?.raw?.cover?.slsk_filepath).toMatch(/img2\.jpg$/);
+    const track = last.find((e) => e.type === "track");
+    expect(track?.sources[0]?.raw?.cover?.slsk_filepath).toMatch(/img2\.jpg$/);
   });
 
-  it("album with no images produces null cover", async () => {
+  it("folder with no images produces null cover on tracks", async () => {
     soulseekSearchMock.mockResolvedValue([
       { slsk_username: "u", slsk_filepath: "A/01.mp3", size: 1, bitrate: 0, slsk_is_image: false },
       { slsk_username: "u", slsk_filepath: "A/02.mp3", size: 1, bitrate: 0, slsk_is_image: false },
     ]);
     const snaps = await drive(soulseekProvider.search("q", makeCtx()));
     const last = snaps[snaps.length - 1] as Array<{ type: string; sources: Array<{ raw?: { cover?: unknown } }> }>;
-    const album = last.find((e) => e.type === "album");
-    expect(album?.sources[0]?.raw?.cover).toBeNull();
+    const track = last.find((e) => e.type === "track");
+    expect(track?.sources[0]?.raw?.cover).toBeNull();
   });
 });
 

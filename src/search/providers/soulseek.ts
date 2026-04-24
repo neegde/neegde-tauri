@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { soulseekSearch } from "../../soulseek/api.js";
 import { SearchProvider, type SearchProviderCtx } from "../provider.js";
 import type { PipelineEntity } from "../pipeline/index.js";
+import { resolveTrackNames } from "../../track/nameResolver.js";
 
 // ── Path helpers ────────────────────────────────────────────────────────────
 
@@ -19,17 +20,34 @@ function bestBitrate(rows: Array<{ bitrate?: number | null }>): number {
   return rows.reduce((b, r) => ((r.bitrate ?? 0) > b ? (r.bitrate ?? 0) : b), 0);
 }
 
-/** Normalized track title extracted from a file name — dedup key across peers. */
-function titleNormKey(filepath: unknown): string {
-  let s = basename(filepath ?? "");
-  if (!s) return "";
-  s = s.replace(/\.[^.]+$/, "");
-  s = s
-    .replace(/^[\[(]\d{4}[-./]\d{2}[-./]\d{2}[\])]\s*/, "")
-    .replace(/^\d{4}[-./]\d{2}[-./]\d{2}\s+/, "");
-  s = s.replace(/\[[^\]]*\]|\([^)]*\)/g, "");
-  s = s.replace(/^\(?\d{1,3}\)?[-.)]?\s+/, "");
+/** Normalize for case/punctuation-insensitive comparison. */
+function normalizeKey(s: string): string {
   return s.trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+/** Dedup key across peers: resolved artist + title. Same song from different
+ *  peers with differing basenames (e.g. `Пошлая Молли - Нон стоп.flac` vs
+ *  `02 - Нон стоп.flac` in an artist folder) still collapse into one entry
+ *  because both resolve to `{artist: "Пошлая Молли", title: "Нон стоп"}`. */
+function trackDedupKey(row: SlskAudioRow): string {
+  const fp = row.slsk_filepath ?? row.name ?? "";
+  const fileName = basename(fp);
+  const resolved = resolveTrackNames({
+    fileName,
+    artist: null,
+    albumTitle: null,
+    sources: [{
+      kind: "soulseek",
+      refs: { slskUsername: row.slsk_username, slskFilepath: row.slsk_filepath },
+    }],
+  });
+  const ext = (fileName.split(".").pop() ?? "").toLowerCase();
+  const artistN = normalizeKey(resolved.artist);
+  const titleN = normalizeKey(resolved.title);
+  // Title alone still required — a missing title means we couldn't parse
+  // anything meaningful and the row should be dropped upstream.
+  if (!titleN) return "";
+  return `${artistN}|${titleN}.${ext}`;
 }
 
 // ── Cover selection ─────────────────────────────────────────────────────────
@@ -88,7 +106,30 @@ interface SlskAudioRow {
   bitrate?: number | null;
   duration?: number | null;
   slsk_is_image?: boolean;
+  /** Per-peer availability stats from FileSearchResponse tail. */
+  slotsFree?: boolean;
+  avgSpeed?: number;
+  queueLength?: number;
   [k: string]: unknown;
+}
+
+/**
+ * Score a peer for failover ranking: higher = better.
+ *   +2   has free upload slot
+ *   +1   non-zero advertised speed
+ *   +1   queue length < 10
+ *   -1   queue length > 50 (peer is busy / slow)
+ *   -2   no free slot AND queue > 20 (effectively offline to new uploads)
+ */
+function peerRank(row: SlskAudioRow): number {
+  let r = 0;
+  if (row.slotsFree) r += 2;
+  if ((row.avgSpeed ?? 0) > 0) r += 1;
+  const q = row.queueLength ?? 0;
+  if (q < 10) r += 1;
+  if (q > 50) r -= 1;
+  if (!row.slotsFree && q > 20) r -= 2;
+  return r;
 }
 
 interface SlskTrackEntity {
@@ -141,9 +182,27 @@ function rawAudioToTrack(
   };
 }
 
+/**
+ * Aggressive upstream filter: drop peers whose upload queue is already deep.
+ * Empirically, peers with queue ≤ ~200 mostly deliver on a real transfer
+ * attempt, but anything above is a coin flip. For a music-player UX where
+ * the user expects instant playback, we'd rather hide a borderline peer
+ * than waste a click on one that times out. Threshold deliberately strict:
+ * queue > 25 is "already has a backlog" — drop.
+ *
+ * Peers that omit stats (no `queueLength` stamped) get a pass — many of
+ * those are alternative-peer entries whose tail wasn't parsed yet.
+ */
+const PEER_QUEUE_MAX = 25;
+function peerIsLive(r: SlskAudioRow): boolean {
+  return (r.queueLength ?? 0) <= PEER_QUEUE_MAX;
+}
+
 function groupSlskRowsToEntities(rawRows: SlskAudioRow[]): PipelineEntity[] {
   const images: ImageRow[] = rawRows.filter((r) => r.slsk_is_image) as unknown as ImageRow[];
-  const audios: SlskAudioRow[] = rawRows.filter((r) => !r.slsk_is_image);
+  // Drop audio rows whose peer has a deep upload queue up-front: primary
+  // and alternative selection both work off this clean set.
+  const audios: SlskAudioRow[] = rawRows.filter((r) => !r.slsk_is_image && peerIsLive(r));
 
   const imagesByUserFolder = new Map<string, ImageRow[]>();
   for (const img of images) {
@@ -152,97 +211,71 @@ function groupSlskRowsToEntities(rawRows: SlskAudioRow[]): PipelineEntity[] {
     imagesByUserFolder.get(key)!.push(img);
   }
 
-  interface FolderGroup { user: string; folder: string; tracks: SlskAudioRow[] }
-  const byUserFolder = new Map<string, FolderGroup>();
-  const rootless: SlskAudioRow[] = [];
+  // Group every audio row by (normalized title + ext). The best-ranked peer
+  // becomes primary; the rest are failover alternatives. No more separate
+  // "album track" vs "singleton" code path — SoulSeek doesn't actually have
+  // albums, just peers with files, and unifying the entity shape means the
+  // failover logic applies uniformly.
+  const byTitleKey = new Map<string, SlskAudioRow[]>();
   for (const t of audios) {
-    const folder = folderKey(t.slsk_filepath);
-    if (!folder) { rootless.push(t); continue; }
-    const key = `${t.slsk_username}|${folder}`;
-    if (!byUserFolder.has(key)) {
-      byUserFolder.set(key, { user: t.slsk_username, folder, tracks: [] });
-    }
-    byUserFolder.get(key)!.tracks.push(t);
+    const key = trackDedupKey(t);
+    if (!key) continue;
+    if (!byTitleKey.has(key)) byTitleKey.set(key, []);
+    byTitleKey.get(key)!.push(t);
   }
 
-  const albumFolders: FolderGroup[] = [];
-  const singletonTracks: SlskAudioRow[] = [];
-  for (const g of byUserFolder.values()) {
-    const byTitle = new Map<string, SlskAudioRow>();
-    for (const t of g.tracks) {
-      const title = titleNormKey(t.slsk_filepath ?? t.name ?? "");
-      if (!title) continue;
-      const ext = (basename(t.slsk_filepath ?? "").split(".").pop() ?? "").toLowerCase();
-      const key = `${title}.${ext}`;
-      const ex = byTitle.get(key);
-      if (!ex || (t.bitrate ?? 0) > (ex.bitrate ?? 0)) byTitle.set(key, t);
-    }
-    const uniq = Array.from(byTitle.values());
-    if (uniq.length === 0) continue;
-
-    const uniqueTitleKeys = new Set<string>();
-    for (const k of byTitle.keys()) uniqueTitleKeys.add(k.split(".")[0]!);
-    if (uniqueTitleKeys.size >= 2) {
-      albumFolders.push({ user: g.user, folder: g.folder, tracks: uniq });
-    } else {
-      singletonTracks.push(uniq[0]!);
-    }
+  const ALT_PEER_LIMIT = 5;
+  /** Primary = best-ranked peer, with bitrate as tiebreak. */
+  function pickPrimary(rows: SlskAudioRow[]): SlskAudioRow {
+    return [...rows].sort((a, b) => {
+      const rr = peerRank(b) - peerRank(a);
+      return rr !== 0 ? rr : (b.bitrate ?? 0) - (a.bitrate ?? 0);
+    })[0]!;
   }
+  /** Alternatives = distinct users after primary, ranked by peerRank then bitrate. */
+  function buildAlternatives(rows: SlskAudioRow[], primary: SlskAudioRow): Array<{ slskUsername: string; slskFilepath: string; size: number }> {
+    const sorted = [...rows].sort((a, b) => {
+      const rr = peerRank(b) - peerRank(a);
+      return rr !== 0 ? rr : (b.bitrate ?? 0) - (a.bitrate ?? 0);
+    });
+    const seen = new Set<string>([primary.slsk_username]);
+    const out: Array<{ slskUsername: string; slskFilepath: string; size: number }> = [];
+    for (const r of sorted) {
+      if (seen.has(r.slsk_username)) continue;
+      seen.add(r.slsk_username);
+      out.push({
+        slskUsername: r.slsk_username,
+        slskFilepath: r.slsk_filepath,
+        size: r.size ?? 0,
+      });
+      if (out.length >= ALT_PEER_LIMIT) break;
+    }
+    return out;
+  }
+
+  // Rows were pre-filtered by `peerIsLive` upstream, so every grouping is
+  // guaranteed to have at least one live peer. Just pick primary + alts.
+  interface Entry { primary: SlskAudioRow; alternatives: ReturnType<typeof buildAlternatives> }
+  const entries: Entry[] = [];
+  for (const rows of byTitleKey.values()) {
+    const primary = pickPrimary(rows);
+    const alternatives = buildAlternatives(rows, primary);
+    entries.push({ primary, alternatives });
+  }
+
+  // Live peers first — the most-likely-to-play tracks appear at the top.
+  entries.sort((a, b) => peerRank(b.primary) - peerRank(a.primary));
 
   const out: PipelineEntity[] = [];
-
-  for (const g of albumFolders) {
-    const albumId = `slsk:album:${g.user}|${g.folder}`;
-    const cover = pickCover(imagesByUserFolder.get(`${g.user}|${g.folder}`));
-    const albumTracks = g.tracks.map((t) => rawAudioToTrack(t, g.user, g.folder, albumId));
-    const best = bestBitrate(albumTracks) || null;
-    const totalSize = albumTracks.reduce((s, t) => s + (t.size ?? 0), 0) || null;
-
-    out.push({
-      type: "album",
-      id: albumId,
-      title: g.folder.split("/").pop() || g.folder,
-      artist: null,
-      year: null,
-      coverUrl: null,
-      format: albumTracks[0]?.format ?? null,
-      bitrate: best,
-      size: totalSize,
-      seeders: null,
-      leechers: null,
-      peers: 1,
-      trackIds: albumTracks.map((t) => t.id),
-      sources: [{
-        kind: "soulseek",
-        refs: { slskUsername: g.user, slskFolder: g.folder },
-        raw: { tracks: g.tracks, cover, kind: "album" },
-      }],
-      score: 0,
-      mergedFrom: 1,
-    } as unknown as PipelineEntity);
-    out.push(...(albumTracks as unknown as PipelineEntity[]));
-  }
-
-  const byTitleKey = new Map<string, { row: SlskAudioRow; users: Set<string> }>();
-  for (const t of singletonTracks.concat(rootless)) {
-    const title = titleNormKey(t.slsk_filepath ?? t.name ?? "");
-    if (!title) continue;
-    const ext = (basename(t.slsk_filepath ?? "").split(".").pop() ?? "").toLowerCase();
-    const key = `${title}.${ext}`;
-    if (!byTitleKey.has(key)) byTitleKey.set(key, { row: t, users: new Set() });
-    const slot = byTitleKey.get(key)!;
-    slot.users.add(t.slsk_username);
-    if ((t.bitrate ?? 0) > (slot.row.bitrate ?? 0)) slot.row = t;
-  }
-
-  for (const { row, users } of byTitleKey.values()) {
-    const folder = folderKey(row.slsk_filepath);
+  for (const { primary, alternatives } of entries) {
+    const folder = folderKey(primary.slsk_filepath);
     const cover = folder
-      ? pickCover(imagesByUserFolder.get(`${row.slsk_username}|${folder}`))
+      ? pickCover(imagesByUserFolder.get(`${primary.slsk_username}|${folder}`))
       : null;
-    const track = rawAudioToTrack(row, row.slsk_username, folder, null);
+    const track = rawAudioToTrack(primary, primary.slsk_username, folder, null);
     track.sources[0]!.raw.cover = cover;
-    track.sources[0]!.raw.peers = users.size;
+    track.sources[0]!.raw.peers = 1 + alternatives.length;
+    (track.sources[0]!.raw as { alternativePeers?: unknown }).alternativePeers = alternatives;
     out.push(track as unknown as PipelineEntity);
   }
 

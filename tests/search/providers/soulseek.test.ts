@@ -91,7 +91,7 @@ describe("soulseekProvider — basics", () => {
 });
 
 describe("soulseekProvider — grouping", () => {
-  it("collapses multi-track folder into an Album + Track entities", async () => {
+  it("multi-track folder emits a flat track per title (no album entity)", async () => {
     soulseekSearchMock.mockResolvedValue([
       { slsk_username: "u1", slsk_filepath: "Folder/A.mp3", size: 1000, bitrate: 320, slsk_is_image: false },
       { slsk_username: "u1", slsk_filepath: "Folder/B.mp3", size: 1100, bitrate: 320, slsk_is_image: false },
@@ -99,14 +99,14 @@ describe("soulseekProvider — grouping", () => {
     ]);
     const snaps = await drive(soulseekProvider.search("q", makeCtx()));
     const last = snaps[snaps.length - 1] as Array<{ type: string; sources: Array<{ raw?: { cover?: unknown } }> }>;
-    const album = last.find((e) => e.type === "album");
+    expect(last.filter((e) => e.type === "album")).toHaveLength(0);
     const tracks = last.filter((e) => e.type === "track");
-    expect(album).toBeDefined();
-    expect(album?.sources[0]?.raw?.cover).toBeDefined();
     expect(tracks.length).toBeGreaterThanOrEqual(2);
+    // Cover from the folder should be stamped on each track.
+    for (const t of tracks) expect(t.sources[0]?.raw?.cover).toBeDefined();
   });
 
-  it("single-song folder treated as orphan track (no album entity)", async () => {
+  it("single-song folder emits a track (no album entity)", async () => {
     soulseekSearchMock.mockResolvedValue([
       { slsk_username: "u", slsk_filepath: "X/OneSong.mp3", size: 1, bitrate: 0, slsk_is_image: false },
     ]);
@@ -141,8 +141,8 @@ describe("soulseekProvider — grouping", () => {
     ]);
     const snaps = await drive(soulseekProvider.search("q", makeCtx()));
     const last = snaps[snaps.length - 1] as Array<{ type: string }>;
-    // Folder has 2 unique titles (Song, Other) with 2 formats each, so 1 album + 4 tracks.
-    expect(last.filter((e) => e.type === "album")).toHaveLength(1);
+    // No album entities — SLSK only emits tracks now.
+    expect(last.filter((e) => e.type === "album")).toHaveLength(0);
     // byTitle dedup keeps best-bitrate per (title.ext) → 4 tracks (flac + mp3 pairs).
     expect(last.filter((e) => e.type === "track")).toHaveLength(4);
   });

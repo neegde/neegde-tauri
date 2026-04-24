@@ -101,8 +101,18 @@ let animTimer = null;
 const BASE_MS = 18;
 const MAX_MS = 650;
 
-const artistVisible = computed(
+// Track fields are already stamped by the resolver inside `buildTrack`, so
+// `track.artist` / `track.title` are clean baseline names without a network
+// call. Enrichment (iTunes/MB) can still override via the erase/type animation.
+const waitingArtist = computed(
+  () => animPhase.value === "waiting" && !!props.track.artist,
+);
+const enrichedArtist = computed(
   () => (animPhase.value === "fading" || animPhase.value === "done") && !!props.enriched?.artist,
+);
+const artistVisible = computed(() => waitingArtist.value || enrichedArtist.value);
+const displayArtist = computed(() =>
+  props.enriched?.artist ?? props.track.artist ?? "",
 );
 
 function clearAnim() { clearTimeout(animTimer); animTimer = null; }
@@ -110,10 +120,10 @@ function clearAnim() { clearTimeout(animTimer); animTimer = null; }
 function initAnim() {
   clearAnim();
   if (props.enriched) {
-    displayText.value = props.enriched.title ?? props.track.fileName ?? "";
+    displayText.value = props.enriched.title ?? props.track.title ?? "";
     animPhase.value = "done";
   } else {
-    displayText.value = props.track.fileName ?? "";
+    displayText.value = props.track.title ?? "";
     animPhase.value = "waiting";
   }
 }
@@ -121,6 +131,17 @@ function initAnim() {
 onMounted(initAnim);
 
 watch(() => props.track?.id, initAnim);
+
+// Deezer/other late enrichment may rewrite `track.title` / `track.artist`
+// in-place and bump `entitiesVersion`. Refresh the baseline while we're
+// still in the "waiting" phase so the row reflects the canonical name
+// without going through the erase/type animation (that's reserved for
+// the iTunes enrichment flow).
+watch([() => props.track?.title, () => props.track?.artist, entitiesVersion], () => {
+  if (animPhase.value === "waiting") {
+    displayText.value = props.track.title ?? "";
+  }
+});
 
 watch(() => props.enriched, (val) => {
   if (!val || animPhase.value === "done") return;

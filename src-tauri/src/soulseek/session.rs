@@ -66,6 +66,13 @@ pub struct SlskFileResult {
     pub duration: Option<u32>,
     /// True when this row is an image file from search (cover art), not audio.
     pub is_image: bool,
+    /// Peer has at least one free upload slot (value of `slotsFree` from the
+    /// search response, applied to every row the peer returned in this batch).
+    pub slots_free: bool,
+    /// Peer's advertised average upload speed in bytes/second (0 if unknown).
+    pub avg_speed: u32,
+    /// Current length of the peer's upload queue (0 = empty).
+    pub queue_length: u64,
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
@@ -778,7 +785,15 @@ pub fn parse_file_search_response(data: &[u8]) -> Option<(u32, Vec<SlskFileResul
     let token = b.u32()?;
     let num = b.u32()?;
 
-    let mut results = Vec::with_capacity(num.min(200) as usize);
+    // First pass: collect raw (filepath, size, bitrate, duration, is_audio, is_image).
+    struct RawRow {
+        filepath: String,
+        size: u64,
+        bitrate: Option<u32>,
+        duration: Option<u32>,
+        is_image: bool,
+    }
+    let mut raw_rows: Vec<RawRow> = Vec::with_capacity(num.min(200) as usize);
     for _ in 0..num {
         let _attr = b.u8()?;      // always 1
         let filepath = b.str()?;
@@ -815,24 +830,37 @@ pub fn parse_file_search_response(data: &[u8]) -> Option<(u32, Vec<SlskFileResul
             continue;
         }
         if is_audio {
-            results.push(SlskFileResult {
-                username: username.clone(),
-                filepath,
-                size,
-                bitrate,
-                duration,
-                is_image: false,
-            });
+            raw_rows.push(RawRow { filepath, size, bitrate, duration, is_image: false });
         } else if is_image && size >= 256 {
-            results.push(SlskFileResult {
-                username: username.clone(),
-                filepath,
-                size,
-                bitrate: None,
-                duration: None,
-                is_image: true,
-            });
+            raw_rows.push(RawRow { filepath, size, bitrate: None, duration: None, is_image: true });
         }
+    }
+
+    // After the results list, the peer sends its own availability stats once:
+    //   u8   slotsFree     (0 = all slots busy)
+    //   u32  avgSpeed      (bytes/s, peer-declared)
+    //   u64  queueLength   (pending uploads)
+    // These are *per peer*, not per file — we stamp the same values on every
+    // row from this batch so later ranking can treat "which peer to try first".
+    // Older clients or zlib truncation may cut the tail, so treat all three as
+    // best-effort: missing → slots=true (assume OK), speed=0, queue=0.
+    let slots_free = b.u8().map(|v| v != 0).unwrap_or(true);
+    let avg_speed = b.u32().unwrap_or(0);
+    let queue_length = b.u64().unwrap_or(0);
+
+    let mut results = Vec::with_capacity(raw_rows.len());
+    for r in raw_rows {
+        results.push(SlskFileResult {
+            username: username.clone(),
+            filepath: r.filepath,
+            size: r.size,
+            bitrate: r.bitrate,
+            duration: r.duration,
+            is_image: r.is_image,
+            slots_free,
+            avg_speed,
+            queue_length,
+        });
     }
 
     Some((token, results))

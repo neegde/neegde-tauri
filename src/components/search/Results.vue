@@ -2,13 +2,15 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import AlbumCard from "./AlbumCard.vue";
 import SlskTrackRow from "./SlskTrackRow.vue";
-import { stripMetaTags, parseAudioTrackPrefix } from "../../lib/utils.js";
+import { peerBlacklistVersion } from "../../soulseek/peerBlacklist.js";
 import { fetchAlbumCover } from "../../audio/coverFetch.js";
 import {
   slskMeta,
   coverGeneration, bumpCoverGeneration,
   coverTimer, setCoverTimer, clearCoverTimer,
 } from "../../soulseek/slskMetaStore.js";
+import { resolveTrackNames } from "../../track/nameResolver.js";
+import { enrichTrackNames } from "../../track/deezerCanonical.js";
 
 /**
  * Search results panel. Takes the engine's Entity stream directly — no
@@ -82,16 +84,16 @@ function _similarityScore(queryTokenSet, track) {
 const trackEntities = computed(() => {
   const src = props.entities ?? [];
   const byKey = new Map();
+  const normalize = (s) => String(s ?? "").trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   for (const e of src) {
     if (e.type !== "track" || e.sources?.[0]?.kind !== "soulseek") continue;
-    const titleBase = (e.fileName ?? "").replace(/\.[^.]+$/, "")
-      .toLowerCase()
-      .replace(/^\(?\d{1,3}\)?[-.)]?\s+/, "")
-      .replace(/\[[^\]]*\]|\([^)]*\)/g, "")
-      .trim()
-      .replace(/[^\p{L}\p{N}]/gu, "");
+    // Dedup on resolver-stamped artist + title (not raw filename) so peers
+    // with different basenames but the same song collapse into one entry.
+    const artistN = normalize(e.artist ?? "");
+    const titleN = normalize(e.title ?? "");
+    if (!titleN) continue;
     const ext = (e.fileName ?? "").split(".").pop()?.toLowerCase() ?? "";
-    const key = `${titleBase}.${ext}`;
+    const key = `${artistN}|${titleN}.${ext}`;
     const existing = byKey.get(key);
     if (!existing || (e.bitrate ?? 0) > (existing.bitrate ?? 0)) byKey.set(key, e);
   }
@@ -113,15 +115,20 @@ const trackEntities = computed(() => {
     .map((x) => x.e);
 });
 
-/** Tracks filtered by the optional SLSK peer filter. */
+/** Tracks filtered by the optional SLSK peer filter + session peer blacklist. */
 const trackEntitiesFiltered = computed(() => {
+  peerBlacklistVersion.value; // reactive dep
   const raw = trackEntities.value;
   const f = props.slskPeerFilter?.trim();
-  if (!f) return raw;
-  const fl = f.toLowerCase();
-  return raw.filter(
-    (t) => String(t.sources?.[0]?.refs?.slskUsername ?? "").toLowerCase() === fl,
-  );
+  const fl = f?.toLowerCase() ?? null;
+  return raw.filter((t) => {
+    if (fl && String(t.sources?.[0]?.refs?.slskUsername ?? "").toLowerCase() !== fl) {
+      return false;
+    }
+    // Drop tracks whose every seeder has already failed us this session.
+    if (typeof t.hasLivePeer === "function" && !t.hasLivePeer()) return false;
+    return true;
+  });
 });
 
 const slskFilterEmptyHint = computed(
@@ -152,6 +159,13 @@ watch(albumEntities, () => {
 watch(trackEntitiesFiltered, () => {
   if (visibleTrackCount.value < INITIAL_BATCH) visibleTrackCount.value = INITIAL_BATCH;
 });
+
+// Background TCP probe used to run here — disabled because it races with
+// real prepareStream calls for the shared `pending_peer_addr` oneshot slot
+// in the Rust session. Server address lookups were being dropped, which
+// made every click fail. If we want a probe-based whitelist again, it needs
+// either (a) deduped per-peer lookup cache in Rust, or (b) a separate
+// lookup path that doesn't share state with transfer prep.
 
 const sentinelAlbum = ref(null);
 const sentinelTrack = ref(null);
@@ -227,32 +241,15 @@ watch(
 
 // ── SoulSeek metadata enrichment (filename parsing + iTunes cover lookup) ────
 
+/**
+ * Derive an `{artist, title}` display pair for slskMeta enrichment. Delegates
+ * to the deterministic resolver so we keep one source of truth — previously
+ * this had its own naive splitter that produced bogus "01" artists from
+ * "01-01 - Title" paths.
+ */
 function parseSlskFilename(track) {
-  const name = track.fileName ?? "";
-  const folder = track.sources?.[0]?.refs?.slskFolder ?? "";
-  const dot = name.lastIndexOf(".");
-  let base = dot > 0 ? name.slice(0, dot) : name;
-  base = base
-    .replace(/^[\[(]\d{4}[-./]\d{2}[-./]\d{2}[\])]\s*/, "")
-    .replace(/^\d{4}[-./]\d{2}[-./]\d{2}\s+/, "");
-  const trackParsed = parseAudioTrackPrefix(base);
-  if (trackParsed) base = trackParsed.title;
-  base = stripMetaTags(base).trim();
-
-  const m = base.match(/^(.+?)\s+[-–—]\s+(.+)$/);
-  if (m) return { artist: m[1].trim(), title: m[2].trim() };
-
-  const segs = folder.split("/").filter(Boolean);
-  if (segs.length < 2) return { artist: "", title: base };
-  const start = segs.length - 2;
-  for (let i = start; i >= 0; i--) {
-    const seg = stripMetaTags(segs[i]).trim();
-    if (!seg || /^\d{4}$/.test(seg)) continue;
-    const fm = seg.match(/^(.+?)\s+[-–—]\s+/);
-    const artist = fm ? fm[1].trim() : seg;
-    if (artist.length >= 2) return { artist, title: base };
-  }
-  return { artist: "", title: base };
+  const r = resolveTrackNames(track);
+  return { artist: r.artist, title: r.title };
 }
 
 function slskBasenameMetaKey(name) {
@@ -283,6 +280,9 @@ function applyFilenameMetadata(tracks) {
       slskMeta.set(track.id, { artist: donor.artist, title: donor.title });
     }
   }
+  // Stage 2 — Deezer canonical names for medium/low confidence tracks.
+  // Fires async; result mutates track.data + bumps entities so rows redraw.
+  for (const track of tracks) enrichTrackNames(track);
 }
 
 function scheduleCoverFetches() {

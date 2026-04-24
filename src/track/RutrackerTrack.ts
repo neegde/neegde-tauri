@@ -13,6 +13,8 @@ import {
   getRutrackerCoverDataUrl,
   peekRutrackerCover,
 } from "../rutracker/coverCache.js";
+import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
+import { torrentFileB64ForTrack } from "../torrent/api.js";
 
 export class RutrackerTrack extends Track {
   protected readonly sourceKind: "rutracker" | "magnet" = "rutracker";
@@ -47,10 +49,18 @@ export class RutrackerTrack extends Track {
   override async prepareStream(): Promise<string> {
     const magnet = this.getMagnet();
     if (!magnet) return "";
+    // Pull the .torrent file up-front if we can (rutracker source only —
+    // magnet-only tracks don't have a topic to fetch from). Without it C++
+    // has to resolve metadata over DHT / trackers which hangs for 90 s on
+    // restricted networks. With it, metadata is instant.
+    const torrentFileB64 = await torrentFileB64ForTrack({
+      source: this.sourceKind,
+      torrentId: this.refs.topicId ?? undefined,
+    }).catch(() => null);
     const ready = await invoke<{ url: string } | null>("torrent_prepare_stream", {
-      magnet,
+      magnet: enrichMagnetWithOpenTrackers(magnet),
       fileIdx: this.refs.fileIdx,
-      torrentFileB64: null,
+      torrentFileB64,
     });
     return ready?.url ?? "";
   }

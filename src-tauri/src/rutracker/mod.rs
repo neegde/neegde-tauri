@@ -38,6 +38,18 @@ pub struct TorrentFile {
     pub size: u64,
 }
 
+/// Structured metadata extracted from `<span class="post-b">Label</span>: value<br>` rows.
+/// Everything here is torrent-scoped (applies to every track in the release).
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TopicMeta {
+    pub year: Option<String>,
+    pub genre: Option<String>,
+    pub country: Option<String>,
+    pub codec: Option<String>,
+    pub rip_type: Option<String>,
+    pub duration: Option<String>,
+}
+
 /// Full details for a topic: cover image, magnet link, and file list.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TorrentDetails {
@@ -47,6 +59,12 @@ pub struct TorrentDetails {
     pub files: Vec<TorrentFile>,
     /// Artist extracted from the post body (e.g. "Исполнитель: Кровосток"), if found.
     pub artist: Option<String>,
+    /// Album name extracted from the post body ("Альбом: X") or derived from topic name.
+    #[serde(default)]
+    pub album: Option<String>,
+    /// Structured fields from `<span class="post-b">Label</span>: value<br>` rows.
+    #[serde(default)]
+    pub meta: TopicMeta,
 }
 
 // ── Session file helpers ──────────────────────────────────────────────────────
@@ -742,6 +760,24 @@ pub async fn rutracker_pick_mirror(
 }
 
 /// Search Rutracker music sections by query string.
+/// Prefer the mirror used at login (cookies are scoped to that host); fall
+/// back to the mirror the UI passes only when no login mirror is saved. Used
+/// by every authenticated command so search / cover / details all hit the
+/// host the cookie jar knows about.
+pub(crate) fn auth_base_for_dev(state: &RutrackerState, from_ui: &str) -> String {
+    auth_base(state, from_ui)
+}
+
+fn auth_base(state: &RutrackerState, from_ui: &str) -> String {
+    let from_ui_norm = from_ui.trim().trim_end_matches('/').to_string();
+    let meta = load_meta(&state.meta_path);
+    meta.login_mirror
+        .as_ref()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(from_ui_norm)
+}
+
 /// Requires an active authenticated session.
 #[tauri::command]
 pub async fn rutracker_search(
@@ -755,7 +791,7 @@ pub async fn rutracker_search(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     search::search_music(&client, &base, &query).await
 }
@@ -791,7 +827,7 @@ pub async fn rutracker_get_cover(
         return Ok(Some(cached));
     }
 
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     let result = topic::get_cover_data_url(&client, &base, &topic_id).await?;
 
@@ -816,7 +852,7 @@ pub async fn rutracker_get_torrent_details(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     let details = topic::get_torrent_details(&client, &base, &topic_id).await?;
     // Persist cover to disk so grid loads are instant on next visit.
@@ -839,7 +875,7 @@ pub async fn rutracker_topic_has_playable_audio(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     topic::topic_has_playable_audio(&client, &base, &topic_id).await
 }
@@ -857,7 +893,7 @@ pub async fn rutracker_download_torrent_file_b64(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     let raw = topic::download_torrent_file_bytes(&client, &base, &topic_id).await?;
     Ok(base64::Engine::encode(

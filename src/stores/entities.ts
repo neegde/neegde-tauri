@@ -34,6 +34,12 @@ function bump(): void {
   entitiesVersion.value += 1;
 }
 
+/** Exposed for external mutations to Track/Album internals (e.g. Deezer
+ *  stamping canonical names on an already-registered track). */
+export function bumpEntitiesVersion(): void {
+  bump();
+}
+
 /** Coerce raw data to a class instance when needed. */
 function normalize(entity: Track | TrackData | Album | AlbumData): Entity | null {
   if (!entity) return null;

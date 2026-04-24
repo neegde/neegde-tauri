@@ -83,15 +83,21 @@ beforeEach(() => {
 
 describe("RutrackerTrack.prepareStream", () => {
   it("invokes torrent_prepare_stream with magnet + fileIdx", async () => {
+    // prepareStream fans out a best-effort torrentFileB64ForTrack invoke
+    // first (to avoid metadata resolution via DHT); mock it to null so the
+    // main prepare invoke is the next call.
+    invokeMock.mockResolvedValueOnce(null); // torrent_file_b64_for_track
     invokeMock.mockResolvedValueOnce({ url: "http://127.0.0.1/stream/XYZ" });
     const t = buildTrack(rt()) as RutrackerTrack;
     const url = await t.prepareStream();
     expect(url).toBe("http://127.0.0.1/stream/XYZ");
-    expect(invokeMock).toHaveBeenCalledWith("torrent_prepare_stream", {
-      magnet: "magnet:?xt=urn:btih:ABC",
+    // Magnet is enriched with open trackers before being passed to Rust.
+    expect(invokeMock).toHaveBeenCalledWith("torrent_prepare_stream", expect.objectContaining({
       fileIdx: 3,
       torrentFileB64: null,
-    });
+    }));
+    const call = invokeMock.mock.calls.find((c) => c[0] === "torrent_prepare_stream");
+    expect(call?.[1]?.magnet).toContain("magnet:?xt=urn:btih:ABC");
   });
 
   it("returns empty when no magnet", async () => {
@@ -192,13 +198,13 @@ describe("MagnetTrack", () => {
   });
 
   it("prepareStream uses torrent_prepare_stream (same Rust command as RT)", async () => {
+    invokeMock.mockResolvedValueOnce(null); // torrent_file_b64_for_track
     invokeMock.mockResolvedValueOnce({ url: "http://127.0.0.1/stream/MAG" });
     const t = buildTrack(magnet());
     await t.prepareStream();
-    expect(invokeMock).toHaveBeenCalledWith("torrent_prepare_stream", expect.objectContaining({
-      magnet: "magnet:?xt=urn:btih:DEF",
-      fileIdx: 0,
-    }));
+    const call = invokeMock.mock.calls.find((c) => c[0] === "torrent_prepare_stream");
+    expect(call?.[1]?.fileIdx).toBe(0);
+    expect(call?.[1]?.magnet).toContain("magnet:?xt=urn:btih:DEF");
   });
 
   it("navigationTarget labels source=magnet", () => {

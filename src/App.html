@@ -178,6 +178,7 @@
             v-if="!selected && !currentAlbum && homeSearchActive"
             :resolving="searchResolving"
             :resolved="searchResolved"
+            :raw-query="searchQuery"
             @revert-to-raw="handleRevertToRaw"
           />
 

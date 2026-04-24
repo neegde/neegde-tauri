@@ -24,7 +24,6 @@ import {
   audioFormatLabel,
   fmtSize,
   fmtSizeParts,
-  parseArtistTitleFromTrackFilename,
 } from "../../lib/utils.js";
 
 const props = defineProps<{
@@ -127,8 +126,7 @@ function rowClass(t: Track): string[] {
 }
 
 function displayTitle(t: Track): string {
-  const { artist, title } = parseArtistTitleFromTrackFilename(t.fileName);
-  return artist ? title : trackDisplayBasename(t.fileName);
+  return t.title;
 }
 </script>
 

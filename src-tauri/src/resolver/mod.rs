@@ -31,10 +31,12 @@ use tauri::State;
 /// answer well under a second when reachable, so 3 s is generous.
 const DEFAULT_SOURCE_TIMEOUT: Duration = Duration::from_millis(3000);
 
-/// Brave needs more headroom: it often replies 429 with an Argon2id PoW
-/// challenge that takes 0.5–2 s to solve on its own, plus a retry GET.
-/// 8 s lets a healthy challenge resolve without tanking total latency.
-const BRAVE_TIMEOUT: Duration = Duration::from_millis(8000);
+/// Brave often replies 429 with an Argon2id PoW challenge. Healthy path
+/// (PoW-free or simple challenge) resolves in <2 s. When Brave escalates
+/// difficulty we'd rather give up and fall through to raw search than make
+/// the user stare at a spinner — the raw path works perfectly well without
+/// canonical resolution.
+const BRAVE_TIMEOUT: Duration = Duration::from_millis(4000);
 
 /// Run one lookup, log its timing, swallow errors into an empty result.
 /// Generic on the future type so each source keeps its own opaque future

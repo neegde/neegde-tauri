@@ -6,7 +6,6 @@ import TrackCover from "../shared/TrackCover.vue";
 import {
   trackDisplayBasename,
   audioFormatLabel,
-  parseArtistTitleFromTrackFilename,
 } from "../../lib/utils.js";
 import { Track } from "../../track/Track.js";
 import { useEntityCover } from "../../composables/useEntityCover.js";
@@ -51,10 +50,7 @@ const {
 });
 
 function trackLines(t: Track): { title: string; subtitle: string } {
-  const { artist, title } = parseArtistTitleFromTrackFilename(t.fileName);
-  const primary = artist ? title : trackDisplayBasename(t.fileName);
-  const subtitle = artist || t.artist || "";
-  return { title: primary, subtitle };
+  return { title: t.title, subtitle: t.artist ?? "" };
 }
 
 const tracksWithLines = computed(() =>

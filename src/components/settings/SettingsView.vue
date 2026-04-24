@@ -686,6 +686,30 @@ async function openAppDebugLogWindow() {
   await openAppDebugWindow().catch(() => {});
 }
 
+// ── Raw search dump (dev helper) ─────────────────────────────────────────────
+const rawDumpQuery = ref("");
+const rawDumpBusy = ref(false);
+const rawDumpPath = ref(null);
+const rawDumpError = ref(null);
+async function onDumpRawSearch() {
+  const q = rawDumpQuery.value.trim();
+  if (!q || rawDumpBusy.value) return;
+  rawDumpBusy.value = true;
+  rawDumpError.value = null;
+  rawDumpPath.value = null;
+  try {
+    const path = await invoke("dev_dump_raw_search", { query: q, mirror: getMirror() });
+    rawDumpPath.value = String(path);
+    try {
+      await openUrl(`file://${path}`);
+    } catch { /* ignore */ }
+  } catch (e) {
+    rawDumpError.value = e?.toString?.() ?? String(e);
+  } finally {
+    rawDumpBusy.value = false;
+  }
+}
+
 async function confirmClearCoverTorrents() {
   const ok = await ask(
     "Удалятся обложки, загруженные через BitTorrent из раздач (отдельная папка). Сбросится и кэш обложек SoulSeek в памяти приложения. Продолжить?",

@@ -129,9 +129,9 @@
 
         <div class="pl-col-info">
           <div class="pl-track-name" :title="trackDisplayBasename(track.fileName)">
-            {{ trackDisplayBasename(track.fileName) }}
+            {{ trackLines(track).title }}
           </div>
-          <div class="pl-track-sub">{{ track.artist || track.albumTitle }}</div>
+          <div class="pl-track-sub">{{ trackLines(track).subtitle }}</div>
         </div>
 
         <div class="pl-col-actions">
