@@ -376,7 +376,7 @@ describe("App.vue — queue / repeat / shuffle cycling", () => {
 
   it("open-torrent emits for magnet source uses magnetListFiles", async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "magnet_list_files") return [{ path: ["t.mp3"], size: 1 }];
+      if (cmd === "torrent_magnet_list_files") return [{ path: ["t.mp3"], size: 1 }];
       return null;
     });
     const w = mount(App, { attachTo: document.body });
@@ -1028,22 +1028,6 @@ describe("App.vue — SettingsView and theme", () => {
     document.body.innerHTML = "";
   });
 
-  it("app debug toggle emit flips state", async () => {
-    const w = mount(App, { attachTo: document.body });
-    await flushPromises();
-    const nav = w.findAll("button").find((b) => b.text().trim() === "Настройки");
-    await nav!.trigger("click");
-    await flushPromises();
-    const sv = w.findComponent({ name: "SettingsView" });
-    await sv.vm.$emit("update:appDebugEnabled", true);
-    await flushPromises();
-    expect(sv.props("appDebugEnabled")).toBe(true);
-    await sv.vm.$emit("update:appDebugEnabled", false);
-    await flushPromises();
-    expect(sv.props("appDebugEnabled")).toBe(false);
-    w.unmount();
-    document.body.innerHTML = "";
-  });
 });
 
 describe("App.vue — soulseek auto-login in onMounted", () => {

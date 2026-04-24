@@ -16,7 +16,7 @@ describe("Track — serialization", () => {
       sources: [{ kind: "soulseek" as const, refs: { slskUsername: "u", slskFilepath: "t.mp3" }, raw: { cover: null } }],
     };
     const t = buildTrack(data);
-    expect(t.toJSON()).toBe(data);
+    expect(t.toJSON()).toEqual(data);
   });
 
   it("exposes all simple getters", () => {

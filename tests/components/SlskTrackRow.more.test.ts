@@ -103,12 +103,13 @@ describe("SlskTrackRow — animation lifecycle", () => {
 
   it("track id change re-runs initAnim (resets display text)", async () => {
     const t1 = slsk();
-    const t2 = slsk({ id: "slsk:t2", fileName: "other.mp3" });
+    const t2 = slsk({ id: "slsk:t2", title: "completely-different-title" });
     const w = mount(SlskTrackRow, { props: { track: t1, enriched: null } });
     await nextTick();
+    expect(w.text()).toContain(t1.title);
     await w.setProps({ track: t2 });
     await nextTick();
-    // After re-init without enriched, displayText falls back to fileName.
-    expect(w.text()).toContain("other.mp3");
+    // After re-init without enriched, displayText reflects the new track's title.
+    expect(w.text()).toContain("completely-different-title");
   });
 });

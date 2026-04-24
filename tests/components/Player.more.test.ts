@@ -28,6 +28,7 @@ vi.mock("../../src/torrent/torrentSession.js", () => ({
   activateHoverStream: vi.fn().mockResolvedValue(undefined),
   releaseHoverStream: vi.fn().mockResolvedValue(undefined),
   vozduxanNotifyPosition: vi.fn().mockResolvedValue(undefined),
+  vozduxanStreamStats: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("../../src/composables/useDiscordPresence.js", () => ({
   useDiscordPresence: () => ({}),

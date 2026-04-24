@@ -1,13 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import "../_setup.js";
 import { defineComponent, h, ref, computed } from "vue";
 import { mount } from "@vue/test-utils";
 import { mockInvoke } from "../_setup.js";
-
-vi.mock("../../src/appDebugWindow.js", () => ({
-  openAppDebugWindow: vi.fn().mockResolvedValue(undefined),
-  closeAppDebugWindow: vi.fn().mockResolvedValue(undefined),
-}));
 
 import { useAppDebug } from "../../src/composables/useAppDebug.js";
 
@@ -47,17 +42,4 @@ describe("useAppDebug", () => {
     unmount();
   });
 
-  it("toggle triggers debug window open/close", async () => {
-    mockInvoke.mockResolvedValue(false);
-    const { api, unmount } = mountWith(ref("home"), ref(0), computed(() => null));
-    await Promise.resolve(); await Promise.resolve();
-    const mod = await import("../../src/appDebugWindow.js");
-    api.appDebugEnabled.value = true;
-    await Promise.resolve(); await Promise.resolve();
-    expect(mod.openAppDebugWindow).toHaveBeenCalled();
-    api.appDebugEnabled.value = false;
-    await Promise.resolve(); await Promise.resolve();
-    expect(mod.closeAppDebugWindow).toHaveBeenCalled();
-    unmount();
-  });
 });

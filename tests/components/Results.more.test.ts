@@ -132,7 +132,7 @@ describe("Results — parseSlskFilename via applyFilenameMetadata", () => {
     const t = makeSlskTrack({
       id: "slsk:date1",
       fileName: "[2020-01-15] Artist - Song.mp3",
-      folder: "A/B",
+      folder: "music/downloads",
     });
     const w = await mountWithTracks([t]);
     const rec = slskMeta.get("slsk:date1");
@@ -145,7 +145,7 @@ describe("Results — parseSlskFilename via applyFilenameMetadata", () => {
     const t = makeSlskTrack({
       id: "slsk:date2",
       fileName: "2020-01-15 Artist - Song.mp3",
-      folder: "A/B",
+      folder: "music/downloads",
     });
     const w = await mountWithTracks([t]);
     const rec = slskMeta.get("slsk:date2");
@@ -186,7 +186,10 @@ describe("Results — parseSlskFilename via applyFilenameMetadata", () => {
     const t = makeSlskTrack({
       id: "slsk:noart",
       fileName: "loose.mp3",
-      folder: "flat",
+      // All segments are generic (match GENERIC_FOLDER_RE in nameResolver),
+      // so no parent yields a folder-artist, and the basename has no " - "
+      // split either — parsed.artist stays "".
+      folder: "music/downloads",
     });
     const w = await mountWithTracks([t]);
     // parsed.artist is "" so applyFilenameMetadata does NOT set the entry.

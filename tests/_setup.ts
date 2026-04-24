@@ -22,6 +22,26 @@ const _store = new Map<string, string>();
 
 export const fakeLocalStorage = _store;
 
+// ── HTMLMediaElement.play() shim. jsdom throws "Not implemented" which escapes
+// as an uncaught rejection through `void a.play().catch(...)` chains and
+// pollutes vitest's unhandled-error summary. Override on the prototype so
+// every <audio>/<video> element in tests returns a resolved promise.
+Object.defineProperty(HTMLMediaElement.prototype, "play", {
+  configurable: true,
+  writable: true,
+  value: () => Promise.resolve(),
+});
+Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+  configurable: true,
+  writable: true,
+  value: () => {},
+});
+Object.defineProperty(HTMLMediaElement.prototype, "load", {
+  configurable: true,
+  writable: true,
+  value: () => {},
+});
+
 // ── IntersectionObserver shim (jsdom lacks it). Covers need it for lazy load.
 class FakeIntersectionObserver {
   root: Element | Document | null = null;
@@ -118,6 +138,6 @@ vi.mock("../src/rutracker/config.js", () => ({
 }));
 
 vi.mock("../src/appDebugLog.js", () => ({
-  appDebugLog: vi.fn(),
-  appDebugClickDetail: vi.fn(),
+  appDebugLog: vi.fn(() => Promise.resolve()),
+  appDebugClickDetail: vi.fn(() => ({})),
 }));

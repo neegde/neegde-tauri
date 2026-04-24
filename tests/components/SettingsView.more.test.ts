@@ -19,10 +19,6 @@ import { mockInvoke, fakeLocalStorage } from "../_setup.js";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 
-vi.mock("../../src/appDebugWindow.js", () => ({
-  openAppDebugWindow: vi.fn().mockResolvedValue(undefined),
-  closeAppDebugWindow: vi.fn().mockResolvedValue(undefined),
-}));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn() }));
 
 // Real module shims — we want to call-count these. The global _setup.ts
@@ -71,13 +67,12 @@ import * as rtSearch from "../../src/rutracker/search.js";
 import * as slskApi from "../../src/soulseek/api.js";
 import * as rtAuth from "../../src/rutracker/auth.js";
 import * as rtAccountHint from "../../src/rutracker/accountHint.js";
-import { openAppDebugWindow } from "../../src/appDebugWindow.js";
 import { ask } from "@tauri-apps/plugin-dialog";
 
 function baseProps(overrides: Record<string, unknown> = {}) {
   return {
     rtLoggedIn: false, rtUsername: "", rtAvatarUrl: "",
-    restoringSession: false, theme: "dark", appDebugEnabled: false,
+    restoringSession: false, theme: "dark",
     achievementsOptIn: false, achievementsUnlocked: [],
     slskConnected: false, slskUsername: "", slskLoggingIn: false, slskLoginError: "",
     ...overrides,
@@ -116,7 +111,6 @@ beforeEach(() => {
   (rtAuth.logout as any).mockClear?.();
   (rtAuth.restoreSession as any).mockClear?.().mockResolvedValue({ logged_in: false });
   (rtAccountHint.hadRutrackerAccount as any).mockClear?.().mockReturnValue(false);
-  (openAppDebugWindow as any).mockClear?.();
   (ask as any).mockClear?.().mockResolvedValue(true);
 });
 
@@ -436,33 +430,6 @@ describe("SettingsView — debug / achievements / theme / logout / reconnect", (
     w.unmount();
   });
 
-  it("appDebugEnabled checkbox emits update + invokes set_app_debug_enabled", async () => {
-    const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
-    await flushPromises();
-    await openNerdPanel(w);
-    // Checkbox in the journal card.
-    const cb = w.find('.nerd-toggle-inline input[type="checkbox"]');
-    await cb.setValue(true);
-    await flushPromises();
-    expect(w.emitted("update:appDebugEnabled")).toBeTruthy();
-    expect(mockInvoke.mock.calls.map((c) => c[0])).toContain("set_app_debug_enabled");
-    w.unmount();
-  });
-
-  it("openAppDebugLogWindow is called when journal open button is clicked", async () => {
-    const w = mount(SettingsView, {
-      props: baseProps({ appDebugEnabled: true }),
-      attachTo: document.body,
-    });
-    await flushPromises();
-    await openNerdPanel(w);
-    const btn = w.findAll("button").find((b) => b.text().trim() === "Открыть журнал")!;
-    await btn.trigger("click");
-    await flushPromises();
-    expect((openAppDebugWindow as any)).toHaveBeenCalled();
-    w.unmount();
-  });
-
   it("AchievementsModal opens when opt-in is on and user clicks browse", async () => {
     const w = mount(SettingsView, {
       props: baseProps({ achievementsOptIn: true, achievementsUnlocked: ["first_heart"] }),
@@ -749,22 +716,6 @@ describe("SettingsView — extra branches (diag, proxy preload, auto-refresh)", 
     w.unmount();
   });
 
-  it("onAppDebugChange(false) does not trigger openAppDebugWindow", async () => {
-    const w = mount(SettingsView, {
-      props: baseProps({ appDebugEnabled: true }),
-      attachTo: document.body,
-    });
-    await flushPromises();
-    await openNerdPanel(w);
-    const cb = w.find('.nerd-toggle-inline input[type="checkbox"]');
-    await cb.setValue(false);
-    await flushPromises();
-    const emitted = (w.emitted("update:appDebugEnabled") ?? []) as unknown[][];
-    expect(emitted.length).toBeGreaterThan(0);
-    // Last emission should be false.
-    expect(emitted.at(-1)![0]).toBe(false);
-    w.unmount();
-  });
 });
 
 describe("SettingsView — mirror reset + hostLabel + external URL", () => {

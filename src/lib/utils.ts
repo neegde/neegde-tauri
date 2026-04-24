@@ -226,6 +226,10 @@ export function stripMetaTags(str: string | null | undefined): string {
   if (!str) return str ?? "";
   return str
     .replace(/^(\[[\w\d]{1,10}\]\s*)+/, "")
+    // Bare ISO-ish date prefix: "2020-01-15 ", "2020.01.15 ", "20200115 ".
+    // Must come BEFORE the bare-year rule so the month/day aren't misread as a
+    // standalone year token on the second pass.
+    .replace(/^(19|20)\d{2}[-.]?\d{2}[-.]?\d{2}\s+/, "")
     .replace(/^(19|20)\d{2}\s+/, "")
     .replace(/^\[\d{4}\]\s*/, "")
     .replace(/^([\[(][^\[\]()]*[\])]\s*)+/, "")

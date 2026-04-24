@@ -4,103 +4,76 @@ import { mount } from "@vue/test-utils";
 
 import SearchIntentHint from "../../src/components/search/SearchIntentHint.vue";
 
-describe("SearchIntentHint — intent labels + alts + fallbacks", () => {
-  it.each([
-    ["track", "Трек"],
-    ["artist", "Исполнитель"],
-    ["album", "Альбом"],
-    ["lyric", "Текст песни"],
-    ["raw", "Как есть"],
-  ])("intent %s → chip %s", (intent, expected) => {
+describe("SearchIntentHint — canonical + revert + raw fallback", () => {
+  it("resolving=true shows spinner + 'Распознаём запрос…'", () => {
+    const w = mount(SearchIntentHint, {
+      props: { resolving: true, resolved: null, rawQuery: "" },
+    });
+    expect(w.find(".sih--resolving").exists()).toBe(true);
+    expect(w.text()).toContain("Распознаём запрос");
+  });
+
+  it("canonical artist+title renders 'Думаю, вы искали «Artist Title»'", () => {
     const w = mount(SearchIntentHint, {
       props: {
         resolving: false,
         resolved: {
-          canonical: { artist: "X", title: null },
-          intent,
-          candidates: [{ artist: "X", title: null, sources: ["mb"] }],
+          canonical: { artist: "Artist", title: "Title" },
+          intent: "track",
+          candidates: [],
         },
+        rawQuery: "raw",
       },
     });
-    expect(w.find(".sih-chip").text()).toBe(expected);
+    expect(w.find(".sih-canonical").text()).toBe("«Artist Title»");
   });
 
-  it("unknown intent → no chip rendered", () => {
+  it("canonical with only artist (Artist intent) renders just the artist", () => {
     const w = mount(SearchIntentHint, {
       props: {
         resolving: false,
         resolved: {
-          canonical: { artist: "X", title: null },
-          intent: "bogus",
-          candidates: [{ artist: "X", title: null, sources: [] }],
+          canonical: { artist: "Artist", title: null },
+          intent: "artist",
+          candidates: [],
         },
+        rawQuery: "raw",
       },
     });
-    expect(w.find(".sih-chip").exists()).toBe(false);
+    expect(w.find(".sih-canonical").text()).toBe("«Artist»");
   });
 
-  it("sources text shows comma-joined sources of the top candidate", () => {
+  it("strips bracketed annotations from canonical before displaying", () => {
+    const w = mount(SearchIntentHint, {
+      props: {
+        resolving: false,
+        resolved: {
+          canonical: { artist: "Artist (Translation)", title: "Title [Live]" },
+          intent: "track",
+          candidates: [],
+        },
+        rawQuery: "raw",
+      },
+    });
+    expect(w.find(".sih-canonical").text()).toBe("«Artist Title»");
+  });
+
+  it("revert button shows raw query and emits revert-to-raw on click", async () => {
     const w = mount(SearchIntentHint, {
       props: {
         resolving: false,
         resolved: {
           canonical: { artist: "X", title: "Y" },
           intent: "track",
-          candidates: [{ artist: "X", title: "Y", sources: ["mb", "lfm", "itunes"] }],
+          candidates: [],
         },
+        rawQuery: "literal search",
       },
     });
-    expect(w.find(".sih-sources").text()).toContain("mb, lfm, itunes");
-  });
-
-  it("no sources element when candidate.sources is empty", () => {
-    const w = mount(SearchIntentHint, {
-      props: {
-        resolving: false,
-        resolved: {
-          canonical: { artist: "X", title: "Y" },
-          intent: "track",
-          candidates: [{ artist: "X", title: "Y", sources: [] }],
-        },
-      },
-    });
-    expect(w.find(".sih-sources").exists()).toBe(false);
-  });
-
-  it("revert-to-raw emitted on click of the revert button", async () => {
-    const w = mount(SearchIntentHint, {
-      props: {
-        resolving: false,
-        resolved: {
-          canonical: { artist: "X", title: "Y" },
-          intent: "track",
-          candidates: [{ artist: "X", title: "Y", sources: [] }],
-        },
-      },
-    });
-    await w.find(".sih-revert").trigger("click");
+    const btn = w.find(".sih-revert");
+    expect(btn.text()).toContain("literal search");
+    await btn.trigger("click");
     expect(w.emitted("revert-to-raw")).toBeTruthy();
-  });
-
-  it("alternatives: slice(1, 5) — first candidate is hidden as canonical, up to 4 rendered", () => {
-    const candidates = Array.from({ length: 6 }, (_, i) => ({
-      artist: `A${i}`, title: `T${i}`, sources: ["mb"],
-    }));
-    const w = mount(SearchIntentHint, {
-      props: {
-        resolving: false,
-        resolved: {
-          canonical: { artist: "A0", title: "T0" },
-          intent: "track",
-          candidates,
-        },
-      },
-    });
-    const alts = w.findAll(".sih-alt");
-    expect(alts).toHaveLength(4);
-    // Each alt carries its sources.
-    expect(alts[0]?.text()).toContain("A1 — T1");
-    expect(alts[0]?.find(".sih-alt-sources").text()).toBe("(mb)");
   });
 
   it("raw intent without canonical shows the muted fallback message", () => {
