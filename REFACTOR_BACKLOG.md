@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `22` "#13 LikesCollection class"
+**Последний коммит:** `23` "#14 TrackCache class"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -76,7 +76,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#13 `LikesCollection` class**~~ ✅ commit 22 — `src/likes/LikesCollection.ts` с одним `Map<id, {kind, likedAt}>` внутри. Membership/timestamp не могут разойтись. `src/stores/library.ts` делегирует через `likes` singleton; per-kind Refs — ComputedRef'ы (`trackIds`, `albumIds`, `likedAt`). Тесты переехали на `seedLikesFromSnapshot({trackIds,albumIds,likedAt})` вместо прямого присваивания в `.value`.
 
-- **#14 `TrackCache` class** — `persistence/trackCache.ts` сейчас модуль с singleton-style functions. Сделать class с eviction policy + типизированным API. Blast: ~28 сайтов.
+- ~~**#14 `TrackCache` class**~~ ✅ commit 23 — `class TrackCache` с `storageKey`/`debounceMs` опциями в конструкторе. Методы `put` / `putMany` / `get` / `has` / `remove` / `ids` / `clear` / `hydrate` / `load`. В том же файле (case-insensitive FS не даёт `TrackCache.ts` рядом с `trackCache.ts`) — default singleton `trackCache` и тонкие делегаты со старыми именами (`putTrack`, `hydrateTrack`, …). 28+ консьюмеров не трогали.
 
 - **#15 `AuthManager` + `AuthProvider`** — RT + SLSK auth живут раздельно. Абстракция для будущих провайдеров. Blast: ~11 сайтов.
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **22**. Следующий должен быть **23**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **23**. Следующий должен быть **24**.
 
 HEREDOC-стиль:
 
