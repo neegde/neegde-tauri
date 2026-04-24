@@ -5,7 +5,6 @@
 import { ref, watch, onMounted, onUnmounted, type Ref, type ComputedRef } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { appDebugLog, appDebugClickDetail } from "../appDebugLog.js";
-import { openAppDebugWindow, closeAppDebugWindow } from "../appDebugWindow.js";
 
 interface TracedNowPlaying {
   fileIdx?: number;
@@ -40,7 +39,7 @@ export function useAppDebug(traced: UseAppDebugOptions) {
 
     watch(
       appDebugEnabled,
-      async (on) => {
+      (on) => {
         disconnectClickListener();
         if (on) {
           const onClick = (e: MouseEvent): void => {
@@ -48,9 +47,6 @@ export function useAppDebug(traced: UseAppDebugOptions) {
           };
           document.addEventListener("click", onClick, true);
           unlistenClick = () => document.removeEventListener("click", onClick, true);
-          void openAppDebugWindow().catch(() => {});
-        } else {
-          await closeAppDebugWindow();
         }
       },
       { immediate: true },
