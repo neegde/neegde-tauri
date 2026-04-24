@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `30` "LOW batch A: BoundedHistory + useDownloadProgress + track labels"
+**Последний коммит:** `31` "LOW batch B: AchievementsTracker + event naming unify"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -94,13 +94,13 @@ c53a538 5   — миграция всех .js → .ts
 
 - **PipelineStage class** (search/pipeline/) — сейчас plain functions. OK как есть.
 - ~~**`BoundedHistory<T>`**~~ ✅ commit 30 — `src/lib/BoundedHistory.ts`. Generic класс с `storageKey` / `max` / `keyOf` / `stamp?` / `isValid?`. `recentHistory.ts` и `searchHistory.ts` — тонкие обёртки.
-- **`AchievementsTracker` class** — легковесный рефактор ergonomics.
+- ~~**`AchievementsTracker` class**~~ ✅ commit 31 — `src/achievements/AchievementsTracker.ts`: конструктор грузит optIn+state из localStorage, методы `recordPlaybackStarted` / `recordLikeChange(after, before)` / `setOptIn(enabled, likes)` / `reset()` / `meta(id)` возвращают newly-unlocked ids для тоста. `useAchievements` стал тонкой обёрткой с toast-UI.
 - **`StreamingSearch<T>`** — abstract over SLSK event-driven batching.
 - **`VisualizerPreset` abstract** — 4 draw functions в `visualizerPresets.ts`. Нужно только если добавляем много пресетов.
 - ~~**`useTrackRowActions` helper**~~ ✅ commit 30 — `src/track/labels.ts` с pure functions `sourceShortLabel` / `sourceContextLabel` / `canPlay` / `canDownload`. Применены в `useTrackContextMenu.libraryTrackActions`, `AlbumView.albumTrackActions`, `LikesView.likeTrackTooltip`.
 - ~~**`useDownloadProgress` composable**~~ ✅ commit 30 — `src/composables/useDownloadProgress.ts`. 45 строк watcher'а из App.vue вынесены в композабл с throttle 2s на `downloading`-фазу.
 - **Упростить useNavStack** — 15 refs в ctx, Heavyweight API. Осторожно, работает.
-- **Унификация нейминга событий** — mix `@play` vs `@play-track`, `@toggle-like` vs `@toggle-like-track`. Style-guide enforcement.
+- ~~**Унификация нейминга событий**~~ ✅ commit 31 (частично) — convention: Track-payload events используют `-track` суффикс. `LikesView` переименован: `play`→`play-track`, `toggle-like`→`toggle-like-track`, `download`→`download-track`. `TorrentView`: все `emit('toggle-like', ...)` (включая album/torrent-полиморфные payload'ы) → `toggle-like-track`. App.html биндинги обновлены. Тесты обновлены (4 case в LikesView.test, 2 в TorrentView.test, 1 в App.more.test). `@play` в TorrentView/PlaylistView сохранил индекс-семантику (payload — number, не Track).
 
 ---
 
@@ -154,7 +154,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **30**. Следующий должен быть **31**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **31**. Следующий должен быть **32**.
 
 ---
 

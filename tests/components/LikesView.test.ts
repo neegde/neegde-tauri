@@ -34,21 +34,21 @@ describe("LikesView", () => {
     expect(w.find(".likes-hero-title").text()).toBe("Мне нравится");
   });
 
-  it("row click emits play", async () => {
+  it("row click emits play-track", async () => {
     const w = mount(LikesView, {
       props: { tracks: [track], nowPlayingId: null, playerPlaying: false },
     });
     await w.find(".likes-track-row").trigger("click");
-    expect(w.emitted("play")).toBeTruthy();
-    expect((w.emitted("play")?.[0]?.[0] as { id: string })?.id).toBe("t1");
+    expect(w.emitted("play-track")).toBeTruthy();
+    expect((w.emitted("play-track")?.[0]?.[0] as { id: string })?.id).toBe("t1");
   });
 
-  it("like button emits toggle-like", async () => {
+  it("like button emits toggle-like-track", async () => {
     const w = mount(LikesView, {
       props: { tracks: [track], nowPlayingId: null, playerPlaying: false },
     });
     await w.find(".like-btn").trigger("click");
-    expect(w.emitted("toggle-like")).toBeTruthy();
+    expect(w.emitted("toggle-like-track")).toBeTruthy();
   });
 
   it("applies 'playing' class on now-playing row", () => {
@@ -82,16 +82,16 @@ describe("LikesView", () => {
     document.body.innerHTML = "";
   });
 
-  it("download button emits download", async () => {
+  it("download button emits download-track", async () => {
     const w = mount(LikesView, { props: { tracks: [track], nowPlayingId: null, playerPlaying: false } });
     const dl = w.find(".dl");
     if (dl.exists()) {
       await dl.trigger("click");
-      expect(w.emitted("download")).toBeTruthy();
+      expect(w.emitted("download-track")).toBeTruthy();
     }
   });
 
-  it("ctx menu 'Скачать' emits download", async () => {
+  it("ctx menu 'Скачать' emits download-track", async () => {
     const w = mount(LikesView, {
       props: { tracks: [track], nowPlayingId: null, playerPlaying: false },
       attachTo: document.body,
@@ -101,7 +101,7 @@ describe("LikesView", () => {
       .find((el) => el.textContent?.includes("Скачать")) as HTMLElement | undefined;
     item?.click();
     await w.vm.$nextTick();
-    expect(w.emitted("download")).toBeTruthy();
+    expect(w.emitted("download-track")).toBeTruthy();
     w.unmount();
     document.body.innerHTML = "";
   });

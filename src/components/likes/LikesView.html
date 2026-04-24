@@ -32,7 +32,7 @@
           v-for="(row, i) in tracksWithLines"
           :key="row.track.id"
           :class="['track-row', 'likes-track-row', ...likesTrackRowClass(row.track)]"
-          @click="emit('play', row.track)"
+          @click="emit('play-track', row.track)"
           @contextmenu.prevent="openTrackCtx($event, row.track)"
         >
           <div class="track-num">
@@ -69,7 +69,7 @@
             <button
               class="track-btn like-btn liked"
               title="Убрать лайк"
-              @click.stop="emit('toggle-like', row.track)"
+              @click.stop="emit('toggle-like-track', row.track)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -78,7 +78,7 @@
             <button
               class="track-btn dl"
               title="Скачать"
-              @click.stop="emit('download', row.track)"
+              @click.stop="emit('download-track', row.track)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 3v13M5 14l7 7 7-7"/>

@@ -525,7 +525,7 @@ describe("App.vue — likes flow", () => {
     const lv = w.findComponent({ name: "LikesView" });
     let tracks = lv.props("tracks") as Array<{ id: string }>;
     expect(tracks.length).toBe(2);
-    await lv.vm.$emit("toggle-like", tracks[0]!);
+    await lv.vm.$emit("toggle-like-track", tracks[0]!);
     await flushPromises();
     tracks = lv.props("tracks") as Array<{ id: string }>;
     expect(tracks.length).toBe(1);

@@ -25,10 +25,10 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  "toggle-like": [track: Track];
-  "play": [track: Track];
+  "toggle-like-track": [track: Track];
+  "play-track": [track: Track];
   "open-track-source": [track: Track];
-  "download": [track: Track];
+  "download-track": [track: Track];
   "add-to-queue": [track: Track];
   "add-to-playlist": [track: Track];
 }>();
@@ -45,7 +45,7 @@ const {
   onAction: (id, t) => {
     if (id === "queue") emit("add-to-queue", t);
     if (id === "playlist") emit("add-to-playlist", t);
-    if (id === "download") emit("download", t);
+    if (id === "download") emit("download-track", t);
     if (id === "source") emit("open-track-source", t);
   },
 });

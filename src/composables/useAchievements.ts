@@ -1,18 +1,13 @@
 /**
  * Achievements composable — opt-in progress tracking persisted in localStorage.
+ *
+ * Thin Vue-reactive wrapper around {@link AchievementsTracker}: adds a toast
+ * UI (title + description refs + open flag) and a watcher that calls
+ * `recordPlaybackStarted()` the first time the user starts a track.
  */
 
 import { ref, watch, type Ref, type ComputedRef } from "vue";
-import {
-  loadAchievementsOptIn, saveAchievementsOptIn,
-  loadAchievementsState, saveAchievementsState,
-  emptyAchievementsProgress,
-  type AchievementsProgress,
-} from "../achievements/achievementsStorage.js";
-import {
-  applyPlaybackStarted, applyRetroactiveOptIn, applyLikeChange,
-  achievementMeta,
-} from "../achievements/achievementsCore.js";
+import { AchievementsTracker } from "../achievements/AchievementsTracker.js";
 
 export interface UseAchievementsOptions {
   playerPlaying: Ref<boolean>;
@@ -20,70 +15,44 @@ export interface UseAchievementsOptions {
 }
 
 export function useAchievements(refs: UseAchievementsOptions) {
-  const achievementsOptIn = ref<boolean>(loadAchievementsOptIn());
-  const achievementsState = ref<AchievementsProgress>(loadAchievementsState());
+  const tracker = new AchievementsTracker();
 
   const achievementToastOpen = ref<boolean>(false);
   const achievementToastTitle = ref<string>("");
   const achievementToastDesc = ref<string>("");
 
-  function showAchievementToastForIds(ids: string[]): void {
+  function showToastForIds(ids: string[]): void {
     if (!ids.length) return;
-    const m = achievementMeta(ids[0]!);
+    const m = tracker.meta(ids[0]!);
     if (!m) return;
     achievementToastTitle.value = m.title;
     achievementToastDesc.value = m.description;
     achievementToastOpen.value = true;
   }
 
-  function commitState(nextState: AchievementsProgress, newUnlocked: string[]): void {
-    achievementsState.value = nextState;
-    saveAchievementsState(nextState);
-    if (achievementsOptIn.value && newUnlocked.length) {
-      showAchievementToastForIds(newUnlocked);
-    }
-  }
-
   watch(refs.playerPlaying, (playing, wasPlaying) => {
     if (!playing || !refs.nowPlaying.value) return;
     if (wasPlaying) return;
-    const r = applyPlaybackStarted(achievementsState.value, achievementsOptIn.value);
-    if (r.state === achievementsState.value) return;
-    commitState(r.state, r.newUnlocked);
+    showToastForIds(tracker.recordPlaybackStarted());
   });
 
   function recordLikeChange(likesAfter: number, likesBefore: number): void {
-    if (!achievementsOptIn.value) return;
-    const lr = applyLikeChange(achievementsState.value, true, likesAfter, likesBefore);
-    if (lr.state !== achievementsState.value) {
-      commitState(lr.state, lr.newUnlocked);
-    }
+    showToastForIds(tracker.recordLikeChange(likesAfter, likesBefore));
   }
 
   function handleAchievementsOptInChange(enabled: boolean, likesCount: number): void {
-    achievementsOptIn.value = enabled;
-    saveAchievementsOptIn(enabled);
-    if (!enabled) {
-      achievementToastOpen.value = false;
-      return;
-    }
-    const retro = applyRetroactiveOptIn(achievementsState.value, likesCount);
-    if (retro.state !== achievementsState.value) {
-      achievementsState.value = retro.state;
-      saveAchievementsState(retro.state);
-    }
+    tracker.setOptIn(enabled, likesCount);
+    if (!enabled) achievementToastOpen.value = false;
   }
 
   function handleAchievementsReset(): void {
     achievementToastOpen.value = false;
-    const next = emptyAchievementsProgress();
-    achievementsState.value = next;
-    saveAchievementsState(next);
+    tracker.reset();
   }
 
   return {
-    achievementsOptIn,
-    achievementsState,
+    achievementsOptIn: tracker.optIn,
+    achievementsState: tracker.state,
     achievementToastOpen,
     achievementToastTitle,
     achievementToastDesc,

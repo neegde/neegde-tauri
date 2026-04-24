@@ -106,7 +106,7 @@ describe("TorrentView — smoke", () => {
     w.unmount();
   });
 
-  it("per-track like click emits toggle-like with row payload", async () => {
+  it("per-track like click emits toggle-like-track with row payload", async () => {
     const w = mount(TorrentView, {
       props: {
         torrent: rtTorrent, files, loading: false, magnet: "m", cover: null,
@@ -115,7 +115,7 @@ describe("TorrentView — smoke", () => {
       attachTo: document.body,
     });
     await w.find(".like-btn").trigger("click");
-    expect(w.emitted("toggle-like")).toBeTruthy();
+    expect(w.emitted("toggle-like-track")).toBeTruthy();
     w.unmount();
   });
 
@@ -170,7 +170,7 @@ describe("TorrentView — smoke", () => {
     document.body.innerHTML = "";
   });
 
-  it("ctx menu 'В избранное' emits toggle-like", async () => {
+  it("ctx menu 'В избранное' emits toggle-like-track", async () => {
     const w = mount(TorrentView, {
       props: {
         torrent: rtTorrent, files, loading: false, magnet: "m", cover: null,
@@ -183,7 +183,7 @@ describe("TorrentView — smoke", () => {
       .find((el) => el.textContent?.includes("В избранное")) as HTMLElement | undefined;
     likeItem?.click();
     await w.vm.$nextTick();
-    expect(w.emitted("toggle-like")).toBeTruthy();
+    expect(w.emitted("toggle-like-track")).toBeTruthy();
     w.unmount();
     document.body.innerHTML = "";
   });

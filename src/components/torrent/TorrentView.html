@@ -142,7 +142,7 @@
             <div class="album-track-actions">
               <button
                 :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
-                @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
+                @click.stop="emit('toggle-like-track', makeTrackLike(torrent, magnet, f))"
               >
                 <svg v-if="likes?.[trackLikeId(torrent, f)]" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -215,7 +215,7 @@
       <button
         :class="['track-btn', 'like-btn', likes?.[torrentLikeId(torrent)] ? 'liked' : '']"
         :title="likes?.[torrentLikeId(torrent)] ? 'Убрать раздачу из любимых' : 'Раздача в любимые'"
-        @click="emit('toggle-like', makeTorrentLike(torrent, magnet))"
+        @click="emit('toggle-like-track', makeTorrentLike(torrent, magnet))"
       >
         <svg v-if="likes?.[torrentLikeId(torrent)]" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -294,7 +294,7 @@
           <button
             :class="['track-btn', 'like-btn', 'album-like-btn', likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? 'liked' : '']"
             :title="likes?.[albumLikeId(torrent, wrap.raw.dirPath)] ? 'Убрать лайк' : 'Нравится'"
-            @click="emit('toggle-like', makeAlbumLike(torrent, magnet, wrap.raw, wrap.displayName))"
+            @click="emit('toggle-like-track', makeAlbumLike(torrent, magnet, wrap.raw, wrap.displayName))"
           >
             <svg v-if="likes?.[albumLikeId(torrent, wrap.raw.dirPath)]" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -359,7 +359,7 @@
             <button
               :class="['track-btn', 'like-btn', likes?.[trackLikeId(torrent, f)] ? 'liked' : '']"
               :title="likes?.[trackLikeId(torrent, f)] ? 'Убрать лайк' : 'Нравится'"
-              @click.stop="emit('toggle-like', makeTrackLike(torrent, magnet, f))"
+              @click.stop="emit('toggle-like-track', makeTrackLike(torrent, magnet, f))"
             >
               <svg v-if="likes?.[trackLikeId(torrent, f)]" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
