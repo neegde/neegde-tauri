@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import "../_setup.js";
 
-import { SearchSession } from "../../src/search/session.js";
+import { SearchSession, SearchProvider, type SearchProviderCtx } from "../../src/search/session.js";
+import type { PipelineEntity } from "../../src/search/pipeline/index.js";
 
 // rAF shim that runs on the next microtask so tests can await a flush deterministically.
 beforeEach(() => {
@@ -12,23 +13,34 @@ beforeEach(() => {
 });
 
 interface FakeEntity { id: string; mergedFrom?: number; score?: number }
-interface FakeProvider {
-  kind: string;
-  search: (q: string, ctx: { signal: AbortSignal; log: (a: string, b: string) => void }) => AsyncGenerator<FakeEntity[]>;
+
+class FakeProvider extends SearchProvider {
+  readonly kind: string;
+  constructor(
+    kind: string,
+    private readonly snapshots: FakeEntity[][],
+    private readonly opts: { throwAt?: number; sleepMs?: number } = {},
+  ) {
+    super();
+    this.kind = kind;
+  }
+
+  async *search(_q: string, ctx: SearchProviderCtx): AsyncGenerator<PipelineEntity[]> {
+    for (let i = 0; i < this.snapshots.length; i++) {
+      if (ctx.signal.aborted) return;
+      if (this.opts.throwAt === i) throw new Error("provider boom");
+      if (this.opts.sleepMs) await new Promise((r) => setTimeout(r, this.opts.sleepMs));
+      yield this.snapshots[i]! as unknown as PipelineEntity[];
+    }
+  }
 }
 
-function makeProvider(kind: string, snapshots: FakeEntity[][], opts: { throwAt?: number; sleepMs?: number } = {}): FakeProvider {
-  return {
-    kind,
-    async *search(_q, ctx) {
-      for (let i = 0; i < snapshots.length; i++) {
-        if (ctx.signal.aborted) return;
-        if (opts.throwAt === i) throw new Error("provider boom");
-        if (opts.sleepMs) await new Promise((r) => setTimeout(r, opts.sleepMs));
-        yield snapshots[i]!;
-      }
-    },
-  };
+function makeProvider(
+  kind: string,
+  snapshots: FakeEntity[][],
+  opts: { throwAt?: number; sleepMs?: number } = {},
+): FakeProvider {
+  return new FakeProvider(kind, snapshots, opts);
 }
 
 describe("SearchSession — zero providers", () => {

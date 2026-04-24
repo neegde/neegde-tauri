@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">95.19% </span>
+                <span class="strong">95.21% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>198/208</span>
+                <span class='fraction'>199/209</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">97.43% </span>
+                <span class="strong">97.45% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>152/156</span>
+                <span class='fraction'>153/157</span>
             </div>
         
             
@@ -406,8 +406,7 @@
 <a name='L341'></a><a href='#L341'>341</a>
 <a name='L342'></a><a href='#L342'>342</a>
 <a name='L343'></a><a href='#L343'>343</a>
-<a name='L344'></a><a href='#L344'>344</a>
-<a name='L345'></a><a href='#L345'>345</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L344'></a><a href='#L344'>344</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -664,8 +663,8 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">32x</span>
@@ -727,9 +726,6 @@
 <span class="cline-any cline-yes">28x</span>
 <span class="cline-any cline-yes">28x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">30x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -751,9 +747,11 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { listen } from "@tauri-apps/api/event";
 import { soulseekSearch } from "../../soulseek/api.js";
-import type { SearchProvider, SearchProviderCtx } from "../session.js";
+import { SearchProvider, type SearchProviderCtx } from "../provider.js";
 import type { PipelineEntity } from "../pipeline/index.js";
 &nbsp;
 // ── Path helpers ────────────────────────────────────────────────────────────
@@ -1008,13 +1006,13 @@ interface SlskBatchEvent { payload: { requestId: number; rows: SlskAudioRow[] } 
  * SoulSeek search provider. Wraps `soulseek_search` + `soulseek-search-batch`
  * event stream. Incremental: yields a full Entity snapshot on each new batch.
  */
-export const soulseekProvider: SearchProvider = {
-  kind: "soulseek",
+class SoulseekProvider extends SearchProvider {
+  readonly kind = "soulseek" as const;
 &nbsp;
-  async *search(query: string, ctx: SearchProviderCtx) {
+  async *search(query: string, ctx: SearchProviderCtx): AsyncGenerator&lt;PipelineEntity[]&gt; {
     if (ctx.signal.aborted) return;
     const t0 = performance.now();
-    ctx.log("soulseek", `search start: "${query}" (req=${ctx.requestId})`);
+    this.log(ctx, `search start: "${query}" (req=${ctx.requestId})`);
 &nbsp;
     const raw: SlskAudioRow[] = [];
     const queue: PipelineEntity[][] = [];
@@ -1039,13 +1037,13 @@ export const soulseekProvider: SearchProvider = {
     const BASELINE_MS = 5000;
     const IDLE_MS = 1000;
     let idleTimer: ReturnType&lt;typeof setTimeout&gt; | null = setTimeout(<span class="fstat-no" title="function not covered" >() =&gt; {</span>
-<span class="cstat-no" title="statement not covered" >      ctx.log("soulseek", `baseline finish: no batches in ${BASELINE_MS}ms`);</span>
+<span class="cstat-no" title="statement not covered" >      this.log(ctx, `baseline finish: no batches in ${BASELINE_MS}ms`);</span>
 <span class="cstat-no" title="statement not covered" >      finish(null);</span>
     }, BASELINE_MS);
     const armIdleTimer = (): void =&gt; {
       <span class="missing-if-branch" title="else path not taken" >E</span>if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(<span class="fstat-no" title="function not covered" >() =&gt; {</span>
-<span class="cstat-no" title="statement not covered" >        ctx.log("soulseek", `idle finish: no new rows for ${IDLE_MS}ms (have ${raw.length})`);</span>
+<span class="cstat-no" title="statement not covered" >        this.log(ctx, `idle finish: no new rows for ${IDLE_MS}ms (have ${raw.length})`);</span>
 <span class="cstat-no" title="statement not covered" >        finish(null);</span>
       }, IDLE_MS);
     };
@@ -1069,10 +1067,7 @@ export const soulseekProvider: SearchProvider = {
         raw.length = 0;
         raw.push(...finalRows);
         emitSnapshot();
-        ctx.log(
-          "soulseek",
-          `final rows: ${finalRows.length} (${Math.round(performance.now() - t0)}ms)`,
-        );
+        this.log(ctx, `final rows: ${finalRows.length} (${Math.round(performance.now() - t0)}ms)`);
       })
       .catch((err: unknown) =&gt; { finalError = err; })
       .finally(() =&gt; finish(finalError));
@@ -1093,8 +1088,10 @@ export const soulseekProvider: SearchProvider = {
       try { (unlisten as () =&gt; void)(); } catch { /* already unlistened */ }
       ctx.signal.removeEventListener("abort", onAbort);
     }
-  },
-};
+  }
+}
+&nbsp;
+export const soulseekProvider: SearchProvider = new SoulseekProvider();
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -1102,7 +1099,7 @@ export const soulseekProvider: SearchProvider = {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-24T00:33:21.913Z
+                at 2026-04-24T00:45:50.188Z
             </div>
         <script src="../../../prettify.js"></script>
         <script>

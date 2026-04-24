@@ -1,6 +1,6 @@
 import { searchMusic, getTorrentDetails } from "../../rutracker/search.js";
 import { detectAlbums } from "../../lib/utils.js";
-import type { SearchProvider, SearchProviderCtx } from "../session.js";
+import { SearchProvider, type SearchProviderCtx } from "../provider.js";
 import type { PipelineEntity } from "../pipeline/index.js";
 
 function formatFromExt(filename: string): string | null {
@@ -126,18 +126,18 @@ async function enrichTopic(topicRow: TopicRow, ctx: SearchProviderCtx): Promise<
  * The provider only throws when every topic failed (meaningful signal
  * to surface as a network/auth error in the UI).
  */
-export const rutrackerProvider: SearchProvider = {
-  kind: "rutracker",
+class RutrackerProvider extends SearchProvider {
+  readonly kind = "rutracker" as const;
 
-  async *search(query: string, ctx: SearchProviderCtx) {
+  async *search(query: string, ctx: SearchProviderCtx): AsyncGenerator<PipelineEntity[]> {
     if (ctx.signal.aborted) return;
     const t0 = performance.now();
-    ctx.log("rutracker", `search start: "${query}"`);
+    this.log(ctx, `search start: "${query}"`);
 
     const rows = (await searchMusic(query)) as TopicRow[];
     const tSearch = performance.now();
     if (ctx.signal.aborted) return;
-    ctx.log("rutracker", `raw topics: ${rows.length} (search ${Math.round(tSearch - t0)}ms)`);
+    this.log(ctx, `raw topics: ${rows.length} (search ${Math.round(tSearch - t0)}ms)`);
     if (rows.length === 0) { yield []; return; }
 
     const all: PipelineEntity[] = [];
@@ -158,7 +158,7 @@ export const rutrackerProvider: SearchProvider = {
         .catch((e: unknown) => {
           errors += 1;
           const msg = (e as { message?: string })?.message ?? String(e);
-          ctx.log("rutracker", `topic ${row?.id} failed: ${msg}`);
+          this.log(ctx, `topic ${row?.id} failed: ${msg}`);
         })
         .finally(() => {
           settled += 1;
@@ -187,13 +187,15 @@ export const rutrackerProvider: SearchProvider = {
     const albums = all.filter((e) => (e as { type?: string }).type === "album").length;
     const tracks = all.filter((e) => (e as { type?: string }).type === "track").length;
     const tDone = performance.now();
-    ctx.log(
-      "rutracker",
+    this.log(
+      ctx,
       `done: ${albums} albums, ${tracks} tracks from ${total - errors}/${total} topics (enrich ${Math.round(tDone - tSearch)}ms, total ${Math.round(tDone - t0)}ms)`,
     );
 
     if (errors === total && total > 0) {
       throw new Error(`all ${total} topics failed to load`);
     }
-  },
-};
+  }
+}
+
+export const rutrackerProvider: SearchProvider = new RutrackerProvider();

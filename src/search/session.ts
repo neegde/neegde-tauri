@@ -1,21 +1,13 @@
 import { ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import { defaultPipeline, runPipeline, type PipelineStage, type PipelineEntity } from "./pipeline/index.js";
 import type { ResolveResult } from "./resolver.js";
+import { SearchProvider, type SearchProviderCtx } from "./provider.js";
+
+export { SearchProvider, type SearchProviderCtx, type ProviderKind } from "./provider.js";
 
 let _sessionCounter = 0;
 
 export type ProviderStatus = "pending" | "streaming" | "done" | "error";
-
-export interface SearchProviderCtx {
-  signal: AbortSignal;
-  log: (tag: string, msg: string) => void;
-  requestId: number;
-}
-
-export interface SearchProvider {
-  kind: string;
-  search: (query: string, ctx: SearchProviderCtx) => AsyncGenerator<PipelineEntity[]>;
-}
 
 export interface SearchSessionOptions {
   providers: SearchProvider[];

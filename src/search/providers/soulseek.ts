@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { soulseekSearch } from "../../soulseek/api.js";
-import type { SearchProvider, SearchProviderCtx } from "../session.js";
+import { SearchProvider, type SearchProviderCtx } from "../provider.js";
 import type { PipelineEntity } from "../pipeline/index.js";
 
 // ── Path helpers ────────────────────────────────────────────────────────────
@@ -255,13 +255,13 @@ interface SlskBatchEvent { payload: { requestId: number; rows: SlskAudioRow[] } 
  * SoulSeek search provider. Wraps `soulseek_search` + `soulseek-search-batch`
  * event stream. Incremental: yields a full Entity snapshot on each new batch.
  */
-export const soulseekProvider: SearchProvider = {
-  kind: "soulseek",
+class SoulseekProvider extends SearchProvider {
+  readonly kind = "soulseek" as const;
 
-  async *search(query: string, ctx: SearchProviderCtx) {
+  async *search(query: string, ctx: SearchProviderCtx): AsyncGenerator<PipelineEntity[]> {
     if (ctx.signal.aborted) return;
     const t0 = performance.now();
-    ctx.log("soulseek", `search start: "${query}" (req=${ctx.requestId})`);
+    this.log(ctx, `search start: "${query}" (req=${ctx.requestId})`);
 
     const raw: SlskAudioRow[] = [];
     const queue: PipelineEntity[][] = [];
@@ -286,13 +286,13 @@ export const soulseekProvider: SearchProvider = {
     const BASELINE_MS = 5000;
     const IDLE_MS = 1000;
     let idleTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-      ctx.log("soulseek", `baseline finish: no batches in ${BASELINE_MS}ms`);
+      this.log(ctx, `baseline finish: no batches in ${BASELINE_MS}ms`);
       finish(null);
     }, BASELINE_MS);
     const armIdleTimer = (): void => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        ctx.log("soulseek", `idle finish: no new rows for ${IDLE_MS}ms (have ${raw.length})`);
+        this.log(ctx, `idle finish: no new rows for ${IDLE_MS}ms (have ${raw.length})`);
         finish(null);
       }, IDLE_MS);
     };
@@ -316,10 +316,7 @@ export const soulseekProvider: SearchProvider = {
         raw.length = 0;
         raw.push(...finalRows);
         emitSnapshot();
-        ctx.log(
-          "soulseek",
-          `final rows: ${finalRows.length} (${Math.round(performance.now() - t0)}ms)`,
-        );
+        this.log(ctx, `final rows: ${finalRows.length} (${Math.round(performance.now() - t0)}ms)`);
       })
       .catch((err: unknown) => { finalError = err; })
       .finally(() => finish(finalError));
@@ -340,5 +337,7 @@ export const soulseekProvider: SearchProvider = {
       try { (unlisten as () => void)(); } catch { /* already unlistened */ }
       ctx.signal.removeEventListener("abort", onAbort);
     }
-  },
-};
+  }
+}
+
+export const soulseekProvider: SearchProvider = new SoulseekProvider();

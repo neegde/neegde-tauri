@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `20` "#10 polymorphic NavigationTarget"
+**Последний коммит:** `21` "#12 SearchProvider class"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -72,7 +72,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#11 Типизированные `.raw` аксессоры**~~ ✅ commit 19 — `TrackSource` теперь кэнд-generic в `raw`, `SoulseekTrack.getCoverRef()` / `getPeers()` публичны, RutrackerTrack использует `rtRaw?.details?.magnet`. Обновлены SlskTrackRow, Results.
 
-- **#12 `SearchProvider` class** (сейчас loose object с `kind: string` + `search()`) — для унификации логгинга и типобезопасности `kind`. Blast: ~5 файлов (engine, session, оба провайдера).
+- ~~**#12 `SearchProvider` class**~~ ✅ commit 21 — `SearchProvider` теперь abstract class в `src/search/provider.ts` с `protected log(ctx, msg)` helper'ом. `RutrackerProvider` / `SoulseekProvider` extends SearchProvider, используют `this.log(ctx, ...)` вместо `ctx.log("rutracker", ...)`. Session.ts ре-экспортит типы. Тест session.test.ts: FakeProvider extends SearchProvider.
 
 - **#13 `LikesCollection` class** — 3 Maps/Sets (`likedTrackIds`, `likedAlbumIds`, `likedAt`) сейчас синкаются вручную в `toggleLikeTrack`/`toggleLikeAlbum`. Объединить в один `{ entityId → { likedAt } }`. Blast: ~10 сайтов.
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **20**. Следующий должен быть **21**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **21**. Следующий должен быть **22**.
 
 HEREDOC-стиль:
 

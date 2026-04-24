@@ -3,15 +3,15 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for src/components/settings/EqualizerPanel.vue</title>
+    <title>Code coverage report for src/search/provider.ts</title>
     <meta charset="utf-8" />
-    <link rel="stylesheet" href="../../../prettify.css" />
-    <link rel="stylesheet" href="../../../base.css" />
-    <link rel="shortcut icon" type="image/x-icon" href="../../../favicon.png" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style type='text/css'>
         .coverage-summary .sorter {
-            background-image: url(../../../sort-arrow-sprite.png);
+            background-image: url(../../sort-arrow-sprite.png);
         }
     </style>
 </head>
@@ -19,34 +19,34 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../../../index.html">All files</a> / <a href="index.html">src/components/settings</a> EqualizerPanel.vue</h1>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/search</a> provider.ts</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>13/13</span>
+                <span class='fraction'>1/1</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>10/10</span>
+                <span class='fraction'>0/0</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>4/4</span>
+                <span class='fraction'>1/1</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>10/10</span>
+                <span class='fraction'>1/1</span>
             </div>
         
             
@@ -98,9 +98,7 @@
 <a name='L33'></a><a href='#L33'>33</a>
 <a name='L34'></a><a href='#L34'>34</a>
 <a name='L35'></a><a href='#L35'>35</a>
-<a name='L36'></a><a href='#L36'>36</a>
-<a name='L37'></a><a href='#L37'>37</a>
-<a name='L38'></a><a href='#L38'>38</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L36'></a><a href='#L36'>36</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -111,25 +109,6 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">94x</span>
-<span class="cline-any cline-yes">102x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1185x</span>
-<span class="cline-any cline-yes">1176x</span>
-<span class="cline-any cline-yes">1176x</span>
-<span class="cline-any cline-yes">32x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -137,43 +116,58 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">&lt;script setup&gt;
-import { computed } from "vue";
-import { EQ_BANDS, EQ_PRESETS, EQ_MIN_DB, EQ_MAX_DB } from "../../audio/equalizerConfig.js";
-import {
-  eqBandsDb,
-  eqPresetId,
-  applyEqPreset,
-  resetEqFlat,
-  setEqBand,
-} from "../../audio/equalizerState.js";
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">107x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * Abstract base class for search providers.
+ *
+ * Each provider implements `search()` as an async generator yielding
+ * progressive snapshots of `PipelineEntity[]`. The SearchSession drives the
+ * generator and merges its output into the shared results state.
+ *
+ * Subclasses set `kind` to their literal provider id. The base class exposes
+ * a `log()` helper that tag-prefixes messages with `kind`, so implementations
+ * don't have to repeat the provider name on every call.
+ */
 &nbsp;
-const presetSelectValue = computed(() =&gt;
-  eqPresetId.value === "custom" ? "__custom__" : eqPresetId.value
-);
+import type { PipelineEntity } from "./pipeline/index.js";
 &nbsp;
-function fmtDb(v) {
-  if (!Number.isFinite(v)) return "0";
-  const rounded = Math.round(v * 2) / 2;
-  if (rounded === 0) return "0";
-  return rounded &gt; 0 ? `+${rounded}` : String(rounded);
+export type ProviderKind = "rutracker" | "soulseek";
+&nbsp;
+export interface SearchProviderCtx {
+  signal: AbortSignal;
+  log: (tag: string, msg: string) =&gt; void;
+  requestId: number;
 }
 &nbsp;
-function onSliderInput(index, ev) {
-  setEqBand(index, Number(ev.target.value));
+export abstract class SearchProvider {
+  abstract readonly kind: string;
+&nbsp;
+  abstract search(
+    query: string,
+    ctx: SearchProviderCtx,
+  ): AsyncGenerator&lt;PipelineEntity[]&gt;;
+&nbsp;
+  /** Emit a log line tagged with this provider's kind. */
+  protected log(ctx: SearchProviderCtx, msg: string): void {
+    ctx.log(this.kind, msg);
+  }
 }
-&nbsp;
-function onPresetSelect(ev) {
-  const v = ev.target.value;
-  if (v === "__custom__") return;
-  applyEqPreset(v);
-}
-&lt;/script&gt;
-&nbsp;
-&lt;template src="./EqualizerPanel.html"&gt;&lt;/template&gt;
-&nbsp;
-&lt;style scoped src="./EqualizerPanel.scoped.css"&gt;&lt;/style&gt;
-&nbsp;
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -183,14 +177,14 @@ function onPresetSelect(ev) {
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
                 at 2026-04-24T00:45:50.188Z
             </div>
-        <script src="../../../prettify.js"></script>
+        <script src="../../prettify.js"></script>
         <script>
             window.onload = function () {
                 prettyPrint();
             };
         </script>
-        <script src="../../../sorter.js"></script>
-        <script src="../../../block-navigation.js"></script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
     </body>
 </html>
     
