@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `25` "#16 RateLimitedFetchQueue"
+**Последний коммит:** `26` "#17 StreamingExporter"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -82,7 +82,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#16 `RateLimitedFetchQueue<T>`**~~ ✅ commit 25 — `src/lib/RateLimitedFetchQueue.ts`: generic класс с `intervalMs` + `executor`, последовательный drain с минимальным gap между задачами. Errors rejects-ят отдельные задачи, queue продолжает. `metadataEnrich.ts` (MB 1050ms) и `coverFetch.ts` (iTunes 1100ms) больше не держат свой `lastSent` / `pending` / `draining`. Дубликат ~50 строк удалён.
 
-- **#17 `StreamingExporter` class** — `torrent/torrentExport.ts` имеет 3 функции с ~70% одинаковой логики (dialog → listen → invoke → finally). Blast: 6 сайтов.
+- ~~**#17 `StreamingExporter` class**~~ ✅ commit 26 — класс в том же файле `torrent/torrentExport.ts`. `static pickDestDir()` + `run({eventName, task, onProgress, mapPayload?, successMessage})` инкапсулируют listen/error-dialog/finally skeleton. Все три `exportPlaylistTracks` / `exportSlskTrack` / `exportTorrentFiles` теперь только валидируют вход и дают task-замыкание с invoke'ами; "остановлено"-special-case, success dialog и unlisten-cleanup централизованы.
 
 - **#18 `Equalizer` class (объединить config + state + graph)** — сейчас 3 связанных модуля: `audio/equalizerConfig.ts`, `audio/equalizerState.ts`, `audio/equalizerGraph.ts`. Blast: 3 сайта. Осторожно с Vue-idiomatic refs.
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **25**. Следующий должен быть **26**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **26**. Следующий должен быть **27**.
 
 HEREDOC-стиль:
 

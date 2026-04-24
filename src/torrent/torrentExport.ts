@@ -48,6 +48,72 @@ interface ExportTorrentOpts {
   torrentFileB64?: string | null;
 }
 
+// ── StreamingExporter ───────────────────────────────────────────────────────
+
+/**
+ * Wrapper for the listen → invoke → finally → message pattern shared by
+ * every "save something from a backend stream" flow. Each caller supplies
+ * its own pre-validation, destination picker, preparing-state setup, and
+ * the `task()` closure that issues the actual invoke(s). The class owns
+ * the progress-listener lifecycle, the error-dialog mapping (with a
+ * "остановлено" special case), the success dialog, and the onProgress
+ * null-cleanup.
+ */
+class StreamingExporter {
+  /** Opens the shared "Select destination" dir picker. Returns null on cancel. */
+  static async pickDestDir(): Promise<string | null> {
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      title: "Выберите папку для сохранения",
+    });
+    if (picked === null) return null;
+    return Array.isArray(picked) ? picked[0]! : picked;
+  }
+
+  /**
+   * Run a streaming export. Attaches the progress listener, executes
+   * `task()`, and cleans up in `finally`. Errors are shown as dialogs —
+   * "остановлено" shows an info dialog, anything else shows as error.
+   * On success, displays `successMessage(result)`. Returns the task
+   * result on success, `undefined` on error.
+   */
+  async run<T>(opts: {
+    eventName: string;
+    task: () => Promise<T>;
+    onProgress?: OnProgress;
+    /** Optional transformer applied to each event payload before `onProgress`. */
+    mapPayload?: (p: ExportProgress) => ExportProgress;
+    successMessage: (result: T) => string;
+  }): Promise<T | undefined> {
+    let unlisten: () => void = () => {};
+    try {
+      unlisten = await listen<ExportProgress>(opts.eventName, (ev) => {
+        const payload = opts.mapPayload ? opts.mapPayload(ev.payload) : ev.payload;
+        opts.onProgress?.(payload);
+      });
+      const result = await opts.task();
+      await message(opts.successMessage(result), { title: "Скачивание" });
+      return result;
+    } catch (e) {
+      const s = String(e);
+      if (/остановлен/i.test(s)) {
+        await message("Скачивание остановлено.", { title: "Скачивание", kind: "info" });
+      } else {
+        await message(s, { title: "Ошибка скачивания", kind: "error" });
+      }
+      return undefined;
+    } finally {
+      unlisten();
+      opts.onProgress?.(null);
+    }
+  }
+}
+
+const exporter = new StreamingExporter();
+
+// ── Public export functions ─────────────────────────────────────────────────
+
 export async function exportPlaylistTracks(
   tracks: PlaylistTrack[] | null | undefined,
   onProgress?: OnProgress,
@@ -64,13 +130,8 @@ export async function exportPlaylistTracks(
     return;
   }
 
-  const picked = await open({
-    directory: true,
-    multiple: false,
-    title: "Выберите папку для сохранения",
-  });
-  if (picked === null) return;
-  const destDir = Array.isArray(picked) ? picked[0] : picked;
+  const destDir = await StreamingExporter.pickDestDir();
+  if (destDir === null) return;
 
   const groupOrder: string[] = [];
   const groupMap = new Map<string, PlaylistTrack[]>();
@@ -85,7 +146,6 @@ export async function exportPlaylistTracks(
     bucket.push(t);
   }
   const groupTotal = groupOrder.length;
-
   const allLabels = downloadable.map((t) => trackDisplayBasename(t.fileName ?? ""));
 
   onProgress?.({
@@ -100,50 +160,40 @@ export async function exportPlaylistTracks(
     batchTotal: groupTotal,
   });
 
-  let unlisten: () => void = () => {};
-  let totalCopied = 0;
-  try {
-    let groupIdx = 0;
-    unlisten = await listen<ExportProgress>("torrent-export-progress", (ev) => {
-      onProgress?.({ ...ev.payload, batchIndex: groupIdx + 1, batchTotal: groupTotal });
-    });
+  let groupIdx = 0;
+  await exporter.run({
+    eventName: "torrent-export-progress",
+    onProgress,
+    mapPayload: (p) => ({ ...p, batchIndex: groupIdx + 1, batchTotal: groupTotal }),
+    task: async () => {
+      let totalCopied = 0;
+      for (const magnet of groupOrder) {
+        const groupTracks = groupMap.get(magnet)!;
+        let torrentFileB64: string | null = null;
+        try {
+          torrentFileB64 = await torrentFileB64ForTrack(groupTracks[0] as unknown as TrackForB64);
+        } catch {
+          /* ignore */
+        }
 
-    for (const magnet of groupOrder) {
-      const groupTracks = groupMap.get(magnet)!;
-      let torrentFileB64: string | null = null;
-      try {
-        torrentFileB64 = await torrentFileB64ForTrack(groupTracks[0] as unknown as TrackForB64);
-      } catch {
-        /* ignore */
+        const fileIndices = groupTracks.map((t) => Number(t.fileIdx));
+        const fileNames = groupTracks.map((t) => trackDisplayBasename(t.fileName ?? ""));
+
+        const result = await invoke<ExportResult>("torrent_export_files", {
+          magnet: enrichMagnetWithOpenTrackers(magnet),
+          fileIndices,
+          destDir,
+          fileNames,
+          albumDirName: null,
+          torrentFileB64,
+        });
+        totalCopied += result?.copied?.length ?? 0;
+        groupIdx++;
       }
-
-      const fileIndices = groupTracks.map((t) => Number(t.fileIdx));
-      const fileNames = groupTracks.map((t) => trackDisplayBasename(t.fileName ?? ""));
-
-      const result = await invoke<ExportResult>("torrent_export_files", {
-        magnet: enrichMagnetWithOpenTrackers(magnet),
-        fileIndices,
-        destDir,
-        fileNames,
-        albumDirName: null,
-        torrentFileB64,
-      });
-      totalCopied += result?.copied?.length ?? 0;
-      groupIdx++;
-    }
-
-    await message(`Сохранено файлов: ${totalCopied}.`, { title: "Скачивание" });
-  } catch (e) {
-    const s = String(e);
-    if (/остановлен/i.test(s)) {
-      await message("Скачивание остановлено.", { title: "Скачивание", kind: "info" });
-    } else {
-      await message(s, { title: "Ошибка скачивания", kind: "error" });
-    }
-  } finally {
-    unlisten();
-    onProgress?.(null);
-  }
+      return totalCopied;
+    },
+    successMessage: (totalCopied) => `Сохранено файлов: ${totalCopied}.`,
+  });
 }
 
 export async function exportSlskTrack(
@@ -161,13 +211,8 @@ export async function exportSlskTrack(
 
   const rawName = filepath.split(/[\\/]/).pop() || track.name || "track";
 
-  const picked = await open({
-    directory: true,
-    multiple: false,
-    title: "Выберите папку для сохранения",
-  });
-  if (picked === null) return;
-  const destDir = Array.isArray(picked) ? picked[0] : picked;
+  const destDir = await StreamingExporter.pickDestDir();
+  if (destDir === null) return;
 
   onProgress?.({
     phase: "preparing",
@@ -179,33 +224,21 @@ export async function exportSlskTrack(
     message: "Подключение к пиру…",
   });
 
-  let unlisten: () => void = () => {};
-  try {
-    unlisten = await listen<ExportProgress>("slsk-export-progress", (ev) => {
-      onProgress?.(ev.payload);
-    });
-
-    const savedPath = await invoke<string>("soulseek_export_file", {
+  await exporter.run({
+    eventName: "slsk-export-progress",
+    onProgress,
+    task: () => invoke<string>("soulseek_export_file", {
       username,
       filepath,
       filesize,
       destDir,
       fileName: rawName,
-    });
-
-    const saved = String(savedPath).split(/[\\/]/).pop() ?? savedPath;
-    await message(`Сохранено: ${saved}`, { title: "Скачивание" });
-  } catch (e) {
-    const s = String(e);
-    if (/остановлено/i.test(s)) {
-      await message("Скачивание остановлено.", { title: "Скачивание", kind: "info" });
-    } else {
-      await message(s, { title: "Ошибка скачивания", kind: "error" });
-    }
-  } finally {
-    unlisten();
-    onProgress?.(null);
-  }
+    }),
+    successMessage: (savedPath) => {
+      const saved = String(savedPath).split(/[\\/]/).pop() ?? savedPath;
+      return `Сохранено: ${saved}`;
+    },
+  });
 }
 
 export async function exportTorrentFiles(
@@ -234,13 +267,8 @@ export async function exportTorrentFiles(
       ? albumDirNameRaw.trim()
       : null;
 
-  const picked = await open({
-    directory: true,
-    multiple: false,
-    title: "Выберите папку для сохранения",
-  });
-  if (picked === null) return;
-  const destDir = Array.isArray(picked) ? picked[0] : picked;
+  const destDir = await StreamingExporter.pickDestDir();
+  if (destDir === null) return;
 
   onProgress?.({
     phase: "preparing",
@@ -259,31 +287,17 @@ export async function exportTorrentFiles(
     torrentFileB64 = await torrentFileB64ForTrack(opts.track);
   }
 
-  let unlisten: () => void = () => {};
-  try {
-    unlisten = await listen<ExportProgress>("torrent-export-progress", (ev) => {
-      onProgress?.(ev.payload);
-    });
-
-    const result = await invoke<ExportResult>("torrent_export_files", {
+  await exporter.run({
+    eventName: "torrent-export-progress",
+    onProgress,
+    task: () => invoke<ExportResult>("torrent_export_files", {
       magnet: enrichMagnetWithOpenTrackers(magnet),
       fileIndices: indices,
       destDir,
       fileNames: names,
       albumDirName,
       torrentFileB64,
-    });
-    const n = result?.copied?.length ?? 0;
-    await message(`Сохранено файлов: ${n}.`, { title: "Скачивание" });
-  } catch (e) {
-    const s = String(e);
-    if (/остановлен/i.test(s)) {
-      await message("Скачивание остановлено.", { title: "Скачивание", kind: "info" });
-    } else {
-      await message(s, { title: "Ошибка скачивания", kind: "error" });
-    }
-  } finally {
-    unlisten();
-    onProgress?.(null);
-  }
+    }),
+    successMessage: (result) => `Сохранено файлов: ${result?.copied?.length ?? 0}.`,
+  });
 }
