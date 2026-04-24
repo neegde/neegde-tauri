@@ -32,7 +32,7 @@ beforeEach(() => {
   fakeLocalStorage.clear();
   clearTrackCache();
   clearEntities();
-  likedTrackIds.value = new Set();
+  seedLikesFromSnapshot({ trackIds: [], albumIds: [], likedAt: {} });
   playlists.value = [];
 });
 

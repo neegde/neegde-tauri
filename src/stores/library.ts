@@ -7,7 +7,7 @@
  * snapshot to localStorage.
  */
 
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import type { Track } from "../track/Track.js";
 import type { Album } from "../album/Album.js";
 import type { AlbumData } from "../album/types.js";
@@ -26,19 +26,27 @@ import {
   savePlaylistsSnapshot,
   type PlaylistSnapshot,
 } from "../persistence/playlists.js";
+import { LikesCollection } from "../likes/LikesCollection.js";
 import { Library } from "../playlist/Library.js";
 import type { Playlist } from "../playlist/Playlist.js";
 
 // ── Likes ───────────────────────────────────────────────────────────────────
 
-export const likedTrackIds = ref<Set<string>>(new Set());
-export const likedAlbumIds = ref<Set<string>>(new Set());
-export const likedAt = ref<Map<string, number>>(new Map());
+/**
+ * Likes singleton. Owns the reactive liked-track / liked-album state.
+ * Named exports below are thin delegates so call sites keep working.
+ */
+export const likes = new LikesCollection(saveLikesSnapshot);
+
+export const likedTrackIds = likes.trackIds;
+export const likedAlbumIds = likes.albumIds;
+export const likedAt = likes.likedAt;
 
 export const likedTracks = computed<Track[]>(() => {
   entitiesVersion.value;
-  const ids = Array.from(likedTrackIds.value);
-  ids.sort((a, b) => (likedAt.value.get(b) ?? 0) - (likedAt.value.get(a) ?? 0));
+  const at = likes.likedAt.value;
+  const ids = Array.from(likes.trackIds.value);
+  ids.sort((a, b) => (at.get(b) ?? 0) - (at.get(a) ?? 0));
   const out: Track[] = [];
   for (const id of ids) {
     const t = getTrack(id);
@@ -49,8 +57,9 @@ export const likedTracks = computed<Track[]>(() => {
 
 export const likedAlbums = computed<Album[]>(() => {
   entitiesVersion.value;
-  const ids = Array.from(likedAlbumIds.value);
-  ids.sort((a, b) => (likedAt.value.get(b) ?? 0) - (likedAt.value.get(a) ?? 0));
+  const at = likes.likedAt.value;
+  const ids = Array.from(likes.albumIds.value);
+  ids.sort((a, b) => (at.get(b) ?? 0) - (at.get(a) ?? 0));
   const out: Album[] = [];
   for (const id of ids) {
     const a = getAlbum(id);
@@ -60,11 +69,11 @@ export const likedAlbums = computed<Album[]>(() => {
 });
 
 export function isTrackLiked(trackId: string): boolean {
-  return likedTrackIds.value.has(trackId);
+  return likes.isTrackLiked(trackId);
 }
 
 export function isAlbumLiked(albumId: string): boolean {
-  return likedAlbumIds.value.has(albumId);
+  return likes.isAlbumLiked(albumId);
 }
 
 /**
@@ -76,52 +85,18 @@ export function toggleLikeTrack(track: Track): boolean {
   if (!track?.id) return false;
   registerEntity(track);
   putTrack(track);
-  const set = new Set(likedTrackIds.value);
-  const at = new Map(likedAt.value);
-  let liked: boolean;
-  if (set.has(track.id)) {
-    set.delete(track.id); at.delete(track.id); liked = false;
-  } else {
-    set.add(track.id); at.set(track.id, Date.now()); liked = true;
-  }
-  likedTrackIds.value = set;
-  likedAt.value = at;
-  persistLikes();
-  return liked;
+  return likes.toggleTrack(track.id);
 }
 
 export function toggleLikeAlbum(album: Album | AlbumData): boolean {
   if (!album?.id) return false;
   registerEntity(album);
-  const set = new Set(likedAlbumIds.value);
-  const at = new Map(likedAt.value);
-  let liked: boolean;
-  if (set.has(album.id)) {
-    set.delete(album.id); at.delete(album.id); liked = false;
-  } else {
-    set.add(album.id); at.set(album.id, Date.now()); liked = true;
-  }
-  likedAlbumIds.value = set;
-  likedAt.value = at;
-  persistLikes();
-  return liked;
-}
-
-function persistLikes(): void {
-  const at: Record<string, number> = {};
-  for (const [id, ts] of likedAt.value) at[id] = ts;
-  saveLikesSnapshot({
-    trackIds: Array.from(likedTrackIds.value),
-    albumIds: Array.from(likedAlbumIds.value),
-    likedAt: at,
-  });
+  return likes.toggleAlbum(album.id);
 }
 
 /** Populate from persistence snapshot (call once at boot). */
 export function seedLikesFromSnapshot(s: LikesSnapshot): void {
-  likedTrackIds.value = new Set(s.trackIds);
-  likedAlbumIds.value = new Set(s.albumIds);
-  likedAt.value = new Map(Object.entries(s.likedAt));
+  likes.seedFromSnapshot(s);
 }
 
 // ── Playlists ───────────────────────────────────────────────────────────────

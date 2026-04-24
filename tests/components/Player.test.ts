@@ -92,7 +92,7 @@ import {
   shuffleOn,
 } from "../../src/stores/queue.js";
 import { clearEntities } from "../../src/stores/entities.js";
-import { likedTrackIds } from "../../src/stores/library.js";
+import { seedLikesFromSnapshot } from "../../src/stores/library.js";
 
 const track = buildTrack({
   type: "track", id: "t1", title: "Song", artist: "Artist",
@@ -108,7 +108,7 @@ beforeEach(() => {
   queuePos.value = 0;
   setRepeat("off");
   shuffleOn.value = false;
-  likedTrackIds.value = new Set<string>();
+  seedLikesFromSnapshot({ trackIds: [], albumIds: [], likedAt: {} });
 });
 
 describe("Player — smoke", () => {
@@ -127,7 +127,7 @@ describe("Player — smoke", () => {
 
   it("shows liked state when id is in likedIds", () => {
     replaceQueue([track], 0);
-    likedTrackIds.value = new Set(["t1"]);
+    seedLikesFromSnapshot({ trackIds: ["t1"], albumIds: [], likedAt: { t1: Date.now() } });
     const w = mount(Player, { attachTo: document.body });
     expect(w.html()).toContain("liked");
     w.unmount();

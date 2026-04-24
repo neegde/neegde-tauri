@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `21` "#12 SearchProvider class"
+**Последний коммит:** `22` "#13 LikesCollection class"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -74,7 +74,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#12 `SearchProvider` class**~~ ✅ commit 21 — `SearchProvider` теперь abstract class в `src/search/provider.ts` с `protected log(ctx, msg)` helper'ом. `RutrackerProvider` / `SoulseekProvider` extends SearchProvider, используют `this.log(ctx, ...)` вместо `ctx.log("rutracker", ...)`. Session.ts ре-экспортит типы. Тест session.test.ts: FakeProvider extends SearchProvider.
 
-- **#13 `LikesCollection` class** — 3 Maps/Sets (`likedTrackIds`, `likedAlbumIds`, `likedAt`) сейчас синкаются вручную в `toggleLikeTrack`/`toggleLikeAlbum`. Объединить в один `{ entityId → { likedAt } }`. Blast: ~10 сайтов.
+- ~~**#13 `LikesCollection` class**~~ ✅ commit 22 — `src/likes/LikesCollection.ts` с одним `Map<id, {kind, likedAt}>` внутри. Membership/timestamp не могут разойтись. `src/stores/library.ts` делегирует через `likes` singleton; per-kind Refs — ComputedRef'ы (`trackIds`, `albumIds`, `likedAt`). Тесты переехали на `seedLikesFromSnapshot({trackIds,albumIds,likedAt})` вместо прямого присваивания в `.value`.
 
 - **#14 `TrackCache` class** — `persistence/trackCache.ts` сейчас модуль с singleton-style functions. Сделать class с eviction policy + типизированным API. Blast: ~28 сайтов.
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **21**. Следующий должен быть **22**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **22**. Следующий должен быть **23**.
 
 HEREDOC-стиль:
 
