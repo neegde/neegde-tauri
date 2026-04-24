@@ -69,6 +69,7 @@ import { useAlbumPreview } from "./composables/useAlbumPreview.js";
 import { useTorrentDetail } from "./composables/useTorrentDetail.js";
 import { usePlaylistCrud } from "./composables/usePlaylistCrud.js";
 import { useSearchUI } from "./composables/useSearchUI.js";
+import { useDownloadProgress } from "./composables/useDownloadProgress.js";
 import { loadPersistedState } from "./persistence/bootstrap.js";
 import {
   likedTracks as libraryLikedTracks,
@@ -506,51 +507,7 @@ const {
 torrentDetailOpts.downloadOverlayExpanded = downloadOverlayExpanded;
 torrentDetailOpts.downloadProgress = downloadProgress;
 
-let exportDbgLastAt = 0;
-let exportDbgLastPhase = "";
-let exportDbgLastBatch = null;
-
-watch(downloadProgress, (v) => {
-  if (v == null) {
-    downloadOverlayExpanded.value = true;
-    exportDbgLastPhase = "";
-    exportDbgLastBatch = null;
-    return;
-  }
-  {
-    const phase = v.phase ?? "";
-    const now = Date.now();
-    const batch = v.batchIndex ?? null;
-    let skip = false;
-    if (phase === "downloading") {
-      const sameSlice =
-        phase === exportDbgLastPhase &&
-        batch === exportDbgLastBatch &&
-        now - exportDbgLastAt < 2000;
-      skip = sameSlice;
-    }
-    exportDbgLastPhase = phase;
-    exportDbgLastBatch = batch;
-    if (!skip) {
-      exportDbgLastAt = now;
-      void appDebugLog(
-        "export",
-        `${phase}: ${String(v.message ?? "").slice(0, 220)}`,
-        {
-          pct: v.pct,
-          progressBytes: v.progressBytes,
-          totalBytes: v.totalBytes,
-          torrentState: v.torrentState,
-          batchIndex: v.batchIndex,
-          batchTotal: v.batchTotal,
-          copyIndex: v.copyIndex,
-          copyTotal: v.copyTotal,
-          queueLen: v.queueLabels?.length,
-        }
-      );
-    }
-  }
-});
+useDownloadProgress({ downloadProgress, downloadOverlayExpanded });
 
 // Likes are owned by `stores/library` (v2 persistence). The library store is
 // seeded on boot from `loadPersistedState()`; this module only reads.

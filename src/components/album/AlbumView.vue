@@ -18,6 +18,7 @@ import {
   useTrackContextMenu,
   type CtxActionDef,
 } from "../../composables/useTrackContextMenu.js";
+import { sourceContextLabel, canDownload } from "../../track/labels.js";
 import {
   trackDisplayBasename,
   audioFormatLabel,
@@ -83,7 +84,6 @@ const artistLabel = computed<string>(() => {
 // ── Context menu ───────────────────────────────────────────────────────────
 
 function albumTrackActions(t: Track): CtxActionDef[] {
-  const srcLabel = t.kind === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
   const isLiked = props.likedTrackIds.has(t.id);
   return [
     { id: "play",     label: "Слушать",    icon: "play" },
@@ -92,8 +92,8 @@ function albumTrackActions(t: Track): CtxActionDef[] {
     { id: "like",     label: isLiked ? "Убрать из любимых" : "В избранное", icon: "heart" },
     { id: "playlist", label: "В плейлист", icon: "playlist" },
     { id: "divider" },
-    { id: "download", label: "Скачать",    icon: "download", disabled: !t.hasPlaybackIdentity() },
-    { id: "source",   label: srcLabel,     icon: "source" },
+    { id: "download", label: "Скачать",    icon: "download", disabled: !canDownload(t) },
+    { id: "source",   label: sourceContextLabel(t), icon: "source" },
   ];
 }
 

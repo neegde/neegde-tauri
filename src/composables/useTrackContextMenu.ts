@@ -13,6 +13,7 @@
 
 import { ref, shallowRef, computed, type Ref, type ShallowRef, type ComputedRef } from "vue";
 import type { Track } from "../track/Track.js";
+import { sourceContextLabel, canDownload } from "../track/labels.js";
 
 export interface CtxActionDef {
   id: string;
@@ -72,13 +73,11 @@ export function useTrackContextMenu(opts: UseTrackContextMenuOptions): UseTrackC
  * "queue / playlist / download / source" action set.
  */
 export function libraryTrackActions(track: Track): CtxActionDef[] {
-  const srcLabel = track.kind === "soulseek" ? "Источник (SoulSeek)" : "Источник (Torrent)";
-  const canDownload = track.hasPlaybackIdentity();
   return [
     { id: "queue", label: "В очередь", icon: "queue" },
     { id: "playlist", label: "В плейлист", icon: "playlist" },
-    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload },
+    { id: "download", label: "Скачать", icon: "download", disabled: !canDownload(track) },
     { id: "divider" },
-    { id: "source", label: srcLabel, icon: "source" },
+    { id: "source", label: sourceContextLabel(track), icon: "source" },
   ];
 }

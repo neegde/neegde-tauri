@@ -14,6 +14,7 @@ import {
   useTrackContextMenu,
   libraryTrackActions,
 } from "../../composables/useTrackContextMenu.js";
+import { sourceShortLabel } from "../../track/labels.js";
 
 const props = defineProps<{
   /** Liked tracks, in recency-desc order — resolved from library store. */
@@ -78,7 +79,7 @@ function likeTrackTooltip(t: Track): string {
   const fmt = audioFormatLabel(t.fileName);
   const lines = [name];
   if (fmt && fmt !== "AUDIO") lines.push(`Формат: ${fmt}`);
-  lines.push(t.kind === "soulseek" ? "SoulSeek" : "RuTracker");
+  lines.push(sourceShortLabel(t));
   if (t.albumTitle) lines.push(t.albumTitle);
   return lines.join("\n");
 }

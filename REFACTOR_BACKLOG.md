@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `29` "#20 useStreamReadiness"
+**Последний коммит:** `30` "LOW batch A: BoundedHistory + useDownloadProgress + track labels"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -93,12 +93,12 @@ c53a538 5   — миграция всех .js → .ts
 ### LOW (косметика / future-proofing)
 
 - **PipelineStage class** (search/pipeline/) — сейчас plain functions. OK как есть.
-- **`BoundedHistory<T>`** — `lib/recentHistory.ts` + `lib/searchHistory.ts` дублируют load/add/remove. Generic helper.
+- ~~**`BoundedHistory<T>`**~~ ✅ commit 30 — `src/lib/BoundedHistory.ts`. Generic класс с `storageKey` / `max` / `keyOf` / `stamp?` / `isValid?`. `recentHistory.ts` и `searchHistory.ts` — тонкие обёртки.
 - **`AchievementsTracker` class** — легковесный рефактор ergonomics.
 - **`StreamingSearch<T>`** — abstract over SLSK event-driven batching.
 - **`VisualizerPreset` abstract** — 4 draw functions в `visualizerPresets.ts`. Нужно только если добавляем много пресетов.
-- **`useTrackRowActions` helper** — после #8 (context menu), ещё раз в 3 view'ах повторяется вычисление `canPlay/canDownload/sourceLabel`.
-- **`useDownloadProgress` composable** — 45 строк в App.vue для логгинга прогресса.
+- ~~**`useTrackRowActions` helper**~~ ✅ commit 30 — `src/track/labels.ts` с pure functions `sourceShortLabel` / `sourceContextLabel` / `canPlay` / `canDownload`. Применены в `useTrackContextMenu.libraryTrackActions`, `AlbumView.albumTrackActions`, `LikesView.likeTrackTooltip`.
+- ~~**`useDownloadProgress` composable**~~ ✅ commit 30 — `src/composables/useDownloadProgress.ts`. 45 строк watcher'а из App.vue вынесены в композабл с throttle 2s на `downloading`-фазу.
 - **Упростить useNavStack** — 15 refs в ctx, Heavyweight API. Осторожно, работает.
 - **Унификация нейминга событий** — mix `@play` vs `@play-track`, `@toggle-like` vs `@toggle-like-track`. Style-guide enforcement.
 
@@ -154,7 +154,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **29**. Следующий должен быть **30**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **30**. Следующий должен быть **31**.
 
 ---
 

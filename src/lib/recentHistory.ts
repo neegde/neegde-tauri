@@ -1,5 +1,4 @@
-const LS_KEY = "neegde.recentHistory.v1";
-const MAX = 20;
+import { BoundedHistory } from "./BoundedHistory.js";
 
 export interface RecentHistoryEntry {
   id: string;
@@ -12,34 +11,25 @@ export interface RecentHistoryEntry {
   [extra: string]: unknown;
 }
 
+const store = new BoundedHistory<RecentHistoryEntry>({
+  storageKey: "neegde.recentHistory.v1",
+  max: 20,
+  keyOf: (e) => e.id,
+  stamp: (e) => ({ ...e, openedAt: Date.now() }),
+  isValid: (v): v is RecentHistoryEntry =>
+    v != null && typeof v === "object" && typeof (v as { id?: unknown }).id === "string",
+});
+
 export function loadRecentHistory(): RecentHistoryEntry[] {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as RecentHistoryEntry[]) : [];
-  } catch {
-    return [];
-  }
+  return store.load();
 }
 
 /** Adds or bumps a torrent to the front of the recent history. */
 export function addToRecentHistory(entry: RecentHistoryEntry): RecentHistoryEntry[] {
-  let history = loadRecentHistory();
-  history = history.filter((h) => h.id !== entry.id);
-  history.unshift({ ...entry, openedAt: Date.now() });
-  history = history.slice(0, MAX);
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(history));
-  } catch { /* quota / disabled — ignore */ }
-  return history;
+  return store.add(entry);
 }
 
 /** Removes one entry from recent history by id. */
 export function removeFromRecentHistory(id: string): RecentHistoryEntry[] {
-  const history = loadRecentHistory().filter((h) => h.id !== id);
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(history));
-  } catch { /* ignore */ }
-  return history;
+  return store.remove(id);
 }
