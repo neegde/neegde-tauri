@@ -816,58 +816,6 @@
           </div>
         </div>
 
-        <div class="settings-card nerd-card">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">
-              <SystemIcon name="bug" :size="22" />
-            </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Журнал отладки</div>
-              <div class="settings-card-status">Клики, экраны, плеер, торренты</div>
-            </div>
-            <label class="nerd-toggle-inline">
-              <input
-                type="checkbox"
-                :checked="appDebugEnabled"
-                @change="onAppDebugChange"
-              />
-            </label>
-          </div>
-          <div v-if="appDebugEnabled" class="settings-card-body">
-            <button
-              type="button"
-              class="login-btn nerd-save-btn"
-              @click="openAppDebugLogWindow"
-            >
-              Открыть журнал
-            </button>
-            <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center">
-              <input
-                type="text"
-                class="login-input"
-                style="flex: 1"
-                placeholder="запрос для дампа (RT + SLSK)"
-                v-model="rawDumpQuery"
-              />
-              <button
-                type="button"
-                class="login-btn nerd-save-btn"
-                :disabled="rawDumpBusy || !rawDumpQuery.trim()"
-                @click="onDumpRawSearch"
-              >
-                <span v-if="rawDumpBusy">Дамп…</span>
-                <span v-else>Сдампить сырьё</span>
-              </button>
-            </div>
-            <p v-if="rawDumpPath" class="settings-card-desc" style="margin-top: 6px; word-break: break-all">
-              Дамп: {{ rawDumpPath }}
-            </p>
-            <p v-if="rawDumpError" class="settings-card-desc" style="margin-top: 6px; color: #c44">
-              {{ rawDumpError }}
-            </p>
-          </div>
-        </div>
-
       </div>
 
       <AchievementsModal v-model:open="achievementsBrowseOpen" :rows="achievementRows" />

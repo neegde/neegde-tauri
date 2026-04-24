@@ -33,7 +33,6 @@ import { clearSlskCoverCache } from "../../soulseek/api.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import AchievementsModal from "./AchievementsModal.vue";
 import SystemIcon from "../shared/SystemIcon.vue";
-import { openAppDebugWindow } from "../../appDebugWindow.js";
 import {
   fetchLatestGithubRelease,
   compareSemver,
@@ -49,7 +48,6 @@ const props = defineProps({
   rtAvatarUrl:      { type: String, default: null },
   restoringSession: { type: Boolean, default: false },
   theme:            { type: String, default: "dark" },
-  appDebugEnabled:  { type: Boolean, default: false },
   achievementsOptIn:   { type: Boolean, default: false },
   achievementsUnlocked: { type: Array, default: () => [] },
   // SoulSeek
@@ -112,7 +110,6 @@ const emit = defineEmits([
   "login",
   "logout",
   "theme-change",
-  "update:appDebugEnabled",
   "achievements-opt-in-change",
   "achievements-reset",
   "slsk-login",
@@ -673,40 +670,6 @@ async function confirmClearStreaming() {
     cacheSettingsError.value = e?.toString?.() ?? String(e);
   } finally {
     cacheClearBusy.value = false;
-  }
-}
-
-async function onAppDebugChange(e) {
-  const enabled = Boolean(e.target.checked);
-  await invoke("set_app_debug_enabled", { enabled });
-  emit("update:appDebugEnabled", enabled);
-}
-
-async function openAppDebugLogWindow() {
-  await openAppDebugWindow().catch(() => {});
-}
-
-// ── Raw search dump (dev helper) ─────────────────────────────────────────────
-const rawDumpQuery = ref("");
-const rawDumpBusy = ref(false);
-const rawDumpPath = ref(null);
-const rawDumpError = ref(null);
-async function onDumpRawSearch() {
-  const q = rawDumpQuery.value.trim();
-  if (!q || rawDumpBusy.value) return;
-  rawDumpBusy.value = true;
-  rawDumpError.value = null;
-  rawDumpPath.value = null;
-  try {
-    const path = await invoke("dev_dump_raw_search", { query: q, mirror: getMirror() });
-    rawDumpPath.value = String(path);
-    try {
-      await openUrl(`file://${path}`);
-    } catch { /* ignore */ }
-  } catch (e) {
-    rawDumpError.value = e?.toString?.() ?? String(e);
-  } finally {
-    rawDumpBusy.value = false;
   }
 }
 
