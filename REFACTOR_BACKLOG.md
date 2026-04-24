@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `23` "#14 TrackCache class"
+**Последний коммит:** `24` "#15 AuthManager + AuthProvider"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -78,7 +78,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#14 `TrackCache` class**~~ ✅ commit 23 — `class TrackCache` с `storageKey`/`debounceMs` опциями в конструкторе. Методы `put` / `putMany` / `get` / `has` / `remove` / `ids` / `clear` / `hydrate` / `load`. В том же файле (case-insensitive FS не даёт `TrackCache.ts` рядом с `trackCache.ts`) — default singleton `trackCache` и тонкие делегаты со старыми именами (`putTrack`, `hydrateTrack`, …). 28+ консьюмеров не трогали.
 
-- **#15 `AuthManager` + `AuthProvider`** — RT + SLSK auth живут раздельно. Абстракция для будущих провайдеров. Blast: ~11 сайтов.
+- ~~**#15 `AuthManager` + `AuthProvider`**~~ ✅ commit 24 — `src/auth/`: abstract `AuthProvider` (common `connected`/`username` refs + `connect`/`disconnect`), `RutrackerAuthProvider` (добавляет `avatarUrl`), `SoulseekAuthProvider` (добавляет `loggingIn`/`loginError`; `connect` сбрасывает `loginError`, `disconnect` не трогает). `AuthManager` singleton в `src/stores/auth.ts` с `.rutracker` / `.soulseek` + typed `get(kind)`. Старые exports — тонкие делегаты; 11+ консьюмеров не трогали.
 
 - **#16 `RateLimitedFetchQueue<T>`** — `audio/metadataEnrich.ts` и `audio/coverFetch.ts` дублируют паттерн throttle+queue (MusicBrainz 1.05s, iTunes 1.1s). Выделить в class. Blast: 4 сайта.
 
@@ -153,7 +153,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **23**. Следующий должен быть **24**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **24**. Следующий должен быть **25**.
 
 HEREDOC-стиль:
 

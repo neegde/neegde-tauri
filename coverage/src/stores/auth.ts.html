@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>18/18</span>
+                <span class='fraction'>12/12</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>6/6</span>
+                <span class='fraction'>0/0</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>18/18</span>
+                <span class='fraction'>12/12</span>
             </div>
         
             
@@ -109,7 +109,11 @@
 <a name='L44'></a><a href='#L44'>44</a>
 <a name='L45'></a><a href='#L45'>45</a>
 <a name='L46'></a><a href='#L46'>46</a>
-<a name='L47'></a><a href='#L47'>47</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -123,18 +127,21 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-yes">4x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">13x</span>
-<span class="cline-any cline-yes">13x</span>
 <span class="cline-any cline-yes">13x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -147,12 +154,9 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-yes">6x</span>
-<span class="cline-any cline-yes">6x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">11x</span>
 <span class="cline-any cline-yes">11x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
@@ -162,44 +166,46 @@
  * commands, persisting credentials) live in the respective subsystem
  * modules (`rutracker/auth.js`, `soulseek/api.js`). This store just
  * holds the *current observed state* so UI and other stores can react.
+ *
+ * The state itself is owned by an {@link AuthManager} instance which
+ * composes per-provider {@link AuthProvider} subclasses. The module-level
+ * exports below are thin delegates so existing consumers keep working.
  */
 &nbsp;
-import { ref } from "vue";
+import { AuthManager } from "../auth/AuthManager.js";
+&nbsp;
+export const authManager = new AuthManager();
 &nbsp;
 // ── RuTracker ────────────────────────────────────────────────────────────────
 &nbsp;
-export const rtLoggedIn = ref&lt;boolean&gt;(false);
-export const rtUsername = ref&lt;string | null&gt;(null);
-export const rtAvatarUrl = ref&lt;string | null&gt;(null);
+export const rtLoggedIn  = authManager.rutracker.connected;
+export const rtUsername  = authManager.rutracker.username;
+export const rtAvatarUrl = authManager.rutracker.avatarUrl;
 &nbsp;
-export function setRtLoggedIn(username: string | null | undefined, avatarUrl: string | null | undefined): void {
-  rtLoggedIn.value = true;
-  rtUsername.value = username || null;
-  rtAvatarUrl.value = avatarUrl || null;
+export function setRtLoggedIn(
+  username: string | null | undefined,
+  avatarUrl: string | null | undefined,
+): void {
+  authManager.rutracker.connect(username, avatarUrl);
 }
 &nbsp;
 export function setRtLoggedOut(): void {
-  rtLoggedIn.value = false;
-  rtUsername.value = null;
-  rtAvatarUrl.value = null;
+  authManager.rutracker.disconnect();
 }
 &nbsp;
 // ── SoulSeek ─────────────────────────────────────────────────────────────────
 &nbsp;
-export const slskConnected = ref&lt;boolean&gt;(false);
-export const slskUsername = ref&lt;string | null&gt;(null);
-export const slskLoggingIn = ref&lt;boolean&gt;(false);
-export const slskLoginError = ref&lt;string | null&gt;(null);
+export const slskConnected  = authManager.soulseek.connected;
+export const slskUsername   = authManager.soulseek.username;
+export const slskLoggingIn  = authManager.soulseek.loggingIn;
+export const slskLoginError = authManager.soulseek.loginError;
 &nbsp;
 export function setSlskConnected(username: string | null | undefined): void {
-  slskConnected.value = true;
-  slskUsername.value = username || null;
-  slskLoginError.value = null;
+  authManager.soulseek.connect(username);
 }
 &nbsp;
 export function setSlskDisconnected(): void {
-  slskConnected.value = false;
-  slskUsername.value = null;
+  authManager.soulseek.disconnect();
 }
 &nbsp;</pre></td></tr></table></pre>
 
@@ -208,7 +214,7 @@ export function setSlskDisconnected(): void {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-24T00:54:55.983Z
+                at 2026-04-24T00:57:41.577Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
