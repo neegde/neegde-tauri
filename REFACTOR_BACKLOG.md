@@ -1,7 +1,7 @@
 # Refactor backlog — handoff for next session
 
 **Дата паузы:** 2026-04-24
-**Последний коммит:** `27` "#18 Equalizer unified"
+**Последний коммит:** `28` "#19 usePlaylistCrud + useSearchUI"
 **Ветка:** `feat/search-engine`
 
 > Читай этот файл целиком, прежде чем продолжать. Затем жди инструкций
@@ -86,7 +86,7 @@ c53a538 5   — миграция всех .js → .ts
 
 - ~~**#18 `Equalizer` class**~~ ✅ commit 27 — новый `src/audio/Equalizer.ts` собирает config/state/graph: reactive `bandsDb`/`presetId` Refs, `applyPreset`/`setBand`/`resetFlat`, WebAudio lifecycle (`ensure`/`destroy`/`setGains`/`setOutputGain`/`getAnalyser`/`resumeContext`). Singleton `equalizer`. Три старых файла (`equalizerConfig`/`equalizerState`/`equalizerGraph`) — тонкие делегаты с тем же API, 6 консьюмеров не трогали. `Equalizer.ts` добавлен в coverage exclude (WebAudio не запустить в jsdom).
 
-- **#19 `usePlaylistCrud` + `useSearchUI` composables** — из App.vue (80 + 200 строк). Snippet для playlist: `handleCreate/Delete/Rename/AddTrack` + `playlistModal`, `playlistTrack` state. Для searchUI: `searchQuery`, `homeSearchActive`, `slskPeerBrowseUser`, `handleSearch`, `handleRevertToRaw`. Blast: много биндингов в App.html.
+- ~~**#19 `usePlaylistCrud` + `useSearchUI` composables**~~ ✅ commit 28 — `usePlaylistCrud` владеет `addToPlaylistModal` / `addToPlaylistTrack` + `openPlaylist` / `handleCreate/Delete/Rename/RemoveTrack/ShowAddToPlaylist/AddToPlaylist/AddToPlaylistNew` (зависит от `currentPlaylistId` / `view` / `resolveTrackFromPayload`). `useSearchUI` — `searchQuery` / `homeSearchActive` / `slskPeerBrowseUser` + `loading` / `hasSearchResults` computed + `handleSearch` / `handleRevertToRaw` (зависит от `resetViewForSearch` callback + `authFlags` getter + `searchHistory` ref). App.vue −70 строк, темплейт-биндинги не тронуты.
 
 - **#20 Слить `useBufferPoll`/`useBufferingWatchdog`/`useStreamStats`/`useStreamStatus`** → `useStreamReadiness` — все 4 composables в Player наблюдают одни и те же refs (streamPhase, prepareProgress, stats). Цель: объединить ~300 строк в один композабл с когерентными выходами.
 
@@ -154,7 +154,7 @@ npx vitest run tests/album/Album.test.ts
 
 ## Нейминг коммитов
 
-Коммиты нумеруются целыми числами начиная с 1. Последний — **27**. Следующий должен быть **28**.
+Коммиты нумеруются целыми числами начиная с 1. Последний — **28**. Следующий должен быть **29**.
 
 HEREDOC-стиль:
 

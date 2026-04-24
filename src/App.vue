@@ -36,16 +36,12 @@ import {
 import { getAlbum } from "./stores/entities.js";
 import {
   searchEntities,
-  searchLoadingRt,
-  searchLoadingSlsk,
   searchRtError,
   searchSlskError,
-  searchError,
   searchResultsEpoch,
   searchResolving,
   searchResolved,
   searchProviderQuery,
-  runSearch,
   resetSearch,
 } from "./stores/search.js";
 import {
@@ -71,6 +67,8 @@ import { useNavStack } from "./composables/useNavStack.js";
 import { useMagnetDialog } from "./composables/useMagnetDialog.js";
 import { useAlbumPreview } from "./composables/useAlbumPreview.js";
 import { useTorrentDetail } from "./composables/useTorrentDetail.js";
+import { usePlaylistCrud } from "./composables/usePlaylistCrud.js";
+import { useSearchUI } from "./composables/useSearchUI.js";
 import { loadPersistedState } from "./persistence/bootstrap.js";
 import {
   likedTracks as libraryLikedTracks,
@@ -82,11 +80,6 @@ import {
   isAlbumLiked as libIsAlbumLiked,
   playlists as libraryPlaylists,
   getPlaylistTracks,
-  addTrackToPlaylist as libAddTrackToPlaylist,
-  removeTrackFromPlaylist as libRemoveTrackFromPlaylist,
-  deletePlaylist as libDeletePlaylist,
-  renamePlaylist as libRenamePlaylist,
-  createPlaylist as libCreatePlaylist,
   seedLikesFromSnapshot,
   seedPlaylistsFromSnapshot,
 } from "./stores/library.js";
@@ -133,7 +126,7 @@ import AppSplash from "./components/shell/AppSplash.vue";
 import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory, removeFromRecentHistory } from "./lib/recentHistory.js";
-import { loadSearchHistory, addToSearchHistory, removeFromSearchHistory } from "./lib/searchHistory.js";
+import { loadSearchHistory, removeFromSearchHistory } from "./lib/searchHistory.js";
 import PlaylistView from "./components/playlist/PlaylistView.vue";
 import AchievementToast from "./components/shell/AchievementToast.vue";
 import SystemIcon from "./components/shared/SystemIcon.vue";
@@ -270,36 +263,7 @@ const currentPlaylistTracks = computed(() =>
   currentPlaylistId.value ? getPlaylistTracks(currentPlaylistId.value) : [],
 );
 
-// ── Playlist handlers (thin wrappers around stores/library) ────────────────
-const addToPlaylistModal = ref(false);
-/** @type {import('vue').ShallowRef<Track | null>} */
-const addToPlaylistTrack = shallowRef(null);
-
-function openPlaylist(id) {
-  currentPlaylistId.value = id;
-  view.value = "playlist";
-}
-
-function handleCreatePlaylist() {
-  const pl = libCreatePlaylist(`Плейлист ${libraryPlaylists.value.length + 1}`);
-  openPlaylist(pl.id);
-}
-
-function handleDeletePlaylist(id) {
-  libDeletePlaylist(id);
-  if (currentPlaylistId.value === id) {
-    currentPlaylistId.value = null;
-    view.value = "home";
-  }
-}
-
-function handleRenamePlaylist(id, name) {
-  libRenamePlaylist(id, name);
-}
-
-function handleRemoveTrackFromPlaylist(id, trackId) {
-  libRemoveTrackFromPlaylist(id, trackId);
-}
+// ── Playlist handlers ──────────────────────────────────────────────────────
 
 /**
  * Accepts either a Track instance (new callers: LikesView, PlaylistView,
@@ -340,30 +304,18 @@ function resolveTrackFromPayload(payload) {
   return getTrack(ent.id);
 }
 
-/** User picked a track for the "add to playlist" modal. */
-function handleShowAddToPlaylist(payload) {
-  const track = resolveTrackFromPayload(payload);
-  if (!track) return;
-  addToPlaylistTrack.value = track;
-  addToPlaylistModal.value = true;
-}
-
-function handleAddToPlaylist(playlistId) {
-  const t = addToPlaylistTrack.value;
-  if (!t) return;
-  libAddTrackToPlaylist(playlistId, t);
-  addToPlaylistModal.value = false;
-  addToPlaylistTrack.value = null;
-}
-
-function handleAddToPlaylistNew() {
-  const pl = libCreatePlaylist(`Плейлист ${libraryPlaylists.value.length + 1}`);
-  const t = addToPlaylistTrack.value;
-  if (t) libAddTrackToPlaylist(pl.id, t);
-  addToPlaylistModal.value = false;
-  addToPlaylistTrack.value = null;
-  openPlaylist(pl.id);
-}
+const {
+  addToPlaylistModal,
+  addToPlaylistTrack,
+  openPlaylist,
+  handleCreatePlaylist,
+  handleDeletePlaylist,
+  handleRenamePlaylist,
+  handleRemoveTrackFromPlaylist,
+  handleShowAddToPlaylist,
+  handleAddToPlaylist,
+  handleAddToPlaylistNew,
+} = usePlaylistCrud({ currentPlaylistId, view, resolveTrackFromPayload });
 
 // ── Per-track actions from LikesView / PlaylistView / search ───────────────
 
@@ -403,7 +355,7 @@ function onAddTrackToPlaylist(track) {
 }
 
 function onRemoveTrackFromPlaylist(trackId) {
-  if (currentPlaylistId.value) libRemoveTrackFromPlaylist(currentPlaylistId.value, trackId);
+  if (currentPlaylistId.value) handleRemoveTrackFromPlaylist(currentPlaylistId.value, trackId);
 }
 
 function onDeleteCurrentPlaylist() {
@@ -411,7 +363,7 @@ function onDeleteCurrentPlaylist() {
 }
 
 function onRenameCurrentPlaylist(newName) {
-  if (currentPlaylistId.value) libRenamePlaylist(currentPlaylistId.value, newName);
+  if (currentPlaylistId.value) handleRenamePlaylist(currentPlaylistId.value, newName);
 }
 
 function handlePlayPlaylist(startIdx) {
@@ -424,18 +376,36 @@ function handlePlayPlaylist(startIdx) {
 // Album / torrent handlers moved into useTorrentDetail (see setup above).
 
 // ── Search ────────────────────────────────────────────────────────────────────
-// Reactive surface lives in src/stores/search.js. We only keep UI-local bits
-// here (current input text, home-vs-recent toggle, per-peer filter).
-const searchQuery = ref("");
-const loading = computed(() => searchLoadingRt.value || searchLoadingSlsk.value);
-const hasSearchResults = computed(() => searchEntities.value.length > 0);
-/** Пользователь отправил непустой запрос с главной — показываем выдачу, а не только «Недавно». */
-const homeSearchActive = ref(false);
-/** Alias: search errors and navigation errors share the same UI slot. Writes
- *  from non-search code paths just clear it before showing a fresh screen. */
-const error = searchError;
-/** Narrow SoulSeek track list to this username (search results unchanged). */
-const slskPeerBrowseUser = ref(null);
+// Reactive surface lives in src/stores/search.js. The useSearchUI composable
+// owns the UI-local bits (input text, home-vs-recent toggle, per-peer filter)
+// plus the `handleSearch` / `handleRevertToRaw` wrappers. The reset callback
+// captures `selected` / `files` / `torrentCover` / nav stacks declared below
+// by useTorrentDetail / useNavStack — JS closures resolve those lazily at
+// callback-invocation time, so declaration order is fine.
+const {
+  searchQuery,
+  homeSearchActive,
+  slskPeerBrowseUser,
+  loading,
+  hasSearchResults,
+  error,
+  handleSearch,
+  handleRevertToRaw,
+} = useSearchUI({
+  resetViewForSearch: () => {
+    selected.value = null;
+    files.value = [];
+    torrentCover.value = null;
+    navForwardStack.value = [];
+    navBackStack.value = [];
+    view.value = "home";
+  },
+  authFlags: () => ({
+    rtLoggedIn: rtLoggedIn.value,
+    slskConnected: slskConnected.value,
+  }),
+  searchHistory,
+});
 
 // ── Torrent / Album detail (state + handlers) ──────────────────────────────
 // Two composables share a few refs: `useTorrentDetail` owns the selected
@@ -730,46 +700,6 @@ function resetSearchStateForHomeLibraryNav() {
   homeSearchActive.value = false;
   slskPeerBrowseUser.value = null;
   searchQuery.value = "";
-}
-
-async function handleSearch(query, opts = {}) {
-  if (!query?.trim()) {
-    resetSearch();
-    homeSearchActive.value = false;
-    slskPeerBrowseUser.value = null;
-    selected.value = null;
-    files.value = [];
-    return;
-  }
-  homeSearchActive.value = true;
-  const q = query.trim();
-  const qn = q.toLowerCase();
-  if (slskPeerBrowseUser.value) {
-    const pu = String(slskPeerBrowseUser.value).trim().toLowerCase();
-    if (qn !== pu) slskPeerBrowseUser.value = null;
-  }
-  forwardStack.value = [];
-  backStack.value    = [];
-  selected.value     = null;
-  files.value        = [];
-  torrentCover.value = null;
-  view.value         = "home";
-
-  searchHistory.value = addToSearchHistory(q);
-
-  await runSearch(
-    q,
-    { rtLoggedIn: rtLoggedIn.value, slskConnected: slskConnected.value },
-    { skipResolver: Boolean(opts.skipResolver) },
-  );
-  appDebugLog("search", `query "${q}": dispatched`);
-}
-
-/** «Искать как строку» — повторяем текущий запрос минуя резолвер. */
-async function handleRevertToRaw() {
-  const q = searchQuery.value;
-  if (!q?.trim()) return;
-  await handleSearch(q, { skipResolver: true });
 }
 
 const {
