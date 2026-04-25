@@ -11,10 +11,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "kill-dev-port": "node scripts/kill-dev-port.cjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "node scripts/run-tauri.cjs",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

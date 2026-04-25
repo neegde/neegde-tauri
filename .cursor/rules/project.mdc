@@ -207,5 +207,5 @@ handleToggleLike(like) // toggle presence in likes dict
 
 - `invoke("command_name", { args })` для вызова Rust команд
 - Vite `define` инжектирует `__APP_VERSION__`, `__TELEGRAM_CHANNEL_URL__`, GitHub URLs
-- `tauri dev` убивает порт 5173 перед запуском (`beforeDevCommand`)
+- `tauri dev`: `beforeDevCommand` — `npm run kill-dev-port && npm run dev` (скрипт `scripts/kill-dev-port.cjs`)
 - Capabilities: `core:default`, event listen, create webview window, dialog, opener
