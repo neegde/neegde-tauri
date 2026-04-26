@@ -292,6 +292,35 @@
           </div>
         </div>
       </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <path d="M8 21h8M12 17v4"/>
+              <path d="M7 10l-3 3 3 3"/>
+            </svg>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Сворачивать в трей</div>
+            <div class="settings-card-status">
+              {{ props.closeTray ? 'Работает в фоне при закрытии окна' : 'Выходит при закрытии окна' }}
+            </div>
+          </div>
+          <label class="ach-opt-toggle">
+            <input
+              type="checkbox"
+              :checked="props.closeTray"
+              class="ach-opt-toggle-input"
+              @change="emit('close-tray-change', $event.target.checked)"
+            />
+            <span class="ach-opt-toggle-ui" aria-hidden="true" />
+          </label>
+        </div>
+      </div>
     </div>
 
     <!-- ── Звук ─────────────────────────────────────────────────────── -->

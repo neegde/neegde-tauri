@@ -479,7 +479,8 @@ describe("SettingsView — debug / achievements / theme / logout / reconnect", (
     const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
     await flushPromises();
     await openShitpostPanel(w);
-    const cb = w.find(".ach-opt-toggle-input");
+    const inputs = w.findAll(".ach-opt-toggle-input");
+    const cb = inputs[inputs.length - 1];
     await cb.setValue(true);
     expect(w.emitted("achievements-opt-in-change")).toBeTruthy();
     w.unmount();
