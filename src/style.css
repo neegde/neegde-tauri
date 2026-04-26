@@ -244,7 +244,11 @@ body {
 .main-content {
   padding: var(--main-pad-top) var(--main-pad-inline) 60px;
 }
-.main-content:has(.likes-view) { padding-top: 0; }
+/* Likes bleeds into the top padding so the hero stays flush; main-content keeps
+   constant padding — avoids a vertical jump when switching likes ↔ home. */
+.main-view-surface:has(.likes-view) {
+  margin-top: calc(-1 * var(--main-pad-top));
+}
 
 /* Переключение экранов в основной колонке (главная / лайки / настройки / плейлист) */
 .main-view-surface {
@@ -259,7 +263,7 @@ body {
 .main-view-enter-from,
 .main-view-leave-to {
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateY(3px);
 }
 .main-view-enter-to,
 .main-view-leave-from {
@@ -1627,7 +1631,7 @@ body {
   display: flex;
   align-items: flex-end;
   gap: clamp(18px, 3vw, 28px);
-  margin: calc(-1 * var(--main-pad-top)) calc(-1 * var(--main-pad-inline)) 0;
+  margin: 0 calc(-1 * var(--main-pad-inline)) 0;
   padding: clamp(36px, 5vw, 48px) clamp(20px, 3vw, 32px) clamp(24px, 3.5vw, 32px);
   background: linear-gradient(
     180deg,

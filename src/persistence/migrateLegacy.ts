@@ -4,7 +4,8 @@
  * Reads the old rich-row keys (`neegde.likes`, `neegde.playlists.v1`, the
  * player-session row blob), synthesises `TrackData` for each row via the
  * provider-agnostic `rowToTrackData` heuristic, populates `trackCache`,
- * and writes the new snapshots. Legacy keys are kept untouched for one
+ * populates `albumCache` for liked albums, and writes the new snapshots.
+ * Legacy keys are kept untouched for one
  * release as a safety net; they can be removed by hand later.
  *
  * Safe to call on every boot — it bails out if the v2 keys already exist.
@@ -12,6 +13,8 @@
 
 import { parseBtihFromMagnet } from "../lib/magnet.js";
 import { putTrack, hasTrack } from "./trackCache.js";
+import { putAlbum, hasAlbumInCache } from "./albumCache.js";
+import { legacyAlbumLikeRowToAlbumData } from "./legacyAlbumLikeRowToAlbumData.js";
 import { LIKES_STORAGE_KEY, saveLikesSnapshot, loadLikesSnapshot } from "./likes.js";
 import { PLAYLISTS_STORAGE_KEY, savePlaylistsSnapshot, loadPlaylistsSnapshot } from "./playlists.js";
 import { QUEUE_STORAGE_KEY, saveQueueSnapshot, loadQueueSnapshot } from "./queue.js";
@@ -35,6 +38,10 @@ interface LegacyRow {
   slskFilepath?: string;
   slskFilesize?: number;
   addedAt?: number;
+  /** Legacy album-like row (`makeAlbumLike`). */
+  albumName?: string;
+  dirPath?: string;
+  audioFiles?: object[];
   [k: string]: unknown;
 }
 
@@ -169,23 +176,43 @@ function migrateLikes(): void {
   const trackIds: string[] = [];
   const albumIds: string[] = [];
   const likedAt: Record<string, number> = {};
+  const seenTrackIds = new Set<string>();
+  const seenAlbumIds = new Set<string>();
 
   for (const key in legacy) {
     const row = legacy[key];
     if (!row) continue;
     if (row.type === "album") {
-      // v2 album likes not supported in this migration — skip silently; user
-      // can re-like after they search again. Their count will be 0.
+      const idStr = row.id != null && String(row.id) !== "" ? String(row.id) : key;
+      const albumData = legacyAlbumLikeRowToAlbumData({
+        type: "album",
+        id: idStr,
+        source: row.source,
+        magnet: row.magnet,
+        torrentId: row.torrentId,
+        torrentName: row.torrentName,
+        albumName: row.albumName,
+        dirPath: row.dirPath,
+        audioFiles: Array.isArray(row.audioFiles) ? (row.audioFiles as object[]) : [],
+      });
+      if (!albumData) continue;
+      if (seenAlbumIds.has(albumData.id)) continue;
+      seenAlbumIds.add(albumData.id);
+      if (!hasAlbumInCache(albumData.id)) putAlbum(albumData);
+      albumIds.push(albumData.id);
+      likedAt[albumData.id] = Number(row.addedAt ?? Date.now());
       continue;
     }
     const data = rowToTrackData(row);
     if (!data) continue;
+    if (seenTrackIds.has(data.id)) continue;
+    seenTrackIds.add(data.id);
     if (!hasTrack(data.id)) putTrack(data);
     trackIds.push(data.id);
     likedAt[data.id] = Number(row.addedAt ?? Date.now());
   }
 
-  if (trackIds.length === 0) return;
+  if (trackIds.length === 0 && albumIds.length === 0) return;
   saveLikesSnapshot({ trackIds, albumIds, likedAt });
 }
 

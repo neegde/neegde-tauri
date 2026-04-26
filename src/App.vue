@@ -15,6 +15,7 @@ import {
   buildSlskTrackEntity,
   registerAndGetId,
 } from "./player/trackForQueue.js";
+import { legacyAlbumLikeRowToAlbumData } from "./persistence/legacyAlbumLikeRowToAlbumData.js";
 import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
 import { resolveMirrorIfNeeded, withTimeout } from "./rutracker/config.js";
@@ -77,6 +78,7 @@ import { useDownloadProgress } from "./composables/useDownloadProgress.js";
 import { loadPersistedState } from "./persistence/bootstrap.js";
 import {
   likedTracks as libraryLikedTracks,
+  likedAlbums as libraryLikedAlbums,
   likedTrackIds as libraryLikedTrackIds,
   likedAlbumIds as libraryLikedAlbumIds,
   likedAt as libraryLikedAt,
@@ -589,6 +591,13 @@ const likes = computed(() => {
       addedAt: libraryLikedAt.value.get(t.id) ?? 0,
     };
   }
+  for (const id of libraryLikedAlbumIds.value) {
+    out[id] = {
+      id,
+      type: "album",
+      addedAt: libraryLikedAt.value.get(id) ?? 0,
+    };
+  }
   return out;
 });
 
@@ -608,7 +617,8 @@ const {
 } = useAchievements({ playerPlaying, nowPlaying });
 
 function handleAchievementsOptInChange(enabled) {
-  _handleAchievementsOptInChange(enabled, Object.keys(likes.value).length);
+  const n = libraryLikedTrackIds.value.size + libraryLikedAlbumIds.value.size;
+  _handleAchievementsOptInChange(enabled, n);
 }
 
 /** Подсветка «сейчас играет» только среди файлов текущего экрана (раздача / предпросмотр альбома). */
@@ -774,17 +784,31 @@ function handleQueueJump(i) {
 }
 
 /**
- * Legacy toggle-like bridge — consumed by TorrentView / Player which still
- * emit the old row shape. Resolves / synthesizes a Track and delegates to
- * the library store. Will be removed once those components migrate to
- * emitting Track instances directly.
+ * Legacy toggle-like bridge — consumed by TorrentView (track / album / torrent
+ * row shape) and Player. Resolves a Track and/or v2 `AlbumData` and delegates
+ * to the library store.
  */
 function handleToggleLike(payload) {
+  if (!payload) return;
+  const before =
+    libraryLikedTrackIds.value.size + libraryLikedAlbumIds.value.size;
+  if (payload.type === "album") {
+    const album = legacyAlbumLikeRowToAlbumData(payload);
+    if (!album) return;
+    libToggleLikeAlbum(album);
+    recordLikeChange(
+      libraryLikedTrackIds.value.size + libraryLikedAlbumIds.value.size,
+      before,
+    );
+    return;
+  }
   const track = resolveTrackFromPayload(payload);
   if (!track) return;
-  const before = libraryLikedTrackIds.value.size;
   toggleLikeTrack(track);
-  recordLikeChange(libraryLikedTrackIds.value.size, before);
+  recordLikeChange(
+    libraryLikedTrackIds.value.size + libraryLikedAlbumIds.value.size,
+    before,
+  );
 }
 
 const { handleOpenAlbumPreview, applyAlbumScopeForTrack } = useAlbumPreview({
@@ -833,10 +857,6 @@ async function handleNavigateSoulseekPeer(username) {
   await handleSearch(u);
 }
 
-// Legacy handlers removed — LikesView now emits `onPlayTrack(track)` which
-// resolves directly through the queue store. Album likes aren't wired in v2
-// (the Likes view intentionally only shows track likes now).
-
 function handleSearchArtist(artist) {
   if (!artist?.trim()) return;
   searchQuery.value = artist.trim();
@@ -844,6 +864,58 @@ function handleSearchArtist(artist) {
   void handleSearch(artist.trim());
 }
 
+
+/**
+ * Opens a liked album in the main torrent view (RuTracker scope or SoulSeek peer).
+ *
+ * Args:
+ *     album: Registered `Album` instance from the library store.
+ */
+function handleOpenLikedAlbum(album) {
+  if (!album) return;
+  resetSearchStateForHomeLibraryNav();
+  currentAlbum.value = null;
+  const data = typeof album.toJSON === "function" ? album.toJSON() : album;
+  const src0 = data.sources?.[0];
+  if (src0?.kind === "rutracker" && src0.refs?.topicId) {
+    const topicId = String(src0.refs.topicId);
+    const magnet = src0.raw?.details?.magnet ?? "";
+    let albumDirPath = src0.refs.rootPath ?? null;
+    if (albumDirPath === undefined || albumDirPath === "") {
+      const id = String(data.id ?? "");
+      if (id.startsWith("album:")) {
+        const parts = id.split(":");
+        if (parts.length >= 4) {
+          const tail = parts.slice(3).join(":");
+          albumDirPath = tail === "root" || tail === "" ? null : tail;
+        }
+      }
+    } else if (albumDirPath === "root") {
+      albumDirPath = null;
+    }
+    let fileIdx = 0;
+    const firstTid = data.trackIds?.[0];
+    if (typeof firstTid === "string" && firstTid.startsWith("rt:track:")) {
+      const mm = firstTid.match(/^rt:track:[^:]+:(\d+)$/);
+      if (mm) fileIdx = parseInt(mm[1], 10);
+    }
+    handleOpenTorrentFromPlayer({
+      source: "rutracker",
+      torrentId: topicId,
+      torrentName: data.title ?? "",
+      magnet,
+      artist: data.artist ?? null,
+      fileIdx,
+      albumDirPath,
+      seeders: data.seeders ?? "?",
+    });
+    return;
+  }
+  if (src0?.kind === "soulseek" && src0.refs?.slskUsername) {
+    void handleNavigateSoulseekPeer(String(src0.refs.slskUsername));
+    return;
+  }
+}
 
 function handleOpenTorrentFromPlayer(track) {
   if (!track) return;

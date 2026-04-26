@@ -3,10 +3,14 @@ import { fakeLocalStorage } from "../_setup.js";
 
 import { loadPersistedState } from "../../src/persistence/bootstrap.js";
 import { clearTrackCache } from "../../src/persistence/trackCache.js";
+import { clearAlbumCache } from "../../src/persistence/albumCache.js";
+import { clearEntities, getAlbum } from "../../src/stores/entities.js";
 
 beforeEach(() => {
   fakeLocalStorage.clear();
   clearTrackCache();
+  clearAlbumCache();
+  clearEntities();
 });
 
 describe("loadPersistedState", () => {
@@ -31,5 +35,20 @@ describe("loadPersistedState", () => {
     expect(s.likes.trackIds).toEqual(["t1"]);
     expect(s.playlists).toHaveLength(1);
     expect(s.queue.trackIds).toEqual(["a"]);
+  });
+
+  it("hydrates albumCache entries into the entity registry", () => {
+    const albumData = {
+      type: "album" as const,
+      id: "album:rutracker:99:root",
+      title: "Cached LP",
+      artist: "Band",
+      trackIds: ["rt:track:99:0"],
+      sources: [{ kind: "rutracker" as const, refs: { topicId: "99" } }],
+    };
+    fakeLocalStorage.set("neegde.albumCache.v1", JSON.stringify({ [albumData.id]: albumData }));
+    fakeLocalStorage.set("neegde.migration.v2.done", "1");
+    loadPersistedState();
+    expect(getAlbum(albumData.id)?.title).toBe("Cached LP");
   });
 });

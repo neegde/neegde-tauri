@@ -1524,7 +1524,7 @@ describe("App.vue — TorrentView emits propagate to App handlers", () => {
     await openTorrentViaRecent(w);
     const tv = w.findComponent({ name: "TorrentView" });
     if (tv.exists()) {
-      await tv.vm.$emit("toggle-like", {
+      await tv.vm.$emit("toggle-like-track", {
         id: "track:rutracker:42:0",
         type: "track",
         source: "rutracker",

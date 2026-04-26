@@ -107,7 +107,7 @@
     <!-- ── Main ────────────────────────────────────────────────────── -->
     <div class="main-wrap" ref="mainRef">
       <div class="main-content">
-        <Transition name="main-view">
+        <Transition name="main-view" mode="out-in">
         <!-- Home: поиск + недавнее + выдача / раздача -->
         <div v-if="view === 'home'" key="home" class="main-view-surface">
           <div class="main-toolbar">
@@ -252,9 +252,11 @@
           <KeepAlive>
             <LikesView
               :tracks="libraryLikedTracks"
+              :albums="libraryLikedAlbums"
               :now-playing-id="nowPlayingTrackId"
               :player-playing="playerPlaying"
               @toggle-like-track="onToggleLikeTrack"
+              @open-liked-album="handleOpenLikedAlbum"
               @play-track="onPlayTrack"
               @open-track-source="onOpenTrackSource"
               @download-track="onDownloadTrack"

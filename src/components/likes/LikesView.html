@@ -11,14 +11,34 @@
         <div class="likes-hero-label">Плейлист</div>
         <div class="likes-hero-title">Мне нравится</div>
         <div class="likes-hero-meta">
-          <span v-if="tracks.length > 0">{{ tracksLabel(tracks.length) }}</span>
-          <span v-else>Пусто</span>
+          <span>{{ likesHeroMeta }}</span>
         </div>
       </div>
     </div>
 
+    <div class="likes-tabs" role="tablist" aria-label="Разделы избранного">
+      <button
+        type="button"
+        role="tab"
+        :class="['likes-tab', likesTab === 'tracks' ? 'active' : '']"
+        :aria-selected="likesTab === 'tracks'"
+        @click="likesTab = 'tracks'"
+      >
+        Треки
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :class="['likes-tab', likesTab === 'albums' ? 'active' : '']"
+        :aria-selected="likesTab === 'albums'"
+        @click="likesTab = 'albums'"
+      >
+        Альбомы
+      </button>
+    </div>
+
     <!-- Tracks -->
-    <div class="likes-content">
+    <div v-show="likesTab === 'tracks'" class="likes-content">
       <p v-if="tracks.length === 0" class="empty-msg">Нет понравившихся треков.</p>
       <template v-else>
         <div class="tracklist-header likes-tracklist-header">
@@ -99,6 +119,41 @@
           </div>
         </div>
       </template>
+    </div>
+
+    <!-- Albums -->
+    <div v-show="likesTab === 'albums'" class="likes-content likes-albums-grid">
+      <p v-if="albums.length === 0" class="empty-msg">Нет понравившихся альбомов.</p>
+      <div v-else class="results-grid">
+        <div
+          v-for="a in albums"
+          :key="a.id"
+          class="album-card"
+          @click="emit('open-liked-album', a)"
+        >
+          <div class="album-art">
+            <TrackCover :entity="a" fill />
+            <button
+              type="button"
+              class="album-art-play"
+              title="Открыть"
+              @click.stop="emit('open-liked-album', a)"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            </button>
+          </div>
+          <div class="album-name">{{ a.title }}</div>
+          <div v-if="a.artist" class="album-meta likes-album-artist">
+            <button
+              type="button"
+              class="likes-track-sub"
+              @click.stop="emit('open-liked-album', a)"
+            >{{ a.artist }}</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <TrackContextMenu

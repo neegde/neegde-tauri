@@ -12,12 +12,14 @@
  *   3. Hydrate every cached TrackData into a `Track` instance and register
  *      it in the entities store. Without this step, `likedTracks` / queue
  *      resolutions yield null on cold start (registry is empty).
- *   4. Return the snapshots so App.vue can push them into the library /
+ *   4. Load albumCache + hydrate/register every `AlbumData` (liked albums).
+ *   5. Return the snapshots so App.vue can push them into the library /
  *      queue stores.
  */
 
 import { migrateLegacyStorage } from "./migrateLegacy.js";
 import { loadTrackCache, allTrackIds, hydrateTrack } from "./trackCache.js";
+import { loadAlbumCache, allAlbumIds, hydrateAlbum } from "./albumCache.js";
 import { registerEntity } from "../stores/entities.js";
 import { loadLikesSnapshot, type LikesSnapshot } from "./likes.js";
 import { loadPlaylistsSnapshot, type PlaylistSnapshot } from "./playlists.js";
@@ -44,6 +46,11 @@ export function loadPersistedState(): PersistenceSnapshot {
     for (const id of allTrackIds()) {
       const track = hydrateTrack(id);
       if (track) registerEntity(track);
+    }
+    loadAlbumCache();
+    for (const id of allAlbumIds()) {
+      const album = hydrateAlbum(id);
+      if (album) registerEntity(album);
     }
     return {
       likes: loadLikesSnapshot(),

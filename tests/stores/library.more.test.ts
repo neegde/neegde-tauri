@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import "../_setup.js";
+import { fakeLocalStorage } from "../_setup.js";
 
 import {
   likedTrackIds, likedAlbumIds, likedAt,
@@ -12,6 +12,7 @@ import {
 } from "../../src/stores/library.js";
 import { clearEntities, registerEntity, type AlbumData } from "../../src/stores/entities.js";
 import { buildTrack } from "../../src/track/factory.js";
+import { clearAlbumCache } from "../../src/persistence/albumCache.js";
 
 const track = buildTrack({
   type: "track", id: "t1", title: "A", artist: null, albumId: null, albumTitle: null,
@@ -28,6 +29,7 @@ beforeEach(() => {
   seedLikesFromSnapshot({ trackIds: [], albumIds: [], likedAt: {} });
   seedPlaylistsFromSnapshot([]);
   clearEntities();
+  clearAlbumCache();
 });
 
 describe("library — toggleLikeTrack", () => {
@@ -55,6 +57,23 @@ describe("library — toggleLikeAlbum", () => {
   });
   it("ignores null", () => {
     expect(toggleLikeAlbum(null as unknown as AlbumData)).toBe(false);
+  });
+
+  it("persists liked album into albumCache for restart", async () => {
+    fakeLocalStorage.clear();
+    const alb: AlbumData = {
+      type: "album",
+      id: "album:rt:persist:root",
+      title: "Persisted",
+      artist: null,
+      trackIds: ["rt:track:1:0"],
+      sources: [{ kind: "rutracker", refs: { topicId: "1" } }],
+    };
+    expect(toggleLikeAlbum(alb)).toBe(true);
+    await new Promise((r) => setTimeout(r, 300));
+    const raw = fakeLocalStorage.get("neegde.albumCache.v1");
+    expect(raw).toBeDefined();
+    expect(JSON.parse(raw as string)["album:rt:persist:root"]?.title).toBe("Persisted");
   });
 });
 

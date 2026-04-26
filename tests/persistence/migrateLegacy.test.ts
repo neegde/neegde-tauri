@@ -4,12 +4,14 @@ import { fakeLocalStorage } from "../_setup.js";
 import { migrateLegacyStorage } from "../../src/persistence/migrateLegacy.js";
 import { loadLikesSnapshot, saveLikesSnapshot } from "../../src/persistence/likes.js";
 import { hydrateTrack, clearTrackCache } from "../../src/persistence/trackCache.js";
+import { clearAlbumCache, hasAlbumInCache, hydrateAlbum } from "../../src/persistence/albumCache.js";
 import { SoulseekTrack } from "../../src/track/SoulseekTrack.js";
 import { RutrackerTrack } from "../../src/track/RutrackerTrack.js";
 
 beforeEach(() => {
   fakeLocalStorage.clear();
   clearTrackCache();
+  clearAlbumCache();
 });
 
 describe("migrateLegacyStorage", () => {
@@ -69,5 +71,28 @@ describe("migrateLegacyStorage", () => {
     migrateLegacyStorage();
     const second = loadLikesSnapshot();
     expect(second).toEqual(first);
+  });
+
+  it("converts v1 album rows into v2 albumIds + albumCache", () => {
+    fakeLocalStorage.set("neegde.likes", JSON.stringify({
+      "album:rutracker:100:root": {
+        id: "album:rutracker:100:root",
+        type: "album",
+        source: "rutracker",
+        magnet: "magnet:?xt=urn:btih:ABC",
+        torrentId: "100",
+        torrentName: "Release",
+        albumName: "My LP",
+        dirPath: "root",
+        audioFiles: [{ origIdx: 0, path: "01.flac" }],
+        addedAt: 400,
+      },
+    }));
+    migrateLegacyStorage();
+    const likes = loadLikesSnapshot();
+    expect(likes.albumIds).toContain("album:rutracker:100:root");
+    expect(likes.likedAt["album:rutracker:100:root"]).toBe(400);
+    expect(hasAlbumInCache("album:rutracker:100:root")).toBe(true);
+    expect(hydrateAlbum("album:rutracker:100:root")?.title).toBe("My LP");
   });
 });

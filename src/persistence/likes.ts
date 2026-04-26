@@ -8,10 +8,12 @@
  *     likedAt:  Record<id, number>,  // epoch ms
  *   }
  *
- * All metadata lives in `trackCache`. Loading order on boot:
- *   1. `loadTrackCache()` first — populates `id → TrackData`
- *   2. `loadLikesSnapshot()` — returns ids
- *   3. Caller hydrates each id into a `Track` via `hydrateTrack(id)`
+ * Track metadata lives in `trackCache`; album metadata in `albumCache`.
+ * Loading order on boot:
+ *   1. `loadTrackCache()` / `loadAlbumCache()` — populate id → data maps
+ *   2. Hydrate + `registerEntity` for every cached row
+ *   3. `loadLikesSnapshot()` — returns ids; `likedTracks` / `likedAlbums`
+ *      resolve through the registry
  */
 
 export const LIKES_STORAGE_KEY = "neegde.likes.v2";

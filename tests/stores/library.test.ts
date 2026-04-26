@@ -15,6 +15,7 @@ import {
 } from "../../src/stores/library.js";
 import { clearEntities } from "../../src/stores/entities.js";
 import { clearTrackCache } from "../../src/persistence/trackCache.js";
+import { clearAlbumCache } from "../../src/persistence/albumCache.js";
 import { loadLikesSnapshot } from "../../src/persistence/likes.js";
 import { loadPlaylistsSnapshot } from "../../src/persistence/playlists.js";
 import { buildTrack } from "../../src/track/factory.js";
@@ -31,6 +32,7 @@ function slsk(id: string): TrackData {
 beforeEach(() => {
   fakeLocalStorage.clear();
   clearTrackCache();
+  clearAlbumCache();
   clearEntities();
   seedLikesFromSnapshot({ trackIds: [], albumIds: [], likedAt: {} });
   playlists.value = [];

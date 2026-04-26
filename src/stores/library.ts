@@ -1,9 +1,9 @@
 /**
  * Library store — likes + playlists, persisted in the v2 shape.
  *
- * Nothing is stored as "rich rows" here; the store holds track ids, and
- * metadata is resolved through the entities registry (which itself is
- * seeded from `trackCache` at boot). Every mutation immediately syncs its
+ * Nothing is stored as "rich rows" here; the store holds track / album ids,
+ * and metadata is resolved through the entities registry (seeded from
+ * `trackCache` + `albumCache` at boot). Every mutation immediately syncs its
  * snapshot to localStorage.
  */
 
@@ -18,6 +18,7 @@ import {
   entitiesVersion,
 } from "./entities.js";
 import { putTrack } from "../persistence/trackCache.js";
+import { putAlbum } from "../persistence/albumCache.js";
 import {
   saveLikesSnapshot,
   type LikesSnapshot,
@@ -91,6 +92,7 @@ export function toggleLikeTrack(track: Track): boolean {
 export function toggleLikeAlbum(album: Album | AlbumData): boolean {
   if (!album?.id) return false;
   registerEntity(album);
+  putAlbum(album);
   return likes.toggleAlbum(album.id);
 }
 

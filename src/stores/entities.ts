@@ -64,6 +64,7 @@ function normalize(entity: Track | TrackData | Album | AlbumData): Entity | null
  *
  * Track data side-effects: also mirrored into the persistent `trackCache`
  * so references from likes / playlists / queue resolve after an app restart.
+ * Liked albums use `albumCache` (written from `stores/library`).
  */
 export function registerEntity(entity: Track | TrackData | Album | AlbumData | null | undefined): void {
   if (!entity) return;

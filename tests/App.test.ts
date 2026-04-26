@@ -375,7 +375,7 @@ describe("App.vue — library actions from LikesView", () => {
     const w = await openLikes();
     const lv = w.findComponent({ name: "LikesView" });
     const tracks = lv.props("tracks") as Array<{ id: string }>;
-    await lv.vm.$emit("toggle-like", tracks[0]!);
+    await lv.vm.$emit("toggle-like-track", tracks[0]!);
     await flushPromises();
     expect(w.html()).toBeTruthy();
     w.unmount();
@@ -646,7 +646,7 @@ describe("App.vue — torrent view + album preview", () => {
         await tv.vm.$emit("download-all");
         await tv.vm.$emit("download-album", [{ origIdx: 0, path: "Album/01.mp3" }], "Album");
         await tv.vm.$emit("add-to-queue", 0);
-        await tv.vm.$emit("toggle-like", {
+        await tv.vm.$emit("toggle-like-track", {
           id: "track:rutracker:42:0", type: "track", source: "rutracker",
           magnet: "magnet:?xt=urn:btih:X", fileIdx: 0, fileName: "Album/01.mp3", torrentId: "42",
         });

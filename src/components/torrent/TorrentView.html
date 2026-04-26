@@ -59,7 +59,7 @@
           :title="likes?.[albumLikeId(torrent, singleAlbumWrap.raw.dirPath)] ? 'Убрать из любимых' : 'В любимые'"
           @click="
             emit(
-              'toggle-like',
+              'toggle-like-track',
               makeAlbumLike(torrent, magnet, singleAlbumWrap.raw, singleAlbumWrap.displayName)
             )
           "
