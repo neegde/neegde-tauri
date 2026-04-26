@@ -178,15 +178,22 @@
   animation-delay: 0.36s;
 }
 
-.app-splash-fade-enter-active .app-splash-panel,
-.app-splash-fade-leave-active .app-splash-panel {
+.app-splash-fade-enter-active .app-splash-panel {
   transition: opacity 0.34s ease, transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.app-splash-fade-enter-from .app-splash-panel,
-.app-splash-fade-leave-to .app-splash-panel {
+.app-splash-fade-leave-active .app-splash-panel {
+  transition: opacity 0.55s cubic-bezier(0.4, 0, 1, 1), transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.app-splash-fade-enter-from .app-splash-panel {
   opacity: 0;
   transform: translateY(10px) scale(0.99);
+}
+
+.app-splash-fade-leave-to .app-splash-panel {
+  opacity: 0;
+  transform: translateY(-14px) scale(0.97);
 }
 
 @keyframes caret-blink {

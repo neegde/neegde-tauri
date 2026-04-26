@@ -5,6 +5,8 @@ const props = defineProps({
   visible: { type: Boolean, default: true },
 });
 
+const emit = defineEmits(["complete"]);
+
 const QUESTION_TEXT = "Где слушаешь?";
 
 const REPLY_TEXT = "neegde.ru";
@@ -73,6 +75,10 @@ function runTypewriter() {
   typeLine(QUESTION_TEXT, questionText, SPLASH_TYPE_START_MS, () => {
     typeLine(REPLY_TEXT, devReply, SPLASH_TYPE_LINE_GAP_MS, () => {
       showTypingIndicator.value = true;
+      typewriterChain = window.setTimeout(() => {
+        typewriterChain = null;
+        emit("complete");
+      }, 500);
     });
   });
 }

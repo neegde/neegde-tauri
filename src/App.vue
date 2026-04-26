@@ -195,6 +195,11 @@ const isFirstLaunch = !localStorage.getItem(ONBOARDING_DONE_KEY);
 // On first launch we skip the loading splash entirely — otherwise its typewriter
 // animation flashes for a moment before being replaced by the onboarding dialog.
 const restoringSession = ref(!isFirstLaunch);
+// splashAnimDone: true immediately on first launch (no splash shown), otherwise
+// set to true when AppSplash emits "complete" (typewriter + dots have finished).
+const splashAnimDone = ref(isFirstLaunch);
+const splashVisible = computed(() => restoringSession.value || !splashAnimDone.value);
+function handleSplashComplete() { splashAnimDone.value = true; }
 const showOnboarding = ref(isFirstLaunch);
 
 function dismissOnboarding() {

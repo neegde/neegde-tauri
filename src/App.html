@@ -336,7 +336,7 @@
       @queue-download="onDownloadTrack"
     />
 
-    <AppSplash :visible="restoringSession" />
+    <AppSplash :visible="splashVisible" @complete="handleSplashComplete" />
 
     <OnboardingDialog
       :visible="showOnboarding"
