@@ -87,18 +87,23 @@ watch(
   () => props.visible,
   (v) => {
     clearTypewriter();
-    questionText.value = "";
-    devReply.value = "";
-    showTypingIndicator.value = false;
     if (v) {
+      questionText.value = "";
+      devReply.value = "";
+      showTypingIndicator.value = false;
       runTypewriter();
     }
+    // When `visible` becomes false, do not clear bubble text here: Vue <Transition
+    // leave still runs; resetting would make the outro invisible / one-frame snap.
   },
   { immediate: true }
 );
 
 onUnmounted(() => {
   clearTypewriter();
+  questionText.value = "";
+  devReply.value = "";
+  showTypingIndicator.value = false;
 });
 </script>
 

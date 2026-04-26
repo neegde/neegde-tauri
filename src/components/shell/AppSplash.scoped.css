@@ -178,12 +178,30 @@
   animation-delay: 0.36s;
 }
 
+/* Root layer: also fades so the main UI crossfades through (panel-only fade left an opaque --bg). */
+.app-splash-fade-enter-active.app-splash-layer {
+  transition: opacity 0.38s ease;
+}
+
+.app-splash-fade-leave-active.app-splash-layer {
+  transition: opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.app-splash-fade-enter-from.app-splash-layer {
+  opacity: 0;
+}
+
+.app-splash-fade-leave-to.app-splash-layer {
+  opacity: 0;
+}
+
 .app-splash-fade-enter-active .app-splash-panel {
   transition: opacity 0.34s ease, transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Leave: layer handles opacity; panel can ease out slightly for depth */
 .app-splash-fade-leave-active .app-splash-panel {
-  transition: opacity 0.55s cubic-bezier(0.4, 0, 1, 1), transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .app-splash-fade-enter-from .app-splash-panel {
@@ -192,8 +210,7 @@
 }
 
 .app-splash-fade-leave-to .app-splash-panel {
-  opacity: 0;
-  transform: translateY(-14px) scale(0.97);
+  transform: translateY(-8px) scale(0.99);
 }
 
 @keyframes caret-blink {
@@ -231,5 +248,12 @@
     animation: none;
     opacity: 0.7;
     transform: none;
+  }
+
+  .app-splash-fade-enter-active.app-splash-layer,
+  .app-splash-fade-leave-active.app-splash-layer,
+  .app-splash-fade-enter-active .app-splash-panel,
+  .app-splash-fade-leave-active .app-splash-panel {
+    transition: none;
   }
 }
