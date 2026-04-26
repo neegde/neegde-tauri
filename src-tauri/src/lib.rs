@@ -14,6 +14,7 @@ mod torrent_stream;
 
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -24,6 +25,13 @@ use tauri::{
 /// In-process LRU cache for MusicBrainz + Cover Art Archive results.
 /// Avoids repeat HTTP round-trips for the same artist/album.
 type CoverArtCache = Mutex<LruCache<String, Option<String>>>;
+
+struct CloseTrayState(AtomicBool);
+
+#[tauri::command]
+fn set_close_to_tray(enabled: bool, state: tauri::State<'_, CloseTrayState>) {
+    state.0.store(enabled, Ordering::Relaxed);
+}
 
 use vozduxan_stream::VozduxanStreamState;
 use torrent_stream::{apply_app_debug_from_disk, TorrentStreamState};
@@ -226,11 +234,20 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                window.hide().unwrap();
-                api.prevent_close();
+                let close_to_tray = window
+                    .try_state::<CloseTrayState>()
+                    .map(|s| s.0.load(Ordering::Relaxed))
+                    .unwrap_or(false);
+                if close_to_tray {
+                    let _ = window.hide();
+                    api.prevent_close();
+                } else {
+                    window.app_handle().exit(0);
+                }
             }
         })
         .setup(|app| {
+            app.manage(CloseTrayState(AtomicBool::new(false)));
             app.manage(rutracker::RutrackerState::new(app.handle()));
             app.manage(soulseek::SoulSeekState::new());
             app.manage(Mutex::new(LruCache::<String, Option<String>>::new(
@@ -354,6 +371,7 @@ pub fn run() {
             // ── Query intent resolver ──────────────────────────────────────
             resolver::resolve_query,
             deezer::deezer_search,
+            set_close_to_tray,
             // ── SoulSeek ───────────────────────────────────────────────────────
             soulseek::soulseek_login,
             soulseek::soulseek_logout,
