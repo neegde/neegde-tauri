@@ -285,6 +285,7 @@
               @achievements-reset="handleAchievementsReset"
               @slsk-login="handleSoulseekLogin"
               @slsk-logout="handleSoulseekLogout"
+              @show-update="showUpdateDialog"
             />
           </KeepAlive>
         </div>
@@ -344,6 +345,18 @@
       @close="dismissOnboarding"
       @rt-connected="handleLogin"
       @slsk-connected="handleOnboardingSlskConnected"
+    />
+
+    <UpdateDialog
+      :visible="updateDialogOpen"
+      :version="updateVersion"
+      :date="updateDate"
+      :notes-html="updateNotesHtml"
+      :installing="updateInstalling"
+      :install-progress="updateInstallProgress"
+      :install-error="updateInstallError"
+      @install="installUpdate"
+      @close="dismissUpdate"
     />
 
     <AchievementToast

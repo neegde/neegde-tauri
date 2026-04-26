@@ -61,6 +61,7 @@ import {
 } from "./stores/auth.js";
 import { view, returnView, currentPlaylistId } from "./stores/view.js";
 import { useAppDebug } from "./composables/useAppDebug.js";
+import { useAppUpdate } from "./composables/useAppUpdate.js";
 import { useTheme } from "./composables/useTheme.js";
 import { useMouseSideButtonNav } from "./composables/useMouseSideButtonNav.js";
 import { useAchievements } from "./composables/useAchievements.js";
@@ -133,6 +134,7 @@ import { loadRecentHistory, addToRecentHistory, removeFromRecentHistory } from "
 import { loadSearchHistory, removeFromSearchHistory } from "./lib/searchHistory.js";
 import PlaylistView from "./components/playlist/PlaylistView.vue";
 import AchievementToast from "./components/shell/AchievementToast.vue";
+import UpdateDialog from "./components/shell/UpdateDialog.vue";
 import SystemIcon from "./components/shared/SystemIcon.vue";
 
 // Queue + repeat/shuffle are owned by `stores/queue`. Auto-persist is handled
@@ -167,6 +169,20 @@ function allowPlayerAutoplay() {
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const { theme, setTheme } = useTheme();
+
+// ── Auto-update ───────────────────────────────────────────────────────────────
+const {
+  updateVersion,
+  updateDate,
+  updateNotesHtml,
+  dialogOpen: updateDialogOpen,
+  installing: updateInstalling,
+  installProgress: updateInstallProgress,
+  installError: updateInstallError,
+  installUpdate,
+  dismissUpdate,
+  showUpdateDialog,
+} = useAppUpdate();
 
 // ── Onboarding ────────────────────────────────────────────────────────────────
 const ONBOARDING_DONE_KEY = "neegde.onboarding.v1.done";

@@ -886,19 +886,17 @@
                 <span>Это последняя версия</span>
               </template>
               <template v-else-if="releaseCheckState === 'outdated'">
-                <span class="settings-status-dot status-off" />
-                <span>Доступна версия {{ releaseRemoteTag }}</span>
-                <a
-                  v-if="releasePageUrl"
-                  class="settings-release-link"
-                  :href="releasePageUrl"
-                  rel="noopener noreferrer"
-                  @click.prevent="openExternalUrl(releasePageUrl)"
-                >Релиз на GitHub</a>
+                <span class="settings-status-dot status-update" />
+                <span>Доступна <strong>{{ releaseRemoteTag }}</strong></span>
+                <button
+                  type="button"
+                  class="settings-release-install-btn"
+                  @click="emit('show-update')"
+                >Обновить</button>
               </template>
               <template v-else-if="releaseCheckState === 'ahead'">
                 <span class="settings-status-dot status-on" />
-                <span>Сборка новее опубликованного релиза ({{ releaseRemoteTag }})</span>
+                <span>Свежее релиза {{ releaseRemoteTag }}</span>
               </template>
               <template v-else-if="releaseCheckState === 'none'">
                 <span class="settings-status-dot status-off" />

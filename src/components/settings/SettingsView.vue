@@ -41,6 +41,7 @@ import {
 import appIconSrc from "../../assets/neegde-logo.png";
 import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
 import { ACHIEVEMENT_CATALOG } from "../../achievements/achievementsCore.js";
+import { appDebugLog } from "../../appDebugLog.js";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -114,6 +115,7 @@ const emit = defineEmits([
   "achievements-reset",
   "slsk-login",
   "slsk-logout",
+  "show-update",
 ]);
 
 const achievementRows = computed(() => {
@@ -191,12 +193,14 @@ function syncAboutPairHeights() {
 function runReleaseCheck() {
   if (!githubReleaseApiUrl) return;
   releaseCheckState.value = "loading";
+  appDebugLog("update", `release check → ${githubReleaseApiUrl}`);
   fetchLatestGithubRelease(githubReleaseApiUrl)
     .then((info) => {
       if (!info) {
         releaseCheckState.value = "none";
         releaseRemoteTag.value = null;
         releasePageUrl.value = null;
+        appDebugLog("update", "release check: no releases found (404 or empty)");
         return;
       }
       releaseRemoteTag.value = info.tagName;
@@ -204,12 +208,13 @@ function runReleaseCheck() {
       const cur = normalizeVersionTag(appVersion);
       const remote = normalizeVersionTag(info.tagName);
       const cmp = compareSemver(cur, remote);
-      if (cmp === 0) releaseCheckState.value = "latest";
-      else if (cmp < 0) releaseCheckState.value = "outdated";
-      else releaseCheckState.value = "ahead";
+      const state = cmp === 0 ? "latest" : cmp < 0 ? "outdated" : "ahead";
+      releaseCheckState.value = state;
+      appDebugLog("update", `release check: local=${appVersion} remote=${info.tagName} → ${state}`);
     })
-    .catch(() => {
+    .catch((e) => {
       releaseCheckState.value = "error";
+      appDebugLog("update", `release check error: ${e?.message ?? e}`);
     });
 }
 
@@ -365,7 +370,6 @@ onMounted(() => {
       proxySelect.value = proxyUrlToSelect(url);
     })
     .catch(() => {});
-  if (githubReleaseApiUrl) runReleaseCheck();
   nextTick(() => {
     aboutPairResizeObserver = new ResizeObserver(() => {
       syncAboutPairHeights();
@@ -377,6 +381,7 @@ onMounted(() => {
 
 onActivated(() => {
   loadNerdDiagnostics();
+  if (githubReleaseApiUrl) runReleaseCheck();
 });
 
 onUnmounted(() => {

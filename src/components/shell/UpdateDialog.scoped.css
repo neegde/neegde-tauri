@@ -1,0 +1,291 @@
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  box-sizing: border-box;
+}
+
+.update-panel {
+  width: min(520px, 100%);
+  padding: 24px 24px 20px;
+  border-radius: 14px;
+  background: var(--surface, #181818);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 80vh;
+  overflow: hidden;
+}
+
+/* Header */
+
+.update-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.update-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 7px;
+  border-radius: 20px;
+  background: rgba(252, 116, 29, 0.12);
+  color: var(--accent, #fc741d);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  width: fit-content;
+}
+
+.update-version {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text, #fff);
+}
+
+.update-date {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted, #b3b3b3);
+}
+
+/* Release notes */
+
+.update-notes {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text, #fff);
+  max-height: 300px;
+}
+
+.update-notes--empty {
+  color: var(--muted, #b3b3b3);
+  font-style: italic;
+}
+
+/* Markdown rendering */
+.update-notes :deep(h2),
+.update-notes :deep(h3),
+.update-notes :deep(h4) {
+  margin: 12px 0 4px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text, #fff);
+}
+.update-notes :deep(h2) { font-size: 15px; }
+.update-notes :deep(h3) { font-size: 14px; }
+.update-notes :deep(h4) { font-size: 13px; }
+
+.update-notes :deep(p) {
+  margin: 4px 0;
+  color: var(--muted, #b3b3b3);
+}
+
+.update-notes :deep(ul) {
+  margin: 6px 0;
+  padding-left: 18px;
+  color: var(--muted, #b3b3b3);
+}
+
+.update-notes :deep(li) {
+  margin: 2px 0;
+}
+
+.update-notes :deep(strong) {
+  color: var(--text, #fff);
+  font-weight: 600;
+}
+
+.update-notes :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--accent, #fc741d);
+}
+
+.update-notes :deep(.update-notes-gap) {
+  height: 6px;
+}
+
+.update-notes::-webkit-scrollbar {
+  width: 4px;
+}
+.update-notes::-webkit-scrollbar-track {
+  background: transparent;
+}
+.update-notes::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+}
+
+/* Progress */
+
+.update-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-progress-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent, #fc741d), var(--accent-h, #ff9350));
+  transition: width 0.2s ease-out;
+}
+
+.update-progress-fill--indet {
+  width: 35% !important;
+  animation: update-indet 1.3s ease-in-out infinite;
+}
+
+@keyframes update-indet {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+
+.update-progress-label {
+  font-size: 11px;
+  color: var(--muted, #b3b3b3);
+  min-width: 52px;
+  text-align: right;
+}
+
+/* Error */
+
+.update-error {
+  margin: 0;
+  font-size: 12px;
+  color: #f87171;
+  line-height: 1.4;
+}
+
+/* Buttons */
+
+.update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.update-btn {
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.update-btn--ghost {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border, rgba(255, 255, 255, 0.12));
+  color: var(--muted, #b3b3b3);
+}
+.update-btn--ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text, #fff);
+}
+.update-btn--ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.update-btn--primary {
+  background: linear-gradient(180deg, var(--accent-h, #ff9350) 0%, var(--accent, #fc741d) 100%);
+  color: #141210;
+  box-shadow: 0 4px 16px rgba(252, 116, 29, 0.28);
+}
+.update-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.07);
+  box-shadow: 0 6px 20px rgba(252, 116, 29, 0.38);
+}
+.update-btn--primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.update-btn-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-top-color: rgba(0, 0, 0, 0.65);
+  border-radius: 50%;
+  animation: update-spin 0.7s linear infinite;
+}
+
+@keyframes update-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Transition */
+
+.update-dialog-enter-active,
+.update-dialog-leave-active {
+  transition: opacity 0.22s ease;
+}
+.update-dialog-enter-active .update-panel,
+.update-dialog-leave-active .update-panel {
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+.update-dialog-enter-from,
+.update-dialog-leave-to {
+  opacity: 0;
+}
+.update-dialog-enter-from .update-panel,
+.update-dialog-leave-to .update-panel {
+  transform: scale(0.96) translateY(8px);
+  opacity: 0;
+}
+
+/* Light theme */
+
+[data-theme="light"] .update-panel {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.14);
+}
+[data-theme="light"] .update-badge {
+  background: rgba(252, 116, 29, 0.1);
+}
+[data-theme="light"] .update-btn--primary {
+  color: #1a0a00;
+}
+[data-theme="light"] .update-notes :deep(p),
+[data-theme="light"] .update-notes :deep(ul),
+[data-theme="light"] .update-notes :deep(li) {
+  color: #555;
+}

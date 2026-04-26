@@ -31,6 +31,12 @@
           "neegde"
         ]
       }
+    },
+    "updater": {
+      "pubkey": "PLACEHOLDER_RUN: cargo tauri signer generate -w ~/.tauri/neegde.key",
+      "endpoints": [
+        "https://github.com/neegde/neegde-tauri/releases/latest/download/latest.json"
+      ]
     }
   },
   "bundle": {
