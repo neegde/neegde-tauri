@@ -335,6 +335,17 @@
 
     <AppSplash :visible="restoringSession" />
 
+    <OnboardingDialog
+      :visible="showOnboarding"
+      :rt-logged-in="rtLoggedIn"
+      :rt-username="rtUsername"
+      :slsk-connected="slskConnected"
+      :slsk-username="slskUsername"
+      @close="dismissOnboarding"
+      @rt-connected="handleLogin"
+      @slsk-connected="handleOnboardingSlskConnected"
+    />
+
     <AchievementToast
       v-model:open="achievementToastOpen"
       :title="achievementToastTitle"

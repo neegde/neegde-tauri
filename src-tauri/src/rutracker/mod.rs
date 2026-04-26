@@ -4,7 +4,7 @@ pub mod topic;
 use base64::Engine as _;
 use encoding_rs::WINDOWS_1251;
 use lru::LruCache;
-use reqwest::{header, Client, ClientBuilder, Proxy};
+use reqwest::{header, Client, ClientBuilder, Proxy, Url};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, BufWriter};
@@ -12,7 +12,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::Manager;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::Semaphore;
 
 // ── Shared data types ─────────────────────────────────────────────────────────
@@ -98,9 +98,12 @@ fn save_meta(path: &Option<PathBuf>, meta: &SessionMeta) {
 
 #[allow(deprecated)]
 fn load_cookie_store(path: &Option<PathBuf>) -> CookieStore {
+    // Use `load_json_all` to include non-persistent cookies (e.g. phpBB's
+    // `bb_session`, which is HttpOnly without Max-Age/Expires — the browser
+    // treats it as session-only, but we need it across app restarts).
     path.as_ref()
         .and_then(|p| std::fs::File::open(p).ok())
-        .and_then(|f| CookieStore::load_json(BufReader::new(f)).ok())
+        .and_then(|f| CookieStore::load_json_all(BufReader::new(f)).ok())
         .unwrap_or_else(|| CookieStore::new(None))
 }
 
@@ -110,7 +113,8 @@ fn save_cookie_store(path: &Option<PathBuf>, store: &Arc<CookieStoreMutex>) {
         if let Ok(file) = std::fs::File::create(p) {
             let mut writer = BufWriter::new(file);
             if let Ok(locked) = store.lock() {
-                let _ = locked.save_json(&mut writer);
+                // Persist session cookies too — see `load_cookie_store` note.
+                let _ = locked.save_incl_expired_and_nonpersistent_json(&mut writer);
             }
         }
     }
@@ -350,6 +354,74 @@ fn extract_user_id(html: &str) -> Option<String> {
     None
 }
 
+/// Best-effort display name from forum index HTML (phpBB profile link text).
+fn extract_username_from_forum_page(html: &str) -> Option<String> {
+    for pat in &["mode=viewprofile&u=", "mode=viewprofile&amp;u="] {
+        let mut scan = 0usize;
+        while let Some(rel) = html[scan..].find(pat) {
+            let hit = scan + rel;
+            let after = &html[hit + pat.len()..];
+            let uid_len = after
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(after.len());
+            if uid_len == 0 {
+                scan = hit + pat.len();
+                continue;
+            }
+            let prefix = &html[..hit];
+            let Some(a_open) = prefix.rfind("<a ") else {
+                scan = hit + pat.len();
+                continue;
+            };
+            let tail = &html[a_open..];
+            let Some(gt) = tail.find('>') else {
+                scan = hit + pat.len();
+                continue;
+            };
+            let inner_start = a_open + gt + 1;
+            let inner_rest = &html[inner_start..];
+            let Some(close_a) = inner_rest.find("</a>") else {
+                scan = hit + pat.len();
+                continue;
+            };
+            let inner = inner_rest[..close_a].trim();
+            if inner.contains("<img") || inner.is_empty() {
+                scan = hit + pat.len();
+                continue;
+            }
+            let name = strip_simple_inline_markup(inner);
+            if !name.is_empty() && name.len() < 128 {
+                return Some(name);
+            }
+            scan = hit + pat.len();
+        }
+    }
+    None
+}
+
+/// Removes a single layer of common inline wrappers (`<b>`, `<span>`) from link HTML.
+fn strip_simple_inline_markup(s: &str) -> String {
+    let mut t = s.trim().to_string();
+    for (o, c) in [
+        ("<b>", "</b>"),
+        ("<B>", "</B>"),
+        ("<strong>", "</strong>"),
+        ("<STRONG>", "</STRONG>"),
+    ] {
+        if t.starts_with(o) && t.ends_with(c) && t.len() > o.len() + c.len() {
+            t = t[o.len()..t.len() - c.len()].trim().to_string();
+        }
+    }
+    if let Some(i) = t.find('>') {
+        if let Some(j) = t.rfind('<') {
+            if j > i {
+                t = t[i + 1..j].trim().to_string();
+            }
+        }
+    }
+    t.trim().to_string()
+}
+
 /// Extract avatar src from a profile page HTML.
 /// Rutracker uses <img id="avatar-img" src="..."> on profile pages.
 fn extract_avatar_from_profile(html: &str, base: &str) -> Option<String> {
@@ -476,22 +548,47 @@ pub async fn rutracker_login(
         .await
         .map_err(|e| format!("Сетевая ошибка при входе: {}", e))?;
 
-    let final_url = resp.url().to_string();
     let status = resp.status();
     let bytes = resp.bytes().await.unwrap_or_default();
     let (decoded, _, _) = WINDOWS_1251.decode(&bytes);
 
-    // `profile.php` must not be used here: the guest login page links to
-    // registration (`profile.php?mode=register`, etc.), which would falsely
-    // mark any credentials as valid.
-    let redirected_away = !final_url.contains("/login.php");
-    let body_has_logout_link = decoded.contains("logout.php");
+    // Detect the explicit "login form" markers on the POST response body.
+    // phpBB returns the login form again (same `name="login_username"` field)
+    // whenever credentials are wrong / CAPTCHA is required / account is banned.
+    // If the form is NOT present AND the status is OK-ish, we treat the session
+    // as most likely authenticated and confirm with a follow-up probe.
+    let looks_like_login_form = decoded.contains(r#"name="login_username""#)
+        || decoded.contains(r#"name='login_username'"#);
 
-    if redirected_away || body_has_logout_link {
-        // Fetch avatar through the authenticated client → base64 data: URL
+    // Fast path: some phpBB configs inline the full index into the POST response
+    // and it already looks authenticated — no need to probe.
+    let body_looks_logged_in = page_looks_logged_in(&decoded);
+
+    // Slow path: POST responded with a meta-refresh "Login successful, redirecting…"
+    // page without the usual auth markers. Probe the forum index with the
+    // now-set session cookie; real auth is detectable there.
+    let session_verified = if body_looks_logged_in {
+        true
+    } else if !looks_like_login_form && (status.is_success() || status.is_redirection()) {
+        match client
+            .get(format!("{}/forum/index.php", base))
+            .send()
+            .await
+        {
+            Ok(r) => {
+                let probe_bytes = r.bytes().await.unwrap_or_default();
+                let (probe_html, _, _) = WINDOWS_1251.decode(&probe_bytes);
+                page_looks_logged_in(&probe_html)
+            }
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+
+    if session_verified {
         let avatar_data_url = fetch_avatar(&client, &decoded, &base).await;
 
-        // Persist both the cookie jar and the meta
         state.persist(&SessionMeta {
             username: Some(username.clone()),
             avatar_data_url: avatar_data_url.clone(),
@@ -511,19 +608,25 @@ pub async fn rutracker_login(
         });
     }
 
-    let error = if decoded.contains("неверный")
+    // Session NOT established — classify the failure. Order matters: CAPTCHA
+    // markers often co-occur with "неверный"/"password" hint strings in phpBB,
+    // so CAPTCHA must be checked before the generic bad-password branch.
+    let is_captcha = decoded.contains("апч")
+        || decoded.contains("captcha")
+        || decoded.contains("CAPTCHA")
+        || decoded.contains("cap_sid");
+    let is_banned = decoded.contains("бан") || decoded.contains("заблокирован");
+    let is_bad_creds = decoded.contains("неверный")
         || decoded.contains("Неверный")
-        || decoded.contains("пароль")
-        || decoded.contains("password")
         || decoded.contains("invalid")
-        || decoded.contains("Invalid")
-    {
-        "Неверный логин или пароль".to_string()
-    } else if decoded.contains("апч") || decoded.contains("captcha") || decoded.contains("CAPTCHA")
-    {
+        || decoded.contains("Invalid");
+
+    let error = if is_captcha {
         "Требуется CAPTCHA — попробуйте войти через браузер".to_string()
-    } else if decoded.contains("бан") || decoded.contains("заблокирован") {
+    } else if is_banned {
         "Аккаунт заблокирован".to_string()
+    } else if is_bad_creds {
+        "Неверный логин или пароль".to_string()
     } else {
         format!("Ошибка входа (HTTP {})", status.as_u16())
     };
@@ -900,4 +1003,261 @@ pub async fn rutracker_download_torrent_file_b64(
         &base64::engine::general_purpose::STANDARD,
         &raw,
     ))
+}
+
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+
+fn page_looks_logged_in(html: &str) -> bool {
+    let has_login_form = html.contains(r#"name="login_username""#)
+        || html.contains(r#"name='login_username'"#);
+    let has_guest_link = html.contains("login.php?redirect=");
+    let has_cf_challenge = html.contains("cf-browser-verification")
+        || html.contains("challenge-platform")
+        || html.contains("just a moment");
+    if has_login_form || has_guest_link || has_cf_challenge {
+        return false;
+    }
+
+    let logged_in_markers = [
+        "logout.php",
+        "login.php?logout",
+        "?logout=1",
+        "&logout=1",
+        "mode=logout",
+        "profile.php?mode=editprofile",
+        "privmsg.php?folder=inbox",
+        "pm.php?folder=inbox",
+        "ucp.php?mode=logout",
+    ];
+    logged_in_markers.iter().any(|m| html.contains(m))
+}
+
+// ── Connectivity probe ────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct ConnectivityResult {
+    pub reachable: bool,
+    pub status: Option<u16>,
+    pub using_proxy: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn rutracker_check_connectivity(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+) -> Result<ConnectivityResult, String> {
+    let base = mirror.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Ok(ConnectivityResult {
+            reachable: false,
+            status: None,
+            using_proxy: load_http_proxy_url(&state.proxy_path),
+            error: Some("Пустой URL зеркала".into()),
+        });
+    }
+    let url = format!("{}/forum/index.php", base);
+    let client = state.http_client()?;
+    let using_proxy = load_http_proxy_url(&state.proxy_path);
+
+    match client.get(&url).timeout(Duration::from_secs(10)).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let code = status.as_u16();
+            let ok = status.is_success() || status.is_redirection();
+            Ok(ConnectivityResult {
+                reachable: ok,
+                status: Some(code),
+                using_proxy,
+                error: if ok { None } else { Some(format!("HTTP {}", code)) },
+            })
+        }
+        Err(e) => Ok(ConnectivityResult {
+            reachable: false,
+            status: None,
+            using_proxy,
+            error: Some(format!("{}", e)),
+        }),
+    }
+}
+
+// ── WebView login (для CAPTCHA / Cloudflare) ──────────────────────────────────
+
+const LOGIN_WEBVIEW_LABEL: &str = "rt-login-webview";
+
+fn ingest_webview_cookies(
+    cookies: &[cookie::Cookie<'static>],
+    request_url: &Url,
+    store: &Arc<CookieStoreMutex>,
+) -> usize {
+    let Ok(mut guard) = store.lock() else {
+        return 0;
+    };
+    let mut count = 0usize;
+    for c in cookies {
+        if guard.insert_raw(c, request_url).is_ok() {
+            count += 1;
+            continue;
+        }
+        let header = c.to_string();
+        if guard.parse(&header, request_url).is_ok() {
+            count += 1;
+        }
+    }
+    count
+}
+
+async fn try_promote_webview_session(
+    window: &tauri::WebviewWindow,
+    state: &tauri::State<'_, RutrackerState>,
+    base: &str,
+    login_url: &Url,
+) -> Result<Option<String>, String> {
+    let mut all_cookies: Vec<cookie::Cookie<'static>> = window.cookies().unwrap_or_default();
+    let for_url = window
+        .cookies_for_url(login_url.clone())
+        .unwrap_or_default();
+    for c in for_url {
+        let dup = all_cookies
+            .iter()
+            .any(|e| e.name() == c.name() && e.domain() == c.domain() && e.path() == c.path());
+        if !dup {
+            all_cookies.push(c);
+        }
+    }
+
+    if all_cookies.is_empty() {
+        return Ok(None);
+    }
+
+    let _ = ingest_webview_cookies(&all_cookies, login_url, &state.cookie_store);
+
+    let probe_url = format!("{}/forum/index.php", base);
+    let client = state.http_client()?;
+    let resp = client
+        .get(&probe_url)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+
+    let bytes = resp.bytes().await.unwrap_or_default();
+    let (decoded, _, _) = WINDOWS_1251.decode(&bytes);
+    let html = decoded.into_owned();
+
+    if page_looks_logged_in(&html) {
+        Ok(Some(html))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn finalize_webview_login(
+    state: &tauri::State<'_, RutrackerState>,
+    base: &str,
+    html: &str,
+) -> Result<LoginResult, String> {
+    let client = state.http_client()?;
+    let username = extract_username_from_forum_page(html);
+    let avatar_data_url = fetch_avatar(&client, html, base).await;
+
+    state.persist(&SessionMeta {
+        username: username.clone(),
+        avatar_data_url: avatar_data_url.clone(),
+        login_mirror: Some(base.to_string()),
+    });
+
+    {
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "lock error".to_string())?;
+        inner.logged_in = true;
+        inner.username = username.clone();
+        inner.avatar_url = avatar_data_url.clone();
+    }
+
+    Ok(LoginResult {
+        success: true,
+        error: None,
+        username,
+        avatar_url: avatar_data_url,
+    })
+}
+
+/// Open an embedded WebView at the rutracker login page and wait for a session.
+///
+/// Polls every 1.5 s by copying webview cookies into the reqwest jar and
+/// probing `/forum/index.php`. Returns once login is detected, the window is
+/// closed, or the 10-minute timeout elapses.
+#[tauri::command]
+pub async fn rutracker_login_via_webview(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+) -> Result<LoginResult, String> {
+    let base = mirror.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Err("Пустое зеркало".into());
+    }
+    let login_url_str = format!("{}/forum/login.php", base);
+    let login_url: Url = login_url_str
+        .parse()
+        .map_err(|e| format!("Некорректный URL зеркала: {}", e))?;
+
+    if let Some(old) = app.get_webview_window(LOGIN_WEBVIEW_LABEL) {
+        let _ = old.destroy();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let window = WebviewWindowBuilder::new(
+        &app,
+        LOGIN_WEBVIEW_LABEL,
+        WebviewUrl::External(login_url.clone()),
+    )
+    .title("Rutracker — вход")
+    .inner_size(720.0, 860.0)
+    .min_inner_size(480.0, 600.0)
+    .resizable(true)
+    .focused(true)
+    .center()
+    .build()
+    .map_err(|e| format!("Не удалось открыть окно входа: {}", e))?;
+
+    let poll_interval = Duration::from_millis(1500);
+    let timeout = Duration::from_secs(600);
+    let start = std::time::Instant::now();
+
+    loop {
+        if app.get_webview_window(LOGIN_WEBVIEW_LABEL).is_none() {
+            if let Ok(Some(html)) =
+                try_promote_webview_session(&window, &state, &base, &login_url).await
+            {
+                return finalize_webview_login(&state, &base, &html).await;
+            }
+            return Ok(LoginResult {
+                success: false,
+                error: Some("Окно входа закрыто — вход отменён".into()),
+                username: None,
+                avatar_url: None,
+            });
+        }
+        if start.elapsed() > timeout {
+            let _ = window.destroy();
+            return Ok(LoginResult {
+                success: false,
+                error: Some("Истекло время ожидания входа".into()),
+                username: None,
+                avatar_url: None,
+            });
+        }
+
+        if let Ok(Some(html)) =
+            try_promote_webview_session(&window, &state, &base, &login_url).await
+        {
+            let _ = window.destroy();
+            return finalize_webview_login(&state, &base, &html).await;
+        }
+
+        tokio::time::sleep(poll_interval).await;
+    }
 }

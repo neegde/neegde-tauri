@@ -17,7 +17,7 @@ import {
 } from "./player/trackForQueue.js";
 import { restoreSession } from "./rutracker/auth.js";
 import { markRutrackerHadAccount, clearRutrackerHadAccount } from "./rutracker/accountHint.js";
-import { resolveMirrorIfNeeded } from "./rutracker/config.js";
+import { resolveMirrorIfNeeded, withTimeout } from "./rutracker/config.js";
 import { syncRtHttpProxyCacheFromBackend } from "./rutracker/proxyConfig.js";
 import { normalizeLoginStatus } from "./rutracker/sessionStatus.js";
 import {
@@ -126,6 +126,7 @@ import NavArrows       from "./components/shell/NavArrows.vue";
 import MagnetLinkDialog from "./components/shell/MagnetLinkDialog.vue";
 import DownloadProgressOverlay from "./components/shell/DownloadProgressOverlay.vue";
 import AppSplash from "./components/shell/AppSplash.vue";
+import OnboardingDialog from "./components/shell/OnboardingDialog.vue";
 import HomeView from "./components/home/HomeView.vue";
 import { openAppDebugWindow } from "./appDebugWindow.js";
 import { loadRecentHistory, addToRecentHistory, removeFromRecentHistory } from "./lib/recentHistory.js";
@@ -167,12 +168,35 @@ function allowPlayerAutoplay() {
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const { theme, setTheme } = useTheme();
 
-const restoringSession = ref(true);
+// ── Onboarding ────────────────────────────────────────────────────────────────
+const ONBOARDING_DONE_KEY = "neegde.onboarding.v1.done";
+const isFirstLaunch = !localStorage.getItem(ONBOARDING_DONE_KEY);
+
+// On first launch we skip the loading splash entirely — otherwise its typewriter
+// animation flashes for a moment before being replaced by the onboarding dialog.
+const restoringSession = ref(!isFirstLaunch);
+const showOnboarding = ref(isFirstLaunch);
+
+function dismissOnboarding() {
+  showOnboarding.value = false;
+  localStorage.setItem(ONBOARDING_DONE_KEY, "1");
+}
+
+function handleOnboardingSlskConnected(username) {
+  setSlskConnected(username);
+}
 
 /** If restore hangs (сеть/DNS), не оставляем UI в вечном «подключении». */
 const RESTORE_UI_MAX_MS = 5_000;
 
+/** Cap `rutracker_restore_session` so a wedged request cannot block shell forever. */
+const RESTORE_SESSION_BUDGET_MS = 20_000;
+
 onMounted(async () => {
+  const unblockTimer = window.setTimeout(() => {
+    restoringSession.value = false;
+  }, RESTORE_UI_MAX_MS);
+
   // v2 persistence bootstrap: migrate legacy rows once, seed new stores.
   // Runs before anything else so Track ids referenced by likes / playlists /
   // queue snapshots are already resolvable through the entities registry.
@@ -181,13 +205,12 @@ onMounted(async () => {
   seedPlaylistsFromSnapshot(persisted.playlists);
   seedQueueFromSnapshot(persisted.queue);
 
-  const unblockTimer = window.setTimeout(() => {
-    restoringSession.value = false;
-  }, RESTORE_UI_MAX_MS);
-
   try {
     await resolveMirrorIfNeeded();
-    const raw = await restoreSession();
+    const raw = await withTimeout(
+      restoreSession(),
+      RESTORE_SESSION_BUDGET_MS
+    );
     const s = normalizeLoginStatus(raw);
     if (s.loggedIn) handleLogin(s.username, s.avatarUrl);
   } catch (_) { /* offline or no saved session — stay logged out */ }
@@ -198,6 +221,7 @@ onMounted(async () => {
   // errors are immediately visible without manually enabling debug mode in settings.
   if (import.meta.env.DEV) {
     void openAppDebugWindow().catch(() => {});
+    window.__neegde_dev_show_onboarding = () => { showOnboarding.value = true; };
   }
   window.clearTimeout(unblockTimer);
   restoringSession.value = false;

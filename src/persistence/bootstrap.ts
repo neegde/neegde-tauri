@@ -29,16 +29,28 @@ export interface PersistenceSnapshot {
   queue: QueueSnapshot;
 }
 
-export function loadPersistedState(): PersistenceSnapshot {
-  migrateLegacyStorage();
-  loadTrackCache();
-  for (const id of allTrackIds()) {
-    const track = hydrateTrack(id);
-    if (track) registerEntity(track);
-  }
+function emptyPersistenceSnapshot(): PersistenceSnapshot {
   return {
-    likes: loadLikesSnapshot(),
-    playlists: loadPlaylistsSnapshot(),
-    queue: loadQueueSnapshot(),
+    likes: { trackIds: [], albumIds: [], likedAt: {} },
+    playlists: [],
+    queue: { trackIds: [], pos: 0 },
   };
+}
+
+export function loadPersistedState(): PersistenceSnapshot {
+  try {
+    migrateLegacyStorage();
+    loadTrackCache();
+    for (const id of allTrackIds()) {
+      const track = hydrateTrack(id);
+      if (track) registerEntity(track);
+    }
+    return {
+      likes: loadLikesSnapshot(),
+      playlists: loadPlaylistsSnapshot(),
+      queue: loadQueueSnapshot(),
+    };
+  } catch {
+    return emptyPersistenceSnapshot();
+  }
 }

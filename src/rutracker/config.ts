@@ -17,6 +17,31 @@ const STORAGE_KEY = "rt_mirror";
 const MODE_KEY = "rt_mirror_mode";
 const RESOLVED_KEY = "rt_resolved_mirror";
 
+/** Upper bound for `rutracker_pick_mirror` (worst case is many 12s mirror probes in Rust). */
+const MIRROR_PICK_BUDGET_MS = 35_000;
+
+/**
+ * Fails the promise if `p` has not settled within `ms` (safety net when Tauri invoke
+ * or the backend is slow / wedged on bad networks).
+ */
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = window.setTimeout(() => {
+      reject(new Error("timeout"));
+    }, ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
 export const MIRROR_MODE_AUTO = "auto";
 export const MIRROR_MODE_MANUAL = "manual";
 
@@ -57,9 +82,10 @@ export async function resolveMirrorIfNeeded(): Promise<void> {
     return;
   }
   try {
-    const picked = await invoke<string>("rutracker_pick_mirror", {
-      candidates: KNOWN_MIRRORS,
-    });
+    const picked = await withTimeout(
+      invoke<string>("rutracker_pick_mirror", { candidates: KNOWN_MIRRORS }),
+      MIRROR_PICK_BUDGET_MS
+    );
     resolvedMirrorCache = picked;
     localStorage.setItem(RESOLVED_KEY, picked);
   } catch {
@@ -69,9 +95,10 @@ export async function resolveMirrorIfNeeded(): Promise<void> {
 }
 
 export async function probeMirrorsNow(): Promise<string> {
-  const picked = await invoke<string>("rutracker_pick_mirror", {
-    candidates: KNOWN_MIRRORS,
-  });
+  const picked = await withTimeout(
+    invoke<string>("rutracker_pick_mirror", { candidates: KNOWN_MIRRORS }),
+    MIRROR_PICK_BUDGET_MS
+  );
   resolvedMirrorCache = picked;
   localStorage.setItem(RESOLVED_KEY, picked);
   return picked;

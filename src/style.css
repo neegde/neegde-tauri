@@ -35,6 +35,11 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
 
+#app {
+  min-height: 100%;
+  height: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -209,6 +214,17 @@ body {
 }
 .login-btn:disabled            { opacity: 0.5; cursor: not-allowed; }
 .login-btn:not(:disabled):hover { background: var(--accent-h); transform: scale(1.02); }
+.login-btn--ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border, rgba(255,255,255,.14));
+  font-weight: 600;
+}
+.login-btn--ghost:not(:disabled):hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--muted);
+  transform: none;
+}
 
 /* ── Main ─────────────────────────────────────────────────────────────── */
 .main-wrap {
