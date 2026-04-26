@@ -278,6 +278,7 @@
               :slsk-username="slskUsername"
               :slsk-logging-in="slskLoggingIn"
               :slsk-login-error="slskLoginError"
+              :close-tray="closeTray"
               @login="handleLogin"
               @logout="handleLogout"
               @theme-change="handleThemeChange"
@@ -286,6 +287,7 @@
               @slsk-login="handleSoulseekLogin"
               @slsk-logout="handleSoulseekLogout"
               @show-update="showUpdateDialog"
+              @close-tray-change="setCloseTray"
             />
           </KeepAlive>
         </div>

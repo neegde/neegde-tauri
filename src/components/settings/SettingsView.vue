@@ -56,6 +56,7 @@ const props = defineProps({
   slskUsername:     { type: String, default: null },
   slskLoggingIn:    { type: Boolean, default: false },
   slskLoginError:   { type: String, default: null },
+  closeTray:        { type: Boolean, default: true },
 });
 
 // avatar image error fallback
@@ -116,6 +117,7 @@ const emit = defineEmits([
   "slsk-login",
   "slsk-logout",
   "show-update",
+  "close-tray-change",
 ]);
 
 const achievementRows = computed(() => {

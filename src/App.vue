@@ -62,6 +62,7 @@ import {
 import { view, returnView, currentPlaylistId } from "./stores/view.js";
 import { useAppDebug } from "./composables/useAppDebug.js";
 import { useAppUpdate } from "./composables/useAppUpdate.js";
+import { useTrayPreference } from "./composables/useTrayPreference.js";
 import { useTheme } from "./composables/useTheme.js";
 import { useMouseSideButtonNav } from "./composables/useMouseSideButtonNav.js";
 import { useAchievements } from "./composables/useAchievements.js";
@@ -169,6 +170,9 @@ function allowPlayerAutoplay() {
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const { theme, setTheme } = useTheme();
+
+// ── Tray preference ───────────────────────────────────────────────────────────
+const { closeTray, setCloseTray } = useTrayPreference();
 
 // ── Auto-update ───────────────────────────────────────────────────────────────
 const {
