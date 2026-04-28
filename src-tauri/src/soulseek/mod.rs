@@ -121,11 +121,16 @@ impl SoulSeekState {
     }
 
     pub(crate) fn get_session(&self) -> Result<Arc<Session>, String> {
-        self.session
-            .lock()
-            .map_err(|_| "lock error".to_string())?
-            .clone()
-            .ok_or_else(|| "Not connected to SoulSeek".to_string())
+        let guard = self.session.lock().map_err(|_| "lock error".to_string())?;
+        let Some(s) = guard.as_ref() else {
+            return Err("Not connected to SoulSeek".to_string());
+        };
+        if s.is_dead() {
+            // Reader/listener loop already emitted `soulseek-disconnected`; the
+            // frontend listener will trigger an auto-reconnect using saved creds.
+            return Err("Соединение с SoulSeek потеряно — переподключение…".to_string());
+        }
+        Ok(Arc::clone(s))
     }
 }
 
@@ -133,6 +138,7 @@ impl SoulSeekState {
 
 #[tauri::command]
 pub async fn soulseek_login(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SoulSeekState>,
     ts: tauri::State<'_, crate::torrent_stream::TorrentStreamState>,
     username: String,
@@ -144,7 +150,7 @@ pub async fn soulseek_login(
         *guard = None; // drops Arc, background tasks see Weak upgrade fail and exit
     }
 
-    match Session::connect(username.clone(), password, ts.debug_log()).await {
+    match Session::connect(app, username.clone(), password, ts.debug_log()).await {
         Ok(sess) => {
             let mut guard = state.session.lock().map_err(|_| "lock error".to_string())?;
             *guard = Some(sess);
@@ -181,11 +187,13 @@ pub fn soulseek_logout(state: tauri::State<'_, SoulSeekState>) -> Result<(), Str
 pub fn soulseek_status(state: tauri::State<'_, SoulSeekState>) -> Result<SlskStatus, String> {
     let guard = state.session.lock().map_err(|_| "lock error".to_string())?;
     match guard.as_ref() {
-        Some(s) => Ok(SlskStatus {
+        // A dead session is logically disconnected — the network plumbing already
+        // terminated, only the struct lingers until `soulseek_login` replaces it.
+        Some(s) if !s.is_dead() => Ok(SlskStatus {
             connected: true,
             username: Some(s.username.clone()),
         }),
-        None => Ok(SlskStatus { connected: false, username: None }),
+        _ => Ok(SlskStatus { connected: false, username: None }),
     }
 }
 

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::net::Ipv4Addr;
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex as StdMutex,
 };
 use std::time::Duration;
@@ -77,6 +77,14 @@ pub struct SlskFileResult {
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
+/// Payload of the `soulseek-disconnected` Tauri event, emitted exactly once when
+/// the server connection or peer listener of a live session terminates.
+#[derive(Serialize, Clone)]
+struct SlskDisconnectedEvent {
+    username: String,
+    reason: String,
+}
+
 pub struct Session {
     pub username: String,
     pub listen_port: u16,
@@ -90,6 +98,12 @@ pub struct Session {
     /// Lowercase SoulSeek username → FIFO of xfer tokens waiting for `ConnectToPeer` type F.
     pending_f_peer_order: Arc<DashMap<String, VecDeque<u32>>>,
     pub debug_log: Arc<AppDebugLog>,
+    /// Set when the underlying server connection or peer listener has terminated.
+    /// Read by `is_dead()` / `soulseek_status` / `SoulSeekState::get_session` so the UI
+    /// surfaces the broken socket immediately instead of after a 12 s search timeout.
+    dead: AtomicBool,
+    /// Used to emit `soulseek-disconnected` exactly once when the session goes stale.
+    app_handle: AppHandle,
 }
 
 impl Session {
@@ -97,11 +111,50 @@ impl Session {
     pub fn slog(&self, msg: impl Into<String>) {
         self.debug_log.push("soulseek", msg, None);
     }
+
+    /// Returns true if this session's network plumbing has terminated.
+    pub fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::Acquire)
+    }
+
+    /// Marks the session as dead and notifies the frontend exactly once. Subsequent
+    /// calls are no-ops thanks to the atomic swap, so it is safe to invoke from any
+    /// failure path (server reader exit, peer listener exit, write error in
+    /// `send_raw`).
+    ///
+    /// Args:
+    ///     reason: Short human-readable explanation routed to the debug log and
+    ///         the `soulseek-disconnected` event payload.
+    pub fn mark_dead_and_notify(&self, reason: impl Into<String>) {
+        if self.dead.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let reason = reason.into();
+        self.slog(format!("session marked dead: {reason}"));
+        let _ = self.app_handle.emit(
+            "soulseek-disconnected",
+            SlskDisconnectedEvent {
+                username: self.username.clone(),
+                reason,
+            },
+        );
+    }
 }
 
 impl Session {
     /// Connect to the SoulSeek server and authenticate. Returns `Arc<Session>` on success.
-    pub async fn connect(username: String, password: String, debug_log: Arc<AppDebugLog>) -> Result<Arc<Self>, String> {
+    ///
+    /// Args:
+    ///     app_handle: Tauri handle used to emit `soulseek-disconnected` if the session
+    ///         later goes stale (server idle-kick, NAT timeout, sleep/wake).
+    ///     username: SoulSeek account name.
+    ///     password: SoulSeek password.
+    ///     debug_log: Shared debug log sink so server/peer protocol traces appear in
+    ///         the in-app console alongside C++ and torrent logs.
+    ///
+    /// Returns:
+    ///     Live session on success or a human-readable error string on login failure.
+    pub async fn connect(app_handle: AppHandle, username: String, password: String, debug_log: Arc<AppDebugLog>) -> Result<Arc<Self>, String> {
         let stream = TcpStream::connect((SERVER_HOST, SERVER_PORT))
             .await
             .map_err(|e| format!("Cannot connect to SoulSeek server: {e}"))?;
@@ -164,6 +217,8 @@ impl Session {
             pending_f_conns: Arc::clone(&pending_f_conns),
             pending_f_peer_order: Arc::clone(&pending_f_peer_order),
             debug_log,
+            dead: AtomicBool::new(false),
+            app_handle,
         });
 
         // Post-login housekeeping messages expected by the server
@@ -199,11 +254,21 @@ impl Session {
         Ok(session)
     }
 
-    /// Send a pre-built message to the server.
+    /// Send a pre-built message to the server. On any I/O failure the session is
+    /// flagged dead immediately so subsequent searches fail fast with a useful
+    /// error instead of silently waiting out the 12 s search timeout.
     pub async fn send_raw(&self, data: Vec<u8>) -> std::io::Result<()> {
-        let mut w = self.writer.lock().await;
-        w.write_all(&data).await?;
-        w.flush().await
+        let res = {
+            let mut w = self.writer.lock().await;
+            match w.write_all(&data).await {
+                Ok(()) => w.flush().await,
+                Err(e) => Err(e),
+            }
+        };
+        if let Err(ref e) = res {
+            self.mark_dead_and_notify(format!("server write failed: {e}"));
+        }
+        res
     }
 
     /// Network-wide file search. Blocks up to SEARCH_TIMEOUT_SECS collecting results.
@@ -429,7 +494,12 @@ async fn server_reader_loop(mut rh: OwnedReadHalf, sess: std::sync::Weak<Session
         let payload = match recv_msg(&mut rh).await {
             Ok(p) => p,
             Err(e) => {
-                if let Some(s) = sess.upgrade() { s.slog(format!("server disconnected: {e}")); }
+                // Skip notification if the only remaining strong refs are gone — the
+                // session was already replaced by `soulseek_login`/`soulseek_logout`,
+                // so a stale "disconnected" event would just flicker the UI.
+                if let Some(s) = sess.upgrade() {
+                    s.mark_dead_and_notify(format!("server read error: {e}"));
+                }
                 break;
             }
         };
@@ -656,7 +726,12 @@ async fn peer_listener_loop(listener: TcpListener, sess: std::sync::Weak<Session
         let (stream, _) = match listener.accept().await {
             Ok(s) => s,
             Err(e) => {
-                if let Some(s) = sess.upgrade() { s.slog(format!("peer listener error: {e}")); }
+                // Listener death means firewalled peers can no longer reach us, which
+                // is enough to make `search` return zero hits — treat it as a fatal
+                // session failure so the frontend reconnects from scratch.
+                if let Some(s) = sess.upgrade() {
+                    s.mark_dead_and_notify(format!("peer listener error: {e}"));
+                }
                 break;
             }
         };

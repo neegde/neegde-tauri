@@ -1,6 +1,7 @@
 <script setup>
 import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { appDebugLog } from "./appDebugLog.js";
 import {
   isAudio,
@@ -260,6 +261,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (typeof unlistenSlskDisconnected === "function") {
+    unlistenSlskDisconnected();
+    unlistenSlskDisconnected = null;
+  }
 });
 
 const handleThemeChange = setTheme;
@@ -267,20 +272,61 @@ const handleThemeChange = setTheme;
 // ── Auth ──────────────────────────────────────────────────────────────────────
 // Reactive state lives in src/stores/auth.js. Only RT session restore and SLSK
 // auto-login side-effects run here.
+
+// Throttles auto-reconnect on `soulseek-disconnected` so a flapping server (or
+// the rare race where an old session emits a stale event right after manual
+// re-login) can't pin us into a relogin loop.
+const SLSK_RECONNECT_COOLDOWN_MS = 5000;
+let slskReconnecting = false;
+let slskLastReconnectAt = 0;
+let unlistenSlskDisconnected = null;
+
+/**
+ * Re-login to SoulSeek using saved credentials. Used both at app start (when no
+ * live session is reported by the backend) and when the backend emits
+ * `soulseek-disconnected` for a previously live session.
+ *
+ * Returns:
+ *   Resolves once the relogin attempt finished. Failures fall back to
+ *   `setSlskDisconnected()` so the UI shows the real state.
+ */
+async function tryAutoLoginSoulseek() {
+  if (slskReconnecting) return;
+  const now = Date.now();
+  if (now - slskLastReconnectAt < SLSK_RECONNECT_COOLDOWN_MS) return;
+  slskReconnecting = true;
+  slskLastReconnectAt = now;
+  const creds = await soulseekLoadCredentials().catch(() => null);
+  if (!creds) {
+    slskReconnecting = false;
+    return;
+  }
+  const [username, password] = creds;
+  const result = await soulseekLogin(username, password).catch(() => null);
+  if (result?.success) {
+    setSlskConnected(result.username);
+  } else {
+    setSlskDisconnected();
+  }
+  slskReconnecting = false;
+}
+
 onMounted(async () => {
-  try {
-    const status = await soulseekStatus();
-    if (status?.connected) {
-      setSlskConnected(status.username);
-      return;
-    }
-    const creds = await soulseekLoadCredentials();
-    if (creds) {
-      const [username, password] = creds;
-      const result = await soulseekLogin(username, password);
-      if (result?.success) setSlskConnected(result.username);
-    }
-  } catch { /* no Tauri API */ }
+  const status = await soulseekStatus().catch(() => null);
+  if (status?.connected) {
+    setSlskConnected(status.username);
+  } else {
+    await tryAutoLoginSoulseek();
+  }
+
+  // Backend emits `soulseek-disconnected` when the server connection or peer
+  // listener of a live session terminates (idle kick, NAT timeout, sleep/wake).
+  // Without this listener the session would silently hang and search would
+  // return zero hits until the user manually re-logged in.
+  unlistenSlskDisconnected = await listen("soulseek-disconnected", () => {
+    setSlskDisconnected();
+    void tryAutoLoginSoulseek();
+  }).catch(() => null);
 });
 // ── View ──────────────────────────────────────────────────────────────────────
 // `view`, `returnView`, `currentPlaylistId` live in src/stores/view.js.
