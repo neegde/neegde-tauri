@@ -462,6 +462,12 @@ const {
   searchHistory,
 });
 
+async function handleSearchCandidate({ artist, title }) {
+  const q = title ? `${artist} - ${title}` : artist;
+  searchQuery.value = q;
+  await handleSearch(q, { skipResolver: true });
+}
+
 // ── Torrent / Album detail (state + handlers) ──────────────────────────────
 // Two composables share a few refs: `useTorrentDetail` owns the selected
 // torrent / current Album state, `useNavStack` owns back/forward history.

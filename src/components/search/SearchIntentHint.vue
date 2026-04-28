@@ -14,18 +14,12 @@ const props = defineProps({
 });
 
 const emit = defineEmits([
-  /** User asked to search the literal string instead of the resolver's canonical pair. */
   "revert-to-raw",
+  "search-candidate",
 ]);
 
 const hasCanonical = computed(() => Boolean(props.resolved?.canonical?.artist));
 
-/**
- * Strip bracketed annotations before quoting — matches `stripBrackets` in
- * `src/search/engine.ts` so the hint shows exactly what was sent to the
- * providers, not the raw canonical (which often carries Latin-in-parens
- * translations like "Леонид Агутин (Leonid Agutin)").
- */
 function stripBrackets(s) {
   return String(s ?? "")
     .replace(/\([^()]*\)/g, "")
@@ -34,12 +28,37 @@ function stripBrackets(s) {
     .trim();
 }
 
-/** What the engine effectively searched for — matches the providerQ formula in engine.ts. */
-const canonicalText = computed(() => {
-  const a = stripBrackets(props.resolved?.canonical?.artist ?? "");
-  const t = stripBrackets(props.resolved?.canonical?.title ?? "");
-  if (a && t) return `${a} ${t}`;
-  return a;
+const canonicalArtist = computed(() =>
+  stripBrackets(props.resolved?.canonical?.artist ?? ""),
+);
+const canonicalTitle = computed(() =>
+  stripBrackets(props.resolved?.canonical?.title ?? ""),
+);
+
+const intentLabel = computed(() => {
+  const i = props.resolved?.intent;
+  if (i === "track") return "трек";
+  if (i === "artist") return "исполнитель";
+  if (i === "album") return "альбом";
+  if (i === "lyric") return "по тексту";
+  return "";
+});
+
+const topCandidates = computed(() => {
+  const cands = props.resolved?.candidates ?? [];
+  const a = canonicalArtist.value.toLowerCase();
+  const t = canonicalTitle.value.toLowerCase();
+  return cands
+    .filter((c) => {
+      const ca = stripBrackets(c.artist ?? "").toLowerCase();
+      const ct = stripBrackets(c.title ?? "").toLowerCase();
+      return !(ca === a && ct === t);
+    })
+    .slice(0, 3)
+    .map((c) => ({
+      artist: stripBrackets(c.artist ?? ""),
+      title: stripBrackets(c.title ?? ""),
+    }));
 });
 </script>
 

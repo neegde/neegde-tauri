@@ -152,7 +152,7 @@
             @search-query="(q) => { searchQuery = q; void handleSearch(q); }"
           />
 
-          <p v-if="error && !loading" class="error-msg">{{ error }}</p>
+          <p v-if="error && !loading && !homeSearchActive" class="error-msg">{{ error }}</p>
 
           <!-- Onboarding: nudge to settings if not connected -->
           <div
@@ -180,6 +180,7 @@
             :resolved="searchResolved"
             :raw-query="searchQuery"
             @revert-to-raw="handleRevertToRaw"
+            @search-candidate="handleSearchCandidate"
           />
 
           <Results
@@ -187,6 +188,8 @@
             :search-epoch="searchResultsEpoch"
             :entities="searchEntities"
             :query="searchProviderQuery"
+            :resolved="searchResolved"
+            :resolving="searchResolving"
             :slsk-peer-filter="slskPeerBrowseUser"
             :loading-albums="searchLoadingRt"
             :loading-tracks="searchLoadingSlsk"

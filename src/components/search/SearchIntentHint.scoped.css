@@ -4,7 +4,7 @@
   flex-wrap: wrap;
   gap: 8px;
   margin: 0 0 12px;
-  padding: 8px 12px;
+  padding: 9px 12px;
   border-radius: 8px;
   font-size: 0.85rem;
   color: var(--text);
@@ -33,30 +33,57 @@
   border-color: rgba(0, 0, 0, 0.06);
 }
 
-.sih-label {
+/* ── Canonical state layout ── */
+.sih-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sih-track-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sih-artist {
+  font-size: 0.76rem;
   color: var(--muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.sih-canonical {
-  font-weight: 600;
+.sih-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* ── Intent badge ── */
 .sih-chip {
-  padding: 1px 8px;
+  flex-shrink: 0;
+  padding: 2px 8px;
   border-radius: 10px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   background: rgba(var(--accent-rgb), 0.22);
   color: var(--accent);
+  white-space: nowrap;
 }
 
-.sih-sources {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
+/* ── Revert button ── */
 .sih-revert {
-  margin-left: auto;
+  flex-shrink: 0;
   padding: 4px 10px;
   border: none;
   border-radius: 6px;
@@ -66,6 +93,8 @@
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s;
 }
 .sih-revert:hover {
   background: rgba(255, 255, 255, 0.14);
@@ -73,25 +102,44 @@
 [data-theme="light"] .sih-revert {
   background: rgba(0, 0, 0, 0.06);
 }
+[data-theme="light"] .sih-revert:hover {
+  background: rgba(0, 0, 0, 0.11);
+}
 
+/* ── Alternative candidates ── */
 .sih-alts {
   flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  margin-top: 4px;
-  font-size: 0.78rem;
-  color: var(--muted);
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
 }
 .sih-alts-label {
+  font-size: 0.75rem;
   color: var(--muted2);
+  flex-shrink: 0;
 }
-.sih-alt-sources {
-  color: var(--muted2);
-  font-variant-numeric: tabular-nums;
-  margin-left: 2px;
+.sih-alt-btn {
+  background: none;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 12px;
+  padding: 2px 9px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.sih-alt-btn:hover {
+  color: var(--text);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
+/* ── Spinner ── */
 .sih-spin {
   display: inline-block;
   width: 10px;

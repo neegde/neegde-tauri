@@ -13,7 +13,7 @@ describe("SearchIntentHint — canonical + revert + raw fallback", () => {
     expect(w.text()).toContain("Распознаём запрос");
   });
 
-  it("canonical artist+title renders 'Думаю, вы искали «Artist Title»'", () => {
+  it("canonical artist+title renders artist and title on separate elements", () => {
     const w = mount(SearchIntentHint, {
       props: {
         resolving: false,
@@ -25,10 +25,11 @@ describe("SearchIntentHint — canonical + revert + raw fallback", () => {
         rawQuery: "raw",
       },
     });
-    expect(w.find(".sih-canonical").text()).toBe("«Artist Title»");
+    expect(w.find(".sih-artist").text()).toBe("Artist");
+    expect(w.find(".sih-title").text()).toBe("Title");
   });
 
-  it("canonical with only artist (Artist intent) renders just the artist", () => {
+  it("canonical with only artist (Artist intent) renders artist, no title element", () => {
     const w = mount(SearchIntentHint, {
       props: {
         resolving: false,
@@ -40,7 +41,8 @@ describe("SearchIntentHint — canonical + revert + raw fallback", () => {
         rawQuery: "raw",
       },
     });
-    expect(w.find(".sih-canonical").text()).toBe("«Artist»");
+    expect(w.find(".sih-artist").text()).toBe("Artist");
+    expect(w.find(".sih-title").exists()).toBe(false);
   });
 
   it("strips bracketed annotations from canonical before displaying", () => {
@@ -55,7 +57,8 @@ describe("SearchIntentHint — canonical + revert + raw fallback", () => {
         rawQuery: "raw",
       },
     });
-    expect(w.find(".sih-canonical").text()).toBe("«Artist Title»");
+    expect(w.find(".sih-artist").text()).toBe("Artist");
+    expect(w.find(".sih-title").text()).toBe("Title");
   });
 
   it("revert button shows raw query and emits revert-to-raw on click", async () => {

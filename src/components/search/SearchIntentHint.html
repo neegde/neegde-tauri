@@ -4,8 +4,13 @@
   </div>
 
   <div v-else-if="hasCanonical" class="sih">
-    <span class="sih-label">Думаю, вы искали</span>
-    <strong class="sih-canonical">«{{ canonicalText }}»</strong>
+    <div class="sih-main">
+      <span v-if="intentLabel" class="sih-chip">{{ intentLabel }}</span>
+      <div class="sih-track-id">
+        <span class="sih-artist">{{ canonicalArtist }}</span>
+        <span v-if="canonicalTitle" class="sih-title">{{ canonicalTitle }}</span>
+      </div>
+    </div>
     <button
       type="button"
       class="sih-revert"
@@ -14,6 +19,16 @@
     >
       нет, искать «{{ rawQuery }}»
     </button>
+    <div v-if="topCandidates.length" class="sih-alts">
+      <span class="sih-alts-label">Также:</span>
+      <button
+        v-for="c in topCandidates"
+        :key="`${c.artist}|${c.title}`"
+        type="button"
+        class="sih-alt-btn"
+        @click="emit('search-candidate', c)"
+      >{{ c.artist }}{{ c.title ? ` — ${c.title}` : '' }}</button>
+    </div>
   </div>
 
   <div v-else-if="resolved && resolved.intent === 'raw'" class="sih sih--muted">

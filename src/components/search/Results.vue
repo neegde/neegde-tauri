@@ -31,6 +31,10 @@ const props = defineProps({
   selectedId: { default: null },
   /** Canonical query used for similarity ranking in the Tracks tab. */
   query: { type: String, default: "" },
+  /** Full ResolveResult from the resolver (used for empty-state context). */
+  resolved: { type: Object, default: null },
+  /** True while the resolver is running — suppresses the empty state flash. */
+  resolving: { type: Boolean, default: false },
   /** Id of the currently-playing Track, or null. */
   nowPlayingId: { type: String, default: null },
   playerPlaying: { type: Boolean, default: false },
@@ -137,6 +141,17 @@ const slskFilterEmptyHint = computed(
     !trackEntitiesFiltered.value.length &&
     trackEntities.value.length > 0,
 );
+
+const allEmpty = computed(() => {
+  if (props.resolving || props.loadingAlbums || props.loadingTracks) return false;
+  if (props.rtError || props.slskError) return false;
+  if (!props.rtLoggedIn && !props.slskConnected) return false;
+  const albumsEmpty = !props.rtLoggedIn || albumEntities.value.length === 0;
+  const tracksEmpty = !props.slskConnected || trackEntitiesFiltered.value.length === 0;
+  return albumsEmpty && tracksEmpty;
+});
+
+const emptyStateQuery = computed(() => props.query || null);
 
 // ── Infinite scroll ──────────────────────────────────────────────────────────
 const visibleAlbumCount = ref(INITIAL_BATCH);
