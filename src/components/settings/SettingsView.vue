@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { login, logout, restoreSession } from "../../rutracker/auth.js";
+import { login, loginViaWebview, logout, restoreSession } from "../../rutracker/auth.js";
 import { normalizeLoginStatus } from "../../rutracker/sessionStatus.js";
 import {
   getMirror,
@@ -237,6 +237,7 @@ function openExternalUrl(url) {
 const rtUsername = ref("");
 const rtPassword = ref("");
 const rtLoading  = ref(false);
+const rtWebviewLoading = ref(false);
 const rtError    = ref(null);
 
 async function handleRtLogin(e) {
@@ -259,6 +260,33 @@ async function handleRtLogin(e) {
     rtError.value = "Нет соединения — проверьте зеркало и интернет";
   } finally {
     rtLoading.value = false;
+  }
+}
+
+/**
+ * Opens embedded RuTracker login page and promotes cookies into app session.
+ *
+ * Returns:
+ *     void
+ */
+async function handleRtLoginViaBrowser() {
+  rtError.value = null;
+  rtWebviewLoading.value = true;
+  try {
+    const result = await loginViaWebview();
+    if (result.success) {
+      rtCredentialsHiddenUntilLogout.value = false;
+      emit("login", result.username, result.avatar_url || null);
+      rtUsername.value = "";
+      rtPassword.value = "";
+      avatarImgFailed.value = false;
+      return;
+    }
+    rtError.value = result.error || "Вход через браузер отменён";
+  } catch (err) {
+    rtError.value = "Не удалось открыть окно входа";
+  } finally {
+    rtWebviewLoading.value = false;
   }
 }
 

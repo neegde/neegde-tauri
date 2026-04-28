@@ -147,10 +147,19 @@
               <button
                 class="login-btn"
                 type="submit"
-                :disabled="rtLoading || !rtUsername.trim() || !rtPassword"
+                :disabled="rtLoading || rtWebviewLoading || !rtUsername.trim() || !rtPassword"
               >
                 <span v-if="rtLoading" class="spinner" />
                 <template v-else>Войти в Rutracker</template>
+              </button>
+              <button
+                class="settings-action-btn settings-action-btn--ghost"
+                type="button"
+                :disabled="rtLoading || rtWebviewLoading"
+                @click="handleRtLoginViaBrowser"
+              >
+                <span v-if="rtWebviewLoading" class="spinner" />
+                <template v-else>Войти через браузер (CAPTCHA)</template>
               </button>
             </form>
           </template>

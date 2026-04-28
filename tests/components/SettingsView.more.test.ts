@@ -35,6 +35,7 @@ vi.mock("../../src/soulseek/api.js", () => ({
 }));
 vi.mock("../../src/rutracker/auth.js", () => ({
   login: vi.fn().mockResolvedValue({ success: false, error: "e" }),
+  loginViaWebview: vi.fn().mockResolvedValue({ success: false, error: "cancelled" }),
   logout: vi.fn().mockResolvedValue(undefined),
   restoreSession: vi.fn().mockResolvedValue({ logged_in: false }),
 }));
@@ -108,6 +109,7 @@ beforeEach(() => {
   (proxyCfg.setRtHttpProxyCache as any).mockClear?.();
   (proxyCfg.getHttpProxy as any).mockClear?.().mockResolvedValue(null);
   (rtAuth.login as any).mockClear?.().mockResolvedValue({ success: false, error: "e" });
+  (rtAuth.loginViaWebview as any).mockClear?.().mockResolvedValue({ success: false, error: "cancelled" });
   (rtAuth.logout as any).mockClear?.();
   (rtAuth.restoreSession as any).mockClear?.().mockResolvedValue({ logged_in: false });
   (rtAccountHint.hadRutrackerAccount as any).mockClear?.().mockReturnValue(false);
@@ -597,6 +599,33 @@ describe("SettingsView — debug / achievements / theme / logout / reconnect", (
     await form.trigger("submit");
     await flushPromises();
     expect(w.text()).toMatch(/Bad password/);
+    w.unmount();
+  });
+
+  it("handleRtLoginViaBrowser success → emits login", async () => {
+    (rtAuth.loginViaWebview as any).mockResolvedValueOnce({
+      success: true, username: "neo-web", avatar_url: "https://img",
+    });
+    const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
+    await flushPromises();
+    const btn = w.findAll("button").find((b) => b.text().includes("Войти через браузер"))!;
+    await btn.trigger("click");
+    await flushPromises();
+    expect(w.emitted("login")).toBeTruthy();
+    expect((w.emitted("login") as any)[0][0]).toBe("neo-web");
+    w.unmount();
+  });
+
+  it("handleRtLoginViaBrowser failure → shows returned error", async () => {
+    (rtAuth.loginViaWebview as any).mockResolvedValueOnce({
+      success: false, error: "Требуется CAPTCHA",
+    });
+    const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
+    await flushPromises();
+    const btn = w.findAll("button").find((b) => b.text().includes("Войти через браузер"))!;
+    await btn.trigger("click");
+    await flushPromises();
+    expect(w.text()).toMatch(/Требуется CAPTCHA/);
     w.unmount();
   });
 });
