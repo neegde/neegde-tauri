@@ -8,7 +8,7 @@
         Подключите те сервисы, которыми пользуетесь: оба независимы — регистрируются отдельно.
       </p>
 
-      <div class="settings-card settings-card--integration">
+      <div class="settings-card settings-card--integration settings-card--rt">
         <!-- ── Logged in: user card + выход ── -->
         <div v-if="rtLoggedIn" class="settings-card-header">
           <div class="rt-avatar">
@@ -64,33 +64,7 @@
           </div>
         </div>
 
-        <div
-          v-if="!rtLoggedIn && !restoringSession"
-          class="settings-integration-banner settings-integration-banner--rt"
-        >
-          <div class="settings-integration-banner__head">
-            <span class="integration-pill integration-pill--rt">Торрент-трекер</span>
-            <span class="integration-pill integration-pill--neutral">Поиск альбомов</span>
-          </div>
-          <p class="settings-integration-banner__text">
-            Нужен <strong>аккаунт форума RuTracker</strong> — тот же логин и пароль, что на
-            rutracker.org / rutracker.net. Если профиля ещё нет, зарегистрируйтесь на официальном зеркале форума.
-          </p>
-          <div class="settings-integration-banner__actions">
-            <button
-              type="button"
-              class="settings-integration-link-btn"
-              @click="openExternalUrl(RUTRACKER_FORUM_URL)"
-            >
-              Открыть форум RuTracker
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <p v-else-if="rtLoggedIn" class="settings-integration-compact settings-integration-compact--rt">
+        <p v-if="rtLoggedIn" class="settings-integration-compact settings-integration-compact--rt">
           <span class="integration-pill integration-pill--rt integration-pill--tiny">RuTracker</span>
           Поиск и прослушивание через торрент-раздачи; вход — ваш логин с форума.
         </p>
@@ -125,43 +99,104 @@
           </template>
 
           <template v-if="!rtCredentialsHiddenUntilLogout">
-            <p class="settings-card-desc settings-card-desc--after-reconnect">
-              Введите данные аккаунта Rutracker, чтобы искать и слушать музыку.
-            </p>
-            <form class="settings-login-form" @submit="handleRtLogin">
-              <input
-                class="login-input"
-                type="text"
-                placeholder="Логин"
-                v-model="rtUsername"
-                autocomplete="username"
+            <!-- Status row -->
+            <div class="rt-status-row">
+              <span
+                class="settings-status-dot"
+                :class="{
+                  'status-loading': rtReachabilityState === 'checking',
+                  'status-on': rtReachabilityState === 'ok',
+                  'status-off': rtReachabilityState === 'fail' || rtReachabilityState === 'idle',
+                }"
               />
-              <input
-                class="login-input"
-                type="password"
-                placeholder="Пароль"
-                v-model="rtPassword"
-                autocomplete="current-password"
-              />
-              <p v-if="rtError" class="login-error">{{ rtError }}</p>
+              <Transition name="rt-status-fade" mode="out-in">
+                <span :key="`title-${rtReachabilityState}:${rtQuickProxyApplying ? 'proxy' : 'plain'}`" class="rt-status-text">
+                  {{ rtReachabilityLabel() }}
+                </span>
+              </Transition>
               <button
-                class="login-btn"
-                type="submit"
-                :disabled="rtLoading || rtWebviewLoading || !rtUsername.trim() || !rtPassword"
-              >
-                <span v-if="rtLoading" class="spinner" />
-                <template v-else>Войти в Rutracker</template>
-              </button>
-              <button
-                class="settings-action-btn settings-action-btn--ghost"
                 type="button"
-                :disabled="rtLoading || rtWebviewLoading"
-                @click="handleRtLoginViaBrowser"
+                class="rt-check-btn"
+                :disabled="rtReachabilityState === 'checking' || rtQuickProxyApplying"
+                @click="runRtConnectivityProbe('manual')"
               >
-                <span v-if="rtWebviewLoading" class="spinner" />
-                <template v-else>Войти через браузер (CAPTCHA)</template>
+                <span v-if="rtReachabilityState === 'checking' || rtQuickProxyApplying" class="spinner rt-check-spinner" />
+                <template v-else>{{ rtReachabilityState === 'ok' ? "Ещё раз" : "Проверить" }}</template>
               </button>
-            </form>
+            </div>
+            <Transition name="rt-status-fade" mode="out-in">
+              <p :key="`desc-${rtReachabilityState}:${rtQuickProxyApplying ? 'proxy' : 'plain'}`" class="rt-status-desc">
+                {{ rtReachabilityDescription() }}
+              </p>
+            </Transition>
+            <!-- Proxy segmented control (shows on fail) -->
+            <Transition name="rt-status-fade">
+              <div v-if="rtReachabilityState === 'fail'" class="rt-proxy-picker">
+                <span class="rt-proxy-label">Прокси</span>
+                <div class="rt-proxy-seg" role="group" aria-label="Прокси-пресет">
+                  <button
+                    type="button"
+                    class="rt-proxy-seg-btn"
+                    :class="{ 'rt-proxy-seg-btn--active': rtQuickProxy === 'none' }"
+                    :disabled="rtQuickProxyApplying || rtReachabilityState === 'checking'"
+                    @click="applyRtQuickProxyAndProbe('none')"
+                  >Без прокси</button>
+                  <button
+                    type="button"
+                    class="rt-proxy-seg-btn"
+                    :class="{ 'rt-proxy-seg-btn--active': rtQuickProxy === 'px1' }"
+                    :disabled="rtQuickProxyApplying || rtReachabilityState === 'checking'"
+                    @click="applyRtQuickProxyAndProbe('px1')"
+                  >px1</button>
+                  <button
+                    type="button"
+                    class="rt-proxy-seg-btn"
+                    :class="{ 'rt-proxy-seg-btn--active': rtQuickProxy === 'px2' }"
+                    :disabled="rtQuickProxyApplying || rtReachabilityState === 'checking'"
+                    @click="applyRtQuickProxyAndProbe('px2')"
+                  >px2</button>
+                </div>
+              </div>
+            </Transition>
+            <!-- Login form (shows when reachable) -->
+            <Transition name="rt-reveal">
+              <form v-if="rtReachabilityState === 'ok'" class="settings-login-form rt-login-form" @submit="handleRtLogin">
+                <input
+                  class="login-input"
+                  type="text"
+                  placeholder="Логин"
+                  v-model="rtUsername"
+                  autocomplete="username"
+                />
+                <input
+                  class="login-input"
+                  type="password"
+                  placeholder="Пароль"
+                  v-model="rtPassword"
+                  autocomplete="current-password"
+                />
+                <p v-if="rtError" class="login-error">{{ rtError }}</p>
+                <div class="rt-form-actions">
+                  <button
+                    class="login-btn"
+                    type="submit"
+                    :disabled="rtLoading || rtWebviewLoading || !rtUsername.trim() || !rtPassword"
+                  >
+                    <span v-if="rtLoading" class="spinner" />
+                    <template v-else>Войти в Rutracker</template>
+                  </button>
+                  <button
+                    class="rt-captcha-btn"
+                    type="button"
+                    :disabled="rtLoading || rtWebviewLoading"
+                    @click="handleRtLoginViaBrowser"
+                  >
+                    <span v-if="rtWebviewLoading" class="spinner" />
+                    <template v-else>Войти через браузер</template>
+                  </button>
+                </div>
+              </form>
+            </Transition>
           </template>
         </div>
       </div>
@@ -203,45 +238,46 @@
           </div>
         </div>
 
-        <div
-          v-if="!slskConnected"
-          class="settings-integration-banner settings-integration-banner--slsk"
-        >
-          <div class="settings-integration-banner__head">
-            <span class="integration-pill integration-pill--slsk">P2P-сеть</span>
-            <span class="integration-pill integration-pill--neutral">Отдельные треки</span>
-          </div>
-          <p class="settings-integration-banner__text">
-            <strong>Логин и пароль — от сети SoulSeek</strong>, те же, что в клиентах
-            Nicotine+, Soulseek Qt и др. Отдельной «регистрации на сайте» обычно нет: имя пользователя
-            и пароль задаются при первом входе в официальном клиенте. Здесь вводите те же данные.
-            Сброс пароля и справка — на сайте проекта Soulseek.
-          </p>
-          <div class="settings-integration-banner__actions">
-            <button
-              type="button"
-              class="settings-integration-link-btn settings-integration-link-btn--slsk"
-              @click="openExternalUrl(SOULSEEK_ACCOUNT_INFO_URL)"
-            >
-              Справка по аккаунту Soulseek
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <p v-else class="settings-integration-compact settings-integration-compact--slsk">
+        <!-- Compact description when connected -->
+        <p v-if="slskConnected" class="settings-integration-compact settings-integration-compact--slsk">
           <span class="integration-pill integration-pill--slsk integration-pill--tiny">SoulSeek</span>
           Поиск треков у пользователей сети; учётные данные — от вашего клиента SoulSeek.
         </p>
 
-        <div v-if="!slskConnected" class="settings-card-body">
-          <p class="settings-card-desc">
-            Войдите, используя логин и пароль от сети SoulSeek (см. плашку выше).
-          </p>
+        <!-- Login form when not connected -->
+        <div v-else class="settings-card-body">
+          <!-- Status row -->
+          <div class="rt-status-row">
+            <span
+              class="settings-status-dot"
+              :class="{
+                'status-loading': slskReachabilityState === 'checking',
+                'status-on': slskReachabilityState === 'ok',
+                'status-off': slskReachabilityState === 'fail' || slskReachabilityState === 'idle',
+              }"
+            />
+            <Transition name="rt-status-fade" mode="out-in">
+              <span :key="slskReachabilityState" class="rt-status-text">
+                {{ slskReachabilityLabel() }}
+              </span>
+            </Transition>
+            <button
+              type="button"
+              class="rt-check-btn"
+              :disabled="slskReachabilityState === 'checking'"
+              @click="runSlskConnectivityProbe()"
+            >
+              <span v-if="slskReachabilityState === 'checking'" class="spinner rt-check-spinner" />
+              <template v-else>{{ slskReachabilityState === 'ok' ? 'Ещё раз' : 'Проверить' }}</template>
+            </button>
+          </div>
+          <Transition name="rt-status-fade" mode="out-in">
+            <p :key="`slsk-desc-${slskReachabilityState}`" class="rt-status-desc">
+              {{ slskReachabilityDescription() }}
+            </p>
+          </Transition>
           <form
-            class="settings-login-form"
+            class="settings-login-form slsk-login-form"
             @submit.prevent="emit('slsk-login', slskFormUser, slskFormPass)"
           >
             <input
@@ -259,14 +295,23 @@
               autocomplete="current-password"
             />
             <p v-if="slskLoginError" class="login-error">{{ slskLoginError }}</p>
-            <button
-              class="login-btn"
-              type="submit"
-              :disabled="slskLoggingIn || !slskFormUser.trim() || !slskFormPass"
-            >
-              <span v-if="slskLoggingIn" class="spinner" />
-              <template v-else>Войти в SoulSeek</template>
-            </button>
+            <div class="slsk-form-actions">
+              <button
+                class="login-btn"
+                type="submit"
+                :disabled="slskLoggingIn || !slskFormUser.trim() || !slskFormPass"
+              >
+                <span v-if="slskLoggingIn" class="spinner" />
+                <template v-else>Войти в SoulSeek</template>
+              </button>
+              <button
+                type="button"
+                class="slsk-help-btn"
+                @click="openExternalUrl(SOULSEEK_ACCOUNT_INFO_URL)"
+              >
+                Нет аккаунта?
+              </button>
+            </div>
           </form>
         </div>
       </div>
@@ -833,7 +878,7 @@
               </button>
               <button
                 type="button"
-                class="login-btn nerd-save-btn nerd-save-btn--ghost"
+                class="login-btn nerd-save-btn nerd-save-btn--ghost proxy-probe-btn"
                 :disabled="proxyProbeBusy || proxySaveBusy"
                 @click="probeProxy"
               >

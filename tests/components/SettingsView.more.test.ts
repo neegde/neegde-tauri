@@ -36,6 +36,7 @@ vi.mock("../../src/soulseek/api.js", () => ({
 vi.mock("../../src/rutracker/auth.js", () => ({
   login: vi.fn().mockResolvedValue({ success: false, error: "e" }),
   loginViaWebview: vi.fn().mockResolvedValue({ success: false, error: "cancelled" }),
+  checkConnectivity: vi.fn().mockResolvedValue({ reachable: true, status: 200, using_proxy: null }),
   logout: vi.fn().mockResolvedValue(undefined),
   restoreSession: vi.fn().mockResolvedValue({ logged_in: false }),
 }));
@@ -110,6 +111,7 @@ beforeEach(() => {
   (proxyCfg.getHttpProxy as any).mockClear?.().mockResolvedValue(null);
   (rtAuth.login as any).mockClear?.().mockResolvedValue({ success: false, error: "e" });
   (rtAuth.loginViaWebview as any).mockClear?.().mockResolvedValue({ success: false, error: "cancelled" });
+  (rtAuth.checkConnectivity as any).mockClear?.().mockResolvedValue({ reachable: true, status: 200, using_proxy: null });
   (rtAuth.logout as any).mockClear?.();
   (rtAuth.restoreSession as any).mockClear?.().mockResolvedValue({ logged_in: false });
   (rtAccountHint.hadRutrackerAccount as any).mockClear?.().mockReturnValue(false);
@@ -293,7 +295,7 @@ describe("SettingsView — HTTP proxy save / probe", () => {
     const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
     await flushPromises();
     await openNerdPanel(w);
-    const probeBtn = w.findAll("button").find((b) => b.text().trim() === "Проверить")!;
+    const probeBtn = w.find("button.proxy-probe-btn");
     await probeBtn.trigger("click");
     await flushPromises();
     expect((proxyCfg.probeHttpProxy as any)).toHaveBeenCalled();
@@ -306,7 +308,7 @@ describe("SettingsView — HTTP proxy save / probe", () => {
     const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
     await flushPromises();
     await openNerdPanel(w);
-    const probeBtn = w.findAll("button").find((b) => b.text().trim() === "Проверить")!;
+    const probeBtn = w.find("button.proxy-probe-btn");
     await probeBtn.trigger("click");
     await flushPromises();
     expect(w.text()).toMatch(/proxy bad/);
@@ -631,6 +633,50 @@ describe("SettingsView — debug / achievements / theme / logout / reconnect", (
 });
 
 describe("SettingsView — extra branches (diag, proxy preload, auto-refresh)", () => {
+  it("hides login form until probe succeeds; failed probe offers quick proxy actions", async () => {
+    (rtAuth.checkConnectivity as any).mockResolvedValue({
+      reachable: false,
+      status: 502,
+      using_proxy: null,
+      error: "bad gateway",
+    });
+    const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
+    await flushPromises();
+    expect(w.find('input[placeholder="Логин"]').exists()).toBe(false);
+    const quick = w.findAll("button.rt-proxy-seg-btn");
+    expect(quick.length).toBe(3);
+    (rtAuth.checkConnectivity as any).mockResolvedValueOnce({
+      reachable: true,
+      status: 200,
+      using_proxy: "http://px1.blockme.site:23128",
+    });
+    await quick[1]!.trigger("click");
+    await flushPromises();
+    expect((proxyCfg.setHttpProxy as any)).toHaveBeenCalledWith("http://px1.blockme.site:23128");
+    expect((rtAuth.checkConnectivity as any)).toHaveBeenCalled();
+    expect(w.find('input[placeholder="Логин"]').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it("manual reachability probe updates banner and calls checkConnectivity", async () => {
+    const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
+    await flushPromises();
+    (rtAuth.checkConnectivity as any).mockResolvedValueOnce({
+      reachable: false,
+      status: 403,
+      using_proxy: "http://px1.blockme.site:23128",
+      error: "HTTP 403",
+    });
+    const btn = w.find("button.rt-check-btn");
+    expect(btn.exists()).toBe(true);
+    await btn.trigger("click");
+    await flushPromises();
+    expect((rtAuth.checkConnectivity as any)).toHaveBeenCalled();
+    expect(w.text()).toMatch(/HTTP 403|недоступен/i);
+    expect(w.text()).toMatch(/Прокси/i);
+    w.unmount();
+  });
+
   it("nerd diagnostics populated: renders formatted bytes + TTL + policy box", async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "get_nerd_diagnostics") {
@@ -777,8 +823,8 @@ describe("SettingsView — mirror reset + hostLabel + external URL", () => {
     try {
       const w = mount(SettingsView, { props: baseProps(), attachTo: document.body });
       await flushPromises();
-      const rtBtn = w.findAll("button").find((b) => /Открыть форум RuTracker/.test(b.text()))!;
-      await rtBtn.trigger("click");
+      const slskHelpBtn = w.findAll("button").find((b) => /Нет аккаунта/.test(b.text()))!;
+      await slskHelpBtn.trigger("click");
       await flushPromises();
       expect(spy).toHaveBeenCalled();
     } finally {

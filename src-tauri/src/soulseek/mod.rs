@@ -189,6 +189,43 @@ pub fn soulseek_status(state: tauri::State<'_, SoulSeekState>) -> Result<SlskSta
     }
 }
 
+#[derive(Serialize)]
+pub struct SlskConnectivityResult {
+    pub reachable: bool,
+    pub latency_ms: Option<u64>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn soulseek_check_connectivity() -> Result<SlskConnectivityResult, String> {
+    use std::time::Instant;
+    use tokio::net::TcpStream;
+    use tokio::time::timeout;
+
+    const HOST: &str = "server.slsknet.org";
+    const PORT: u16 = 2242;
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+    let start = Instant::now();
+    match timeout(PROBE_TIMEOUT, TcpStream::connect((HOST, PORT))).await {
+        Ok(Ok(_)) => Ok(SlskConnectivityResult {
+            reachable: true,
+            latency_ms: Some(start.elapsed().as_millis() as u64),
+            error: None,
+        }),
+        Ok(Err(e)) => Ok(SlskConnectivityResult {
+            reachable: false,
+            latency_ms: None,
+            error: Some(e.to_string()),
+        }),
+        Err(_) => Ok(SlskConnectivityResult {
+            reachable: false,
+            latency_ms: None,
+            error: Some(format!("Нет ответа от {HOST}:{PORT} (таймаут {}с)", PROBE_TIMEOUT.as_secs())),
+        }),
+    }
+}
+
 #[tauri::command]
 pub async fn soulseek_search(
     app: tauri::AppHandle,

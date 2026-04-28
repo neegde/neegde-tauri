@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { login, loginViaWebview, logout, restoreSession } from "../../rutracker/auth.js";
+import { checkConnectivity, login, loginViaWebview, logout, restoreSession } from "../../rutracker/auth.js";
 import { normalizeLoginStatus } from "../../rutracker/sessionStatus.js";
 import {
   getMirror,
@@ -38,10 +38,10 @@ import {
   compareSemver,
   normalizeVersionTag,
 } from "../../githubReleaseCheck.js";
+import { appDebugLog } from "../../appDebugLog.js";
 import appIconSrc from "../../assets/neegde-logo.png";
 import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
 import { ACHIEVEMENT_CATALOG } from "../../achievements/achievementsCore.js";
-import { appDebugLog } from "../../appDebugLog.js";
 
 const props = defineProps({
   rtLoggedIn:       Boolean,
@@ -61,6 +61,47 @@ const props = defineProps({
 
 // avatar image error fallback
 const avatarImgFailed = ref(false);
+
+// SoulSeek connectivity probe
+const slskReachabilityState = ref("idle"); // idle | checking | ok | fail
+const slskReachabilityLatency = ref(null);
+const slskReachabilityError = ref(null);
+
+function slskReachabilityLabel() {
+  if (slskReachabilityState.value === "checking") return "Проверяем доступность SoulSeek…";
+  if (slskReachabilityState.value === "ok") {
+    if (slskReachabilityLatency.value) return `SoulSeek доступен (${slskReachabilityLatency.value} мс)`;
+    return "SoulSeek доступен";
+  }
+  if (slskReachabilityState.value === "fail") return "Сервер SoulSeek недоступен";
+  return "Доступность не проверялась";
+}
+
+function slskReachabilityDescription() {
+  if (slskReachabilityState.value === "checking") return "Подключаемся к server.slsknet.org:2242…";
+  if (slskReachabilityState.value === "ok") return "Сервер отвечает — можно входить.";
+  if (slskReachabilityState.value === "fail") return "Не удалось подключиться к серверу. Проверьте интернет или попробуйте позже.";
+  return "Нажмите «Проверить», чтобы убедиться в доступности сервера.";
+}
+
+async function runSlskConnectivityProbe() {
+  slskReachabilityState.value = "checking";
+  slskReachabilityError.value = null;
+  slskReachabilityLatency.value = null;
+  try {
+    const result = await invoke("soulseek_check_connectivity");
+    slskReachabilityLatency.value = result.latency_ms ?? null;
+    if (result.reachable) {
+      slskReachabilityState.value = "ok";
+    } else {
+      slskReachabilityState.value = "fail";
+      slskReachabilityError.value = result.error || null;
+    }
+  } catch (err) {
+    slskReachabilityState.value = "fail";
+    slskReachabilityError.value = err?.message ?? String(err);
+  }
+}
 
 // SoulSeek login form state
 const slskFormUser = ref(localStorage.getItem("neegde.slsk.user") || "");
@@ -144,8 +185,6 @@ const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
 const githubProjectUrl = __GITHUB_PROJECT_URL__;
 const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
 
-/** Официальный форум RuTracker (регистрация и вход — те же логин/пароль). */
-const RUTRACKER_FORUM_URL = "https://rutracker.org/forum/index.php";
 /** Сайт Soulseek: справка по аккаунту и сеть. */
 const SOULSEEK_ACCOUNT_INFO_URL = "https://www.slsknet.org/news/user";
 
@@ -239,25 +278,130 @@ const rtPassword = ref("");
 const rtLoading  = ref(false);
 const rtWebviewLoading = ref(false);
 const rtError    = ref(null);
+const rtReachabilityState = ref("idle");
+const rtReachabilityStatus = ref(null);
+const rtReachabilityError = ref(null);
+
+const RT_LOGIN_TIMEOUT_MS = 25_000;
+
+function withPromiseTimeout(promise, ms, timeoutMessage) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(timeoutMessage)), ms);
+    promise
+      .then((value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+function rtReachabilityLabel() {
+  if (rtReachabilityState.value === "checking") return "Проверяем доступность RuTracker…";
+  if (rtReachabilityState.value === "ok") {
+    if (rtReachabilityStatus.value) return `RuTracker доступен (HTTP ${rtReachabilityStatus.value})`;
+    return "RuTracker доступен";
+  }
+  if (rtReachabilityState.value === "fail") {
+    if (rtReachabilityStatus.value) return `RuTracker недоступен (HTTP ${rtReachabilityStatus.value})`;
+    return "Не удалось достучаться до RuTracker";
+  }
+  return "Проверка доступности не запускалась";
+}
+
+function rtReachabilityDescription() {
+  if (rtQuickProxyApplying.value) return "Применяем прокси и запускаем повторную проверку…";
+  if (rtReachabilityState.value === "checking") return "Проверяем соединение с форумом и текущим mirror.";
+  if (rtReachabilityState.value === "ok") return "Соединение есть — форма входа открыта ниже.";
+  if (rtReachabilityState.value === "fail") return "Не удалось подключиться. Выберите прокси и перепроверьте.";
+  return "Нажмите «Проверить доступность», чтобы продолжить вход.";
+}
+
+async function runRtConnectivityProbe(reason = "manual") {
+  rtReachabilityState.value = "checking";
+  rtReachabilityError.value = null;
+  await appDebugLog("rutracker", `connectivity probe: start (${reason})`);
+  try {
+    const result = await withPromiseTimeout(
+      checkConnectivity(),
+      15_000,
+      "Проверка доступности RuTracker превысила лимит ожидания",
+    );
+    rtReachabilityStatus.value = result?.status ?? null;
+    if (result?.reachable) {
+      rtReachabilityState.value = "ok";
+      await appDebugLog("rutracker", "connectivity probe: reachable", {
+        reason,
+        status: result?.status ?? null,
+        usingProxy: result?.using_proxy ?? null,
+      });
+      return;
+    }
+    rtReachabilityState.value = "fail";
+    rtReachabilityError.value = result?.error || null;
+    await appDebugLog("rutracker", "connectivity probe: unreachable", {
+      reason,
+      status: result?.status ?? null,
+      error: result?.error ?? null,
+      usingProxy: result?.using_proxy ?? null,
+    });
+  } catch (err) {
+    rtReachabilityState.value = "fail";
+    rtReachabilityStatus.value = null;
+    rtReachabilityError.value = err?.message ?? String(err);
+    await appDebugLog("rutracker", "connectivity probe: error", {
+      reason,
+      error: err?.message ?? String(err),
+    });
+  }
+}
 
 async function handleRtLogin(e) {
   e.preventDefault();
   if (!rtUsername.value.trim() || !rtPassword.value) return;
   rtLoading.value = true;
   rtError.value   = null;
+  await appDebugLog("rutracker", "login: submit", {
+    hasUsername: Boolean(rtUsername.value.trim()),
+    mirrorMode: getMirrorMode(),
+    mirror: getMirror(),
+  });
   try {
-    const result = await login(rtUsername.value.trim(), rtPassword.value);
+    const result = await withPromiseTimeout(
+      login(rtUsername.value.trim(), rtPassword.value),
+      RT_LOGIN_TIMEOUT_MS,
+      "Запрос входа превысил лимит ожидания",
+    );
     if (result.success) {
       rtCredentialsHiddenUntilLogout.value = false;
       emit("login", result.username, result.avatar_url || null);
       rtUsername.value = "";
       rtPassword.value = "";
       avatarImgFailed.value = false;
+      await appDebugLog("rutracker", "login: success", {
+        username: result.username ?? null,
+      });
     } else {
       rtError.value = result.error || "Ошибка входа";
+      await appDebugLog("rutracker", "login: rejected", {
+        error: result.error ?? null,
+      });
+      void runRtConnectivityProbe("login-rejected");
     }
   } catch (err) {
-    rtError.value = "Нет соединения — проверьте зеркало и интернет";
+    const text = err?.message ?? String(err);
+    if (/превысил лимит|timeout|timed out/i.test(text)) {
+      rtError.value = "Слишком долго нет ответа от RuTracker. Попробуйте прокси или другое зеркало.";
+    } else {
+      rtError.value = "Нет соединения — проверьте зеркало и интернет";
+    }
+    await appDebugLog("rutracker", "login: error", {
+      error: text,
+    });
+    void runRtConnectivityProbe("login-error");
   } finally {
     rtLoading.value = false;
   }
@@ -272,6 +416,7 @@ async function handleRtLogin(e) {
 async function handleRtLoginViaBrowser() {
   rtError.value = null;
   rtWebviewLoading.value = true;
+  await appDebugLog("rutracker", "login via webview: open");
   try {
     const result = await loginViaWebview();
     if (result.success) {
@@ -280,11 +425,21 @@ async function handleRtLoginViaBrowser() {
       rtUsername.value = "";
       rtPassword.value = "";
       avatarImgFailed.value = false;
+      await appDebugLog("rutracker", "login via webview: success", {
+        username: result.username ?? null,
+      });
       return;
     }
     rtError.value = result.error || "Вход через браузер отменён";
+    await appDebugLog("rutracker", "login via webview: rejected", {
+      error: result.error ?? null,
+    });
+    void runRtConnectivityProbe("webview-login-rejected");
   } catch (err) {
     rtError.value = "Не удалось открыть окно входа";
+    await appDebugLog("rutracker", "login via webview: error", {
+      error: err?.message ?? String(err),
+    });
   } finally {
     rtWebviewLoading.value = false;
   }
@@ -397,7 +552,9 @@ onMounted(() => {
   activeMirrorDisplay.value = getMirror();
   getHttpProxy()
     .then((url) => {
-      proxySelect.value = proxyUrlToSelect(url);
+      const sel = proxyUrlToSelect(url);
+      proxySelect.value = sel;
+      rtQuickProxy.value = sel;
     })
     .catch(() => {});
   nextTick(() => {
@@ -407,11 +564,24 @@ onMounted(() => {
     syncAboutPairHeights();
   });
   window.addEventListener("resize", syncAboutPairHeights);
+  void runRtConnectivityProbe("settings-mounted");
+  if (!props.slskConnected) void runSlskConnectivityProbe();
 });
 
 onActivated(() => {
   loadNerdDiagnostics();
   if (githubReleaseApiUrl) runReleaseCheck();
+  if (!props.slskConnected) void runSlskConnectivityProbe();
+  if (props.rtLoggedIn) {
+    invoke("rutracker_refresh_avatar", { mirror: getMirror() })
+      .then((newUrl) => {
+        if (newUrl) {
+          avatarImgFailed.value = false;
+          emit("login", props.rtUsername, newUrl);
+        }
+      })
+      .catch(() => {});
+  }
 });
 
 onUnmounted(() => {
@@ -520,12 +690,44 @@ function proxySelectToUrl(sel) {
 }
 
 const proxySelect = ref(PROXY_SELECT_NONE);
+const rtQuickProxy = ref(PROXY_SELECT_NONE);
+const rtQuickProxyApplying = ref(false);
 const proxySaved = ref(false);
 const proxySaveBusy = ref(false);
 const proxySaveError = ref(null);
 const proxyProbeBusy = ref(false);
 const proxyProbeOk = ref(false);
 const proxyProbeError = ref(null);
+
+async function applyRtQuickProxyAndProbe(sel) {
+  if (rtQuickProxyApplying.value) return;
+  rtQuickProxyApplying.value = true;
+  proxySaveError.value = null;
+  rtError.value = null;
+  proxySelect.value = sel;
+  const url = proxySelectToUrl(sel);
+  try {
+    await setHttpProxy(url);
+    setRtHttpProxyCache(url || "");
+    rtQuickProxy.value = sel;
+    await appDebugLog("rutracker", "quick proxy applied", {
+      proxy: sel,
+      url: url ?? null,
+    });
+  } catch (e) {
+    const msg = e?.toString?.() ?? String(e);
+    proxySaveError.value = msg;
+    rtReachabilityError.value = msg;
+    await appDebugLog("rutracker", "quick proxy apply error", {
+      proxy: sel,
+      error: msg,
+    });
+    rtQuickProxyApplying.value = false;
+    return;
+  }
+  rtQuickProxyApplying.value = false;
+  await runRtConnectivityProbe(`quick-proxy-${sel}`);
+}
 
 /**
  * @returns {string}
@@ -567,6 +769,7 @@ async function saveProxy() {
     const url = proxySelectToUrl(proxySelect.value);
     await setHttpProxy(url);
     setRtHttpProxyCache(url || "");
+    rtQuickProxy.value = proxySelect.value;
     proxySaved.value = true;
     setTimeout(() => {
       proxySaved.value = false;

@@ -1032,6 +1032,52 @@ fn page_looks_logged_in(html: &str) -> bool {
     logged_in_markers.iter().any(|m| html.contains(m))
 }
 
+/// Re-fetch and persist the logged-in user's avatar without requiring a full
+/// re-login. Returns the new data URL, or `None` if not logged in or the
+/// request fails (caller should keep the previously stored avatar).
+#[tauri::command]
+pub async fn rutracker_refresh_avatar(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+) -> Result<Option<String>, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Ok(None);
+        }
+    }
+
+    let client = state.http_client()?;
+    let base = auth_base(&state, &mirror);
+
+    let resp = match client
+        .get(format!("{}/forum/index.php", base))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
+    let bytes = resp.bytes().await.unwrap_or_default();
+    let (html, _, _) = WINDOWS_1251.decode(&bytes);
+    let html = html.into_owned();
+
+    let avatar_data_url = fetch_avatar(&client, &html, &base).await;
+
+    if let Some(ref url) = avatar_data_url {
+        let mut meta = load_meta(&state.meta_path);
+        meta.avatar_data_url = Some(url.clone());
+        save_meta(&state.meta_path, &meta);
+        if let Ok(mut inner) = state.inner.lock() {
+            inner.avatar_url = Some(url.clone());
+        }
+    }
+
+    Ok(avatar_data_url)
+}
+
 // ── Connectivity probe ────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -1204,24 +1250,47 @@ pub async fn rutracker_login_via_webview(
         .parse()
         .map_err(|e| format!("Некорректный URL зеркала: {}", e))?;
 
-    if let Some(old) = app.get_webview_window(LOGIN_WEBVIEW_LABEL) {
-        let _ = old.destroy();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    // Reuse an existing login window instead of destroying and recreating it.
+    // Recreating races with Tauri's async label cleanup and causes "already exists"
+    // errors when the IPC protocol fallback triggers a second command invocation.
+    // Note: proxy_url() on WebviewWindowBuilder panics in tauri-runtime-wry on
+    // Windows (RecvError in the wry event loop channel), so proxy is not forwarded
+    // to the webview. Users who need proxy for the browser login should configure
+    // a Windows system proxy.
+    let window = if let Some(existing) = app.get_webview_window(LOGIN_WEBVIEW_LABEL) {
+        let _ = existing.set_focus();
+        existing
+    } else {
+        {
+            let mut b = WebviewWindowBuilder::new(
+                &app,
+                LOGIN_WEBVIEW_LABEL,
+                WebviewUrl::External(login_url.clone()),
+            )
+            .title("Rutracker — вход")
+            .inner_size(720.0, 860.0)
+            .min_inner_size(480.0, 600.0)
+            .resizable(true)
+            .focused(true)
+            .center();
 
-    let window = WebviewWindowBuilder::new(
-        &app,
-        LOGIN_WEBVIEW_LABEL,
-        WebviewUrl::External(login_url.clone()),
-    )
-    .title("Rutracker — вход")
-    .inner_size(720.0, 860.0)
-    .min_inner_size(480.0, 600.0)
-    .resizable(true)
-    .focused(true)
-    .center()
-    .build()
-    .map_err(|e| format!("Не удалось открыть окно входа: {}", e))?;
+            // proxy_url() and additional_browser_args() applied to the shared
+            // WebView2 environment both panic in tauri-runtime-wry on Windows.
+            // Workaround: give the login window its own data directory so WebView2
+            // creates an isolated environment where browser args are applied at
+            // init time, before any shared state is locked.
+            if let Some(proxy) = load_http_proxy_url(&state.proxy_path) {
+                if let Ok(data_dir) = app.path().app_data_dir().map(|d| d.join("rt_login_webview")) {
+                    b = b
+                        .data_directory(data_dir)
+                        .additional_browser_args(&format!("--proxy-server={}", proxy));
+                }
+            }
+
+            b.build()
+                .map_err(|e| format!("Не удалось открыть окно входа: {}", e))?
+        }
+    };
 
     let poll_interval = Duration::from_millis(1500);
     let timeout = Duration::from_secs(600);

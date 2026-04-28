@@ -234,6 +234,11 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Only intercept the main window — auxiliary windows (e.g. rt-login-webview)
+                // should close normally without killing the whole app.
+                if window.label() != "main" {
+                    return;
+                }
                 let close_to_tray = window
                     .try_state::<CloseTrayState>()
                     .map(|s| s.0.load(Ordering::Relaxed))
@@ -341,6 +346,7 @@ pub fn run() {
             rutracker::rutracker_get_http_proxy,
             rutracker::rutracker_set_http_proxy,
             rutracker::rutracker_probe_http_proxy,
+            rutracker::rutracker_refresh_avatar,
             // ── Streaming: now backed by vozduxan (C++ + libtorrent) ──
             vozduxan_stream::torrent_prepare_stream,
             vozduxan_stream::torrent_magnet_list_files,
@@ -376,6 +382,7 @@ pub fn run() {
             soulseek::soulseek_login,
             soulseek::soulseek_logout,
             soulseek::soulseek_status,
+            soulseek::soulseek_check_connectivity,
             soulseek::soulseek_search,
             soulseek::soulseek_prepare_stream,
             soulseek::soulseek_cover_preview,

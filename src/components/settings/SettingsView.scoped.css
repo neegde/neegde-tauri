@@ -31,11 +31,176 @@
   color: var(--text);
   margin-bottom: 10px;
 }
-.settings-card-desc--after-reconnect {
-  margin-top: 4px;
-  margin-bottom: 16px;
+.settings-card--rt .settings-card-header {
+  padding: 14px 16px;
+  gap: 12px;
+}
+.settings-card--rt .settings-card-body {
+  padding: 12px 16px 14px;
+}
+
+/* ── Status row ───────────────────────────────────────────────────────────── */
+.rt-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+.rt-status-text {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+.rt-check-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 0.14s, background 0.14s;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.rt-check-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255,255,255,.06);
+}
+.rt-check-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.rt-check-spinner {
+  width: 14px;
+  height: 14px;
+}
+.rt-status-desc {
+  margin: 0 0 10px 15px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* ── Proxy segmented control ──────────────────────────────────────────────── */
+.rt-proxy-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px 15px;
+}
+.rt-proxy-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted2);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  flex-shrink: 0;
+}
+.rt-proxy-seg {
+  display: flex;
+  background: var(--surface-h);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.rt-proxy-seg-btn {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.rt-proxy-seg-btn:hover:not(:disabled):not(.rt-proxy-seg-btn--active) {
+  color: var(--text);
+  background: rgba(255,255,255,.06);
+}
+.rt-proxy-seg-btn--active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0,0,0,.22);
+}
+.rt-proxy-seg-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Login form ───────────────────────────────────────────────────────────── */
+.rt-login-form {
+  border-top: 1px solid var(--border);
   padding-top: 12px;
-  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  margin-top: 4px;
+}
+.rt-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.rt-form-actions .login-btn {
+  margin-top: 0;
+  flex: 1;
+  min-width: 140px;
+}
+.rt-captcha-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.14s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rt-captcha-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+.rt-captcha-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.rt-status-fade-enter-active,
+.rt-status-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.rt-status-fade-enter-from,
+.rt-status-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.rt-reveal-enter-active,
+.rt-reveal-leave-active {
+  transition: opacity 0.24s ease, transform 0.24s ease, max-height 0.26s ease;
+  overflow: hidden;
+}
+.rt-reveal-enter-from,
+.rt-reveal-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+  max-height: 0;
+}
+.rt-reveal-enter-to,
+.rt-reveal-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+  max-height: 480px;
 }
 .rt-session-actions {
   display: flex;
@@ -761,6 +926,44 @@
 /* ── SoulSeek card ──────────────────────────────────────────────────────────── */
 .settings-card--slsk {
   margin-top: 12px;
+}
+.settings-card--slsk .settings-card-header {
+  padding: 14px 16px;
+  gap: 12px;
+}
+.settings-card--slsk .settings-card-body {
+  padding: 12px 16px 14px;
+}
+.slsk-login-form {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+.slsk-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.slsk-form-actions .login-btn {
+  margin-top: 0;
+  flex: 1;
+  min-width: 140px;
+}
+.slsk-help-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.14s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.slsk-help-btn:hover {
+  color: var(--text);
 }
 .slsk-avatar {
   width: 46px;
