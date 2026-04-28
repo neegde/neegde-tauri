@@ -227,6 +227,93 @@ describe("Results", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("renders unified empty state when both providers connected and no results", () => {
+    const w = mount(Results, {
+      props: {
+        searchEpoch: 1, entities: [],
+        loadingAlbums: false, loadingTracks: false,
+        rtLoggedIn: true, slskConnected: true,
+        rtError: null, slskError: null, selectedId: null,
+        query: "nothing here",
+        nowPlayingId: null, playerPlaying: false,
+      },
+    });
+    expect(w.find(".search-empty-state").exists()).toBe(true);
+    expect(w.text()).toContain("Ничего не нашли");
+    expect(w.text()).toContain("nothing here");
+  });
+
+  it("does NOT render empty state while resolving", () => {
+    const w = mount(Results, {
+      props: {
+        searchEpoch: 1, entities: [],
+        loadingAlbums: false, loadingTracks: false,
+        rtLoggedIn: true, slskConnected: true,
+        rtError: null, slskError: null, selectedId: null,
+        query: "x", resolving: true,
+        nowPlayingId: null, playerPlaying: false,
+      },
+    });
+    expect(w.find(".search-empty-state").exists()).toBe(false);
+  });
+
+  it("does NOT render empty state while a provider is loading", () => {
+    const w = mount(Results, {
+      props: {
+        searchEpoch: 1, entities: [],
+        loadingAlbums: false, loadingTracks: true,
+        rtLoggedIn: true, slskConnected: true,
+        rtError: null, slskError: null, selectedId: null, query: "x",
+        nowPlayingId: null, playerPlaying: false,
+      },
+    });
+    expect(w.find(".search-empty-state").exists()).toBe(false);
+  });
+
+  it("does NOT render empty state when a provider returned an error", () => {
+    const w = mount(Results, {
+      props: {
+        searchEpoch: 1, entities: [],
+        loadingAlbums: false, loadingTracks: false,
+        rtLoggedIn: true, slskConnected: true,
+        rtError: "boom", slskError: null, selectedId: null, query: "x",
+        nowPlayingId: null, playerPlaying: false,
+      },
+    });
+    expect(w.find(".search-empty-state").exists()).toBe(false);
+  });
+
+  it("does NOT render empty state when neither provider is connected", () => {
+    const w = mount(Results, {
+      props: {
+        searchEpoch: 1, entities: [],
+        loadingAlbums: false, loadingTracks: false,
+        rtLoggedIn: false, slskConnected: false,
+        rtError: null, slskError: null, selectedId: null, query: "x",
+        nowPlayingId: null, playerPlaying: false,
+      },
+    });
+    expect(w.find(".search-empty-state").exists()).toBe(false);
+  });
+
+  it("peer filter that excludes everything keeps the 'show all tracks' affordance", async () => {
+    const w = mount(Results, {
+      props: {
+        searchEpoch: 1, entities: [slskTrack],
+        loadingAlbums: false, loadingTracks: false,
+        rtLoggedIn: false, slskConnected: true,
+        rtError: null, slskError: null, selectedId: null, query: "",
+        slskPeerFilter: "notexisting",
+        nowPlayingId: null, playerPlaying: false,
+      },
+    });
+    expect(w.find(".search-empty-state").exists()).toBe(false);
+    const clear = w.find(".search-peer-filter-clear");
+    expect(clear.exists()).toBe(true);
+    await clear.trigger("click");
+    expect(w.emitted("clear-slsk-peer-filter")).toBeTruthy();
+  });
+
   it("search-epoch change resets visibleCount (smoke — no crash)", async () => {
     const w = mount(Results, {
       props: {

@@ -146,6 +146,9 @@ const allEmpty = computed(() => {
   if (props.resolving || props.loadingAlbums || props.loadingTracks) return false;
   if (props.rtError || props.slskError) return false;
   if (!props.rtLoggedIn && !props.slskConnected) return false;
+  // Don't swallow the peer-filter "show all tracks" affordance — without it the
+  // user gets stuck inside a peer browse that returned zero matching files.
+  if (slskFilterEmptyHint.value) return false;
   const albumsEmpty = !props.rtLoggedIn || albumEntities.value.length === 0;
   const tracksEmpty = !props.slskConnected || trackEntitiesFiltered.value.length === 0;
   return albumsEmpty && tracksEmpty;

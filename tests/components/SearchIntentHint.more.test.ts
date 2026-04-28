@@ -97,3 +97,134 @@ describe("SearchIntentHint — canonical + revert + raw fallback", () => {
     expect(w.find(".sih").exists()).toBe(false);
   });
 });
+
+describe("SearchIntentHint — intent label + candidate chips", () => {
+  const variants: Array<[string, string]> = [
+    ["track", "трек"],
+    ["artist", "исполнитель"],
+    ["album", "альбом"],
+    ["lyric", "по тексту"],
+  ];
+  for (const [intent, label] of variants) {
+    it(`renders the '${label}' chip for intent='${intent}'`, () => {
+      const w = mount(SearchIntentHint, {
+        props: {
+          resolving: false,
+          resolved: {
+            canonical: { artist: "X", title: "Y" },
+            intent,
+            candidates: [],
+          },
+          rawQuery: "raw",
+        },
+      });
+      expect(w.find(".sih-chip").text()).toBe(label);
+    });
+  }
+
+  it("does not render a chip for intent='raw' / unknown", () => {
+    const w = mount(SearchIntentHint, {
+      props: {
+        resolving: false,
+        resolved: {
+          canonical: { artist: "X", title: "Y" },
+          intent: "raw",
+          candidates: [],
+        },
+        rawQuery: "raw",
+      },
+    });
+    expect(w.find(".sih-chip").exists()).toBe(false);
+  });
+
+  it("hides the 'Также:' row when there are no extra candidates", () => {
+    const w = mount(SearchIntentHint, {
+      props: {
+        resolving: false,
+        resolved: {
+          canonical: { artist: "X", title: "Y" },
+          intent: "track",
+          candidates: [{ artist: "X", title: "Y", sources: ["brave"] }],
+        },
+        rawQuery: "raw",
+      },
+    });
+    expect(w.find(".sih-alts").exists()).toBe(false);
+  });
+
+  it("drops the canonical pair from candidates and caps the rest at 3", () => {
+    const w = mount(SearchIntentHint, {
+      props: {
+        resolving: false,
+        resolved: {
+          canonical: { artist: "X", title: "Y" },
+          intent: "track",
+          candidates: [
+            { artist: "X", title: "Y", sources: ["brave"] },
+            { artist: "A", title: "1", sources: ["brave"] },
+            { artist: "B", title: "2", sources: ["brave"] },
+            { artist: "C", title: "3", sources: ["brave"] },
+            { artist: "D", title: "4", sources: ["brave"] },
+          ],
+        },
+        rawQuery: "raw",
+      },
+    });
+    const chips = w.findAll(".sih-alt-btn");
+    expect(chips).toHaveLength(3);
+    const labels = chips.map((c) => c.text());
+    expect(labels).toEqual(["A — 1", "B — 2", "C — 3"]);
+  });
+
+  it("renders an artist-only candidate without a dash", () => {
+    const w = mount(SearchIntentHint, {
+      props: {
+        resolving: false,
+        resolved: {
+          canonical: { artist: "X", title: "Y" },
+          intent: "track",
+          candidates: [{ artist: "Solo", title: "", sources: ["brave"] }],
+        },
+        rawQuery: "raw",
+      },
+    });
+    const chip = w.find(".sih-alt-btn");
+    expect(chip.exists()).toBe(true);
+    expect(chip.text()).toBe("Solo");
+  });
+
+  it("emits search-candidate with the chip's pair on click", async () => {
+    const w = mount(SearchIntentHint, {
+      props: {
+        resolving: false,
+        resolved: {
+          canonical: { artist: "X", title: "Y" },
+          intent: "track",
+          candidates: [{ artist: "Pick", title: "Me", sources: ["brave"] }],
+        },
+        rawQuery: "raw",
+      },
+    });
+    await w.find(".sih-alt-btn").trigger("click");
+    const events = w.emitted("search-candidate");
+    expect(events).toBeTruthy();
+    expect(events?.[0]?.[0]).toEqual({ artist: "Pick", title: "Me" });
+  });
+
+  it("strips brackets from candidate labels too", () => {
+    const w = mount(SearchIntentHint, {
+      props: {
+        resolving: false,
+        resolved: {
+          canonical: { artist: "X", title: "Y" },
+          intent: "track",
+          candidates: [
+            { artist: "Cand (alt)", title: "Tune [remix]", sources: ["brave"] },
+          ],
+        },
+        rawQuery: "raw",
+      },
+    });
+    expect(w.find(".sih-alt-btn").text()).toBe("Cand — Tune");
+  });
+});

@@ -20,6 +20,20 @@ const emit = defineEmits([
 
 const hasCanonical = computed(() => Boolean(props.resolved?.canonical?.artist));
 
+/**
+ * Strip bracketed annotations from a string before display.
+ *
+ * Mirrors `stripBrackets` in `src/search/engine.ts` so the hint surfaces
+ * exactly what gets sent to the providers — the raw canonical pair often
+ * carries Latin-in-parens translations like "Леонид Агутин (Leonid Agutin)"
+ * which the engine drops before querying.
+ *
+ * Args:
+ *   s: Any value coercible to a string.
+ *
+ * Returns:
+ *   The input with `(…)` and `[…]` segments removed and whitespace collapsed.
+ */
 function stripBrackets(s) {
   return String(s ?? "")
     .replace(/\([^()]*\)/g, "")
@@ -35,6 +49,7 @@ const canonicalTitle = computed(() =>
   stripBrackets(props.resolved?.canonical?.title ?? ""),
 );
 
+/** Russian label for the resolver's intent enum. Empty for `raw` / unknown. */
 const intentLabel = computed(() => {
   const i = props.resolved?.intent;
   if (i === "track") return "трек";
@@ -44,6 +59,11 @@ const intentLabel = computed(() => {
   return "";
 });
 
+/**
+ * Top-3 alternate candidates from the resolver, with the canonical pair
+ * dropped (it's already shown in the main row) and the same `stripBrackets`
+ * normalization applied so the chips match what providers actually receive.
+ */
 const topCandidates = computed(() => {
   const cands = props.resolved?.candidates ?? [];
   const a = canonicalArtist.value.toLowerCase();

@@ -44,6 +44,7 @@ export interface UseSearchUIApi {
   error: Ref<string | null>;
   handleSearch: (query: string, opts?: { skipResolver?: boolean }) => Promise<void>;
   handleRevertToRaw: () => Promise<void>;
+  handleSearchCandidate: (cand: { artist: string; title?: string | null }) => Promise<void>;
 }
 
 export function useSearchUI(opts: UseSearchUIOptions): UseSearchUIApi {
@@ -94,6 +95,28 @@ export function useSearchUI(opts: UseSearchUIOptions): UseSearchUIApi {
     await handleSearch(q, { skipResolver: true });
   }
 
+  /**
+   * Run a fresh search for one of the resolver's alternate candidates.
+   *
+   * Builds an `"Artist - Title"` (or just `"Artist"` for artist-only candidates)
+   * string and dispatches it with the resolver bypassed — the user already
+   * picked the canonical pair, so a second normalization round would only
+   * obscure it.
+   *
+   * Args:
+   *   cand: A `{artist, title}` pair as emitted by `SearchIntentHint`.
+   */
+  async function handleSearchCandidate(
+    cand: { artist: string; title?: string | null },
+  ): Promise<void> {
+    const artist = String(cand?.artist ?? "").trim();
+    if (!artist) return;
+    const title = String(cand?.title ?? "").trim();
+    const q = title ? `${artist} - ${title}` : artist;
+    searchQuery.value = q;
+    await handleSearch(q, { skipResolver: true });
+  }
+
   return {
     searchQuery,
     homeSearchActive,
@@ -103,5 +126,6 @@ export function useSearchUI(opts: UseSearchUIOptions): UseSearchUIApi {
     error: searchError,
     handleSearch,
     handleRevertToRaw,
+    handleSearchCandidate,
   };
 }
