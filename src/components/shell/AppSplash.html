@@ -1,0 +1,55 @@
+  <Teleport to="body">
+    <Transition name="app-splash-fade">
+      <div
+        v-if="visible"
+        class="app-splash-layer"
+        role="status"
+        aria-busy="true"
+      >
+        <span class="vh">Загрузка приложения</span>
+
+        <div class="app-splash-panel" aria-hidden="true">
+          <div class="app-splash-chat">
+            <div class="app-splash-chat-inner">
+              <div class="msg msg--b">
+                <div class="msg-bubble">
+                  <p>
+                    {{ questionText }}<span
+                      v-show="questionText.length < QUESTION_TEXT.length"
+                      class="msg-caret msg-caret--question"
+                      aria-hidden="true"
+                    />
+                  </p>
+                </div>
+              </div>
+
+              <div v-show="replyBubbleVisible" class="msg msg--a">
+                <div class="msg-bubble">
+                  <p>
+                    <span class="msg-brand">{{ devReply }}</span>
+                    <span
+                      v-show="devReply.length < REPLY_TEXT.length"
+                      class="msg-caret"
+                      aria-hidden="true"
+                    />
+                  </p>
+                </div>
+              </div>
+
+              <div
+                v-show="showTypingIndicator"
+                class="msg msg--typing"
+                aria-hidden="true"
+              >
+                <div class="typing typing-messenger" title="Загрузка">
+                  <span class="typing-dot" />
+                  <span class="typing-dot" />
+                  <span class="typing-dot" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>

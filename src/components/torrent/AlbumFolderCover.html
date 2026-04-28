@@ -1,0 +1,32 @@
+  <div
+    ref="rootRef"
+    class="album-folder-cover-root"
+    :class="{ 'album-folder-cover-root--enlargeable': canEnlarge }"
+    @click="onCoverClick"
+  >
+    <!-- Gradient placeholder — underneath; pulses while waiting for BT with no post preview -->
+    <div
+      class="album-folder-cover-placeholder"
+      :class="{ shimmer: placeholderShimmer }"
+      :style="gradientStyle"
+    >
+      <span v-if="!showImg || imgFailed" class="album-folder-cover-letter">{{ initial }}</span>
+    </div>
+
+    <!-- Post preview or torrent image -->
+    <img
+      v-if="showImg"
+      :src="displaySrc"
+      class="album-folder-cover-img"
+      :class="{ visible: imgLoaded }"
+      alt=""
+      @load="imgLoaded = true"
+      @error="imgFailed = true"
+    />
+    <CoverLightbox
+      v-model:open="lightboxOpen"
+      :src="displaySrc || ''"
+      :alt="label || 'Обложка альбома'"
+      large
+    />
+  </div>

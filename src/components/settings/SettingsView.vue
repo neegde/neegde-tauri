@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { login, loginViaWebview, logout, restoreSession } from "../../rutracker/auth.js";
+import { checkConnectivity, login, loginViaWebview, logout, restoreSession } from "../../rutracker/auth.js";
 import { normalizeLoginStatus } from "../../rutracker/sessionStatus.js";
 import {
   getMirror,
@@ -33,12 +33,12 @@ import { clearSlskCoverCache } from "../../soulseek/api.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import AchievementsModal from "./AchievementsModal.vue";
 import SystemIcon from "../shared/SystemIcon.vue";
-import { openAppDebugWindow } from "../../appDebugWindow.js";
 import {
   fetchLatestGithubRelease,
   compareSemver,
   normalizeVersionTag,
 } from "../../githubReleaseCheck.js";
+import { appDebugLog } from "../../appDebugLog.js";
 import appIconSrc from "../../assets/neegde-logo.png";
 import vozduxanLogoSrc from "../../assets/vozduxan-logo.png";
 import { ACHIEVEMENT_CATALOG } from "../../achievements/achievementsCore.js";
@@ -49,7 +49,6 @@ const props = defineProps({
   rtAvatarUrl:      { type: String, default: null },
   restoringSession: { type: Boolean, default: false },
   theme:            { type: String, default: "dark" },
-  appDebugEnabled:  { type: Boolean, default: false },
   achievementsOptIn:   { type: Boolean, default: false },
   achievementsUnlocked: { type: Array, default: () => [] },
   // SoulSeek
@@ -57,10 +56,52 @@ const props = defineProps({
   slskUsername:     { type: String, default: null },
   slskLoggingIn:    { type: Boolean, default: false },
   slskLoginError:   { type: String, default: null },
+  closeTray:        { type: Boolean, default: true },
 });
 
 // avatar image error fallback
 const avatarImgFailed = ref(false);
+
+// SoulSeek connectivity probe
+const slskReachabilityState = ref("idle"); // idle | checking | ok | fail
+const slskReachabilityLatency = ref(null);
+const slskReachabilityError = ref(null);
+
+function slskReachabilityLabel() {
+  if (slskReachabilityState.value === "checking") return "Проверяем доступность SoulSeek…";
+  if (slskReachabilityState.value === "ok") {
+    if (slskReachabilityLatency.value) return `SoulSeek доступен (${slskReachabilityLatency.value} мс)`;
+    return "SoulSeek доступен";
+  }
+  if (slskReachabilityState.value === "fail") return "Сервер SoulSeek недоступен";
+  return "Доступность не проверялась";
+}
+
+function slskReachabilityDescription() {
+  if (slskReachabilityState.value === "checking") return "Подключаемся к server.slsknet.org:2242…";
+  if (slskReachabilityState.value === "ok") return "Сервер отвечает — можно входить.";
+  if (slskReachabilityState.value === "fail") return "Не удалось подключиться к серверу. Проверьте интернет или попробуйте позже.";
+  return "Нажмите «Проверить», чтобы убедиться в доступности сервера.";
+}
+
+async function runSlskConnectivityProbe() {
+  slskReachabilityState.value = "checking";
+  slskReachabilityError.value = null;
+  slskReachabilityLatency.value = null;
+  try {
+    const result = await invoke("soulseek_check_connectivity");
+    slskReachabilityLatency.value = result.latency_ms ?? null;
+    if (result.reachable) {
+      slskReachabilityState.value = "ok";
+    } else {
+      slskReachabilityState.value = "fail";
+      slskReachabilityError.value = result.error || null;
+    }
+  } catch (err) {
+    slskReachabilityState.value = "fail";
+    slskReachabilityError.value = err?.message ?? String(err);
+  }
+}
 
 // SoulSeek login form state
 const slskFormUser = ref(localStorage.getItem("neegde.slsk.user") || "");
@@ -112,11 +153,12 @@ const emit = defineEmits([
   "login",
   "logout",
   "theme-change",
-  "update:appDebugEnabled",
   "achievements-opt-in-change",
   "achievements-reset",
   "slsk-login",
   "slsk-logout",
+  "show-update",
+  "close-tray-change",
 ]);
 
 const achievementRows = computed(() => {
@@ -143,8 +185,6 @@ const githubReleaseApiUrl = __GITHUB_RELEASES_LATEST_API__;
 const githubProjectUrl = __GITHUB_PROJECT_URL__;
 const telegramChannelUrl = __TELEGRAM_CHANNEL_URL__;
 
-/** Официальный форум RuTracker (регистрация и вход — те же логин/пароль). */
-const RUTRACKER_FORUM_URL = "https://rutracker.org/forum/index.php";
 /** Сайт Soulseek: справка по аккаунту и сеть. */
 const SOULSEEK_ACCOUNT_INFO_URL = "https://www.slsknet.org/news/user";
 
@@ -194,12 +234,14 @@ function syncAboutPairHeights() {
 function runReleaseCheck() {
   if (!githubReleaseApiUrl) return;
   releaseCheckState.value = "loading";
+  appDebugLog("update", `release check → ${githubReleaseApiUrl}`);
   fetchLatestGithubRelease(githubReleaseApiUrl)
     .then((info) => {
       if (!info) {
         releaseCheckState.value = "none";
         releaseRemoteTag.value = null;
         releasePageUrl.value = null;
+        appDebugLog("update", "release check: no releases found (404 or empty)");
         return;
       }
       releaseRemoteTag.value = info.tagName;
@@ -207,12 +249,13 @@ function runReleaseCheck() {
       const cur = normalizeVersionTag(appVersion);
       const remote = normalizeVersionTag(info.tagName);
       const cmp = compareSemver(cur, remote);
-      if (cmp === 0) releaseCheckState.value = "latest";
-      else if (cmp < 0) releaseCheckState.value = "outdated";
-      else releaseCheckState.value = "ahead";
+      const state = cmp === 0 ? "latest" : cmp < 0 ? "outdated" : "ahead";
+      releaseCheckState.value = state;
+      appDebugLog("update", `release check: local=${appVersion} remote=${info.tagName} → ${state}`);
     })
-    .catch(() => {
+    .catch((e) => {
       releaseCheckState.value = "error";
+      appDebugLog("update", `release check error: ${e?.message ?? e}`);
     });
 }
 
@@ -233,24 +276,87 @@ function openExternalUrl(url) {
 const rtUsername = ref("");
 const rtPassword = ref("");
 const rtLoading  = ref(false);
+const rtWebviewLoading = ref(false);
 const rtError    = ref(null);
-const rtNeedsCaptcha = ref(false);
-const rtWebviewBusy  = ref(false);
+const rtReachabilityState = ref("idle");
+const rtReachabilityStatus = ref(null);
+const rtReachabilityError = ref(null);
 
-/**
- * Heuristic: detect a CAPTCHA / Cloudflare error payload so we can surface
- * the "login via embedded browser" fallback button.
- *
- * Arguments:
- *     msg: Human-readable error message from backend.
- *
- * Returns:
- *     `true` when the message mentions captcha in either language.
- */
-function isCaptchaError(msg) {
-  if (!msg) return false;
-  const m = String(msg).toLowerCase();
-  return m.includes("captcha") || m.includes("каптч") || m.includes("капч");
+const RT_LOGIN_TIMEOUT_MS = 25_000;
+
+function withPromiseTimeout(promise, ms, timeoutMessage) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(timeoutMessage)), ms);
+    promise
+      .then((value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+function rtReachabilityLabel() {
+  if (rtReachabilityState.value === "checking") return "Проверяем доступность RuTracker…";
+  if (rtReachabilityState.value === "ok") {
+    if (rtReachabilityStatus.value) return `RuTracker доступен (HTTP ${rtReachabilityStatus.value})`;
+    return "RuTracker доступен";
+  }
+  if (rtReachabilityState.value === "fail") {
+    if (rtReachabilityStatus.value) return `RuTracker недоступен (HTTP ${rtReachabilityStatus.value})`;
+    return "Не удалось достучаться до RuTracker";
+  }
+  return "Проверка доступности не запускалась";
+}
+
+function rtReachabilityDescription() {
+  if (rtQuickProxyApplying.value) return "Применяем прокси и запускаем повторную проверку…";
+  if (rtReachabilityState.value === "checking") return "Проверяем соединение с форумом и текущим mirror.";
+  if (rtReachabilityState.value === "ok") return "Соединение есть — форма входа открыта ниже.";
+  if (rtReachabilityState.value === "fail") return "Не удалось подключиться. Выберите прокси и перепроверьте.";
+  return "Нажмите «Проверить доступность», чтобы продолжить вход.";
+}
+
+async function runRtConnectivityProbe(reason = "manual") {
+  rtReachabilityState.value = "checking";
+  rtReachabilityError.value = null;
+  await appDebugLog("rutracker", `connectivity probe: start (${reason})`);
+  try {
+    const result = await withPromiseTimeout(
+      checkConnectivity(),
+      15_000,
+      "Проверка доступности RuTracker превысила лимит ожидания",
+    );
+    rtReachabilityStatus.value = result?.status ?? null;
+    if (result?.reachable) {
+      rtReachabilityState.value = "ok";
+      await appDebugLog("rutracker", "connectivity probe: reachable", {
+        reason,
+        status: result?.status ?? null,
+        usingProxy: result?.using_proxy ?? null,
+      });
+      return;
+    }
+    rtReachabilityState.value = "fail";
+    rtReachabilityError.value = result?.error || null;
+    await appDebugLog("rutracker", "connectivity probe: unreachable", {
+      reason,
+      status: result?.status ?? null,
+      error: result?.error ?? null,
+      usingProxy: result?.using_proxy ?? null,
+    });
+  } catch (err) {
+    rtReachabilityState.value = "fail";
+    rtReachabilityStatus.value = null;
+    rtReachabilityError.value = err?.message ?? String(err);
+    await appDebugLog("rutracker", "connectivity probe: error", {
+      reason,
+      error: err?.message ?? String(err),
+    });
+  }
 }
 
 async function handleRtLogin(e) {
@@ -258,53 +364,84 @@ async function handleRtLogin(e) {
   if (!rtUsername.value.trim() || !rtPassword.value) return;
   rtLoading.value = true;
   rtError.value   = null;
-  rtNeedsCaptcha.value = false;
+  await appDebugLog("rutracker", "login: submit", {
+    hasUsername: Boolean(rtUsername.value.trim()),
+    mirrorMode: getMirrorMode(),
+    mirror: getMirror(),
+  });
   try {
-    const result = await login(rtUsername.value.trim(), rtPassword.value);
+    const result = await withPromiseTimeout(
+      login(rtUsername.value.trim(), rtPassword.value),
+      RT_LOGIN_TIMEOUT_MS,
+      "Запрос входа превысил лимит ожидания",
+    );
     if (result.success) {
       rtCredentialsHiddenUntilLogout.value = false;
       emit("login", result.username, result.avatar_url || null);
       rtUsername.value = "";
       rtPassword.value = "";
       avatarImgFailed.value = false;
+      await appDebugLog("rutracker", "login: success", {
+        username: result.username ?? null,
+      });
     } else {
       rtError.value = result.error || "Ошибка входа";
-      rtNeedsCaptcha.value = isCaptchaError(result.error);
+      await appDebugLog("rutracker", "login: rejected", {
+        error: result.error ?? null,
+      });
+      void runRtConnectivityProbe("login-rejected");
     }
   } catch (err) {
-    rtError.value = "Нет соединения — проверьте зеркало и интернет";
+    const text = err?.message ?? String(err);
+    if (/превысил лимит|timeout|timed out/i.test(text)) {
+      rtError.value = "Слишком долго нет ответа от RuTracker. Попробуйте прокси или другое зеркало.";
+    } else {
+      rtError.value = "Нет соединения — проверьте зеркало и интернет";
+    }
+    await appDebugLog("rutracker", "login: error", {
+      error: text,
+    });
+    void runRtConnectivityProbe("login-error");
   } finally {
     rtLoading.value = false;
   }
 }
 
 /**
- * Open the embedded WebView login window. Used as a fallback when the
- * programmatic login is blocked by CAPTCHA / Cloudflare.
+ * Opens embedded RuTracker login page and promotes cookies into app session.
  *
  * Returns:
- *     Nothing; resolved login state is propagated via the `login` emit.
+ *     void
  */
-async function handleRtWebviewLogin() {
-  if (rtWebviewBusy.value) return;
-  rtWebviewBusy.value = true;
+async function handleRtLoginViaBrowser() {
   rtError.value = null;
+  rtWebviewLoading.value = true;
+  await appDebugLog("rutracker", "login via webview: open");
   try {
     const result = await loginViaWebview();
-    if (result?.success) {
+    if (result.success) {
       rtCredentialsHiddenUntilLogout.value = false;
       emit("login", result.username, result.avatar_url || null);
       rtUsername.value = "";
       rtPassword.value = "";
       avatarImgFailed.value = false;
-      rtNeedsCaptcha.value = false;
-    } else {
-      rtError.value = result?.error || "Вход через браузер не завершён";
+      await appDebugLog("rutracker", "login via webview: success", {
+        username: result.username ?? null,
+      });
+      return;
     }
+    rtError.value = result.error || "Вход через браузер отменён";
+    await appDebugLog("rutracker", "login via webview: rejected", {
+      error: result.error ?? null,
+    });
+    void runRtConnectivityProbe("webview-login-rejected");
   } catch (err) {
-    rtError.value = String(err?.message || err);
+    rtError.value = "Не удалось открыть окно входа";
+    await appDebugLog("rutracker", "login via webview: error", {
+      error: err?.message ?? String(err),
+    });
   } finally {
-    rtWebviewBusy.value = false;
+    rtWebviewLoading.value = false;
   }
 }
 
@@ -415,10 +552,11 @@ onMounted(() => {
   activeMirrorDisplay.value = getMirror();
   getHttpProxy()
     .then((url) => {
-      proxySelect.value = proxyUrlToSelect(url);
+      const sel = proxyUrlToSelect(url);
+      proxySelect.value = sel;
+      rtQuickProxy.value = sel;
     })
     .catch(() => {});
-  if (githubReleaseApiUrl) runReleaseCheck();
   nextTick(() => {
     aboutPairResizeObserver = new ResizeObserver(() => {
       syncAboutPairHeights();
@@ -426,10 +564,24 @@ onMounted(() => {
     syncAboutPairHeights();
   });
   window.addEventListener("resize", syncAboutPairHeights);
+  void runRtConnectivityProbe("settings-mounted");
+  if (!props.slskConnected) void runSlskConnectivityProbe();
 });
 
 onActivated(() => {
   loadNerdDiagnostics();
+  if (githubReleaseApiUrl) runReleaseCheck();
+  if (!props.slskConnected) void runSlskConnectivityProbe();
+  if (props.rtLoggedIn) {
+    invoke("rutracker_refresh_avatar", { mirror: getMirror() })
+      .then((newUrl) => {
+        if (newUrl) {
+          avatarImgFailed.value = false;
+          emit("login", props.rtUsername, newUrl);
+        }
+      })
+      .catch(() => {});
+  }
 });
 
 onUnmounted(() => {
@@ -538,12 +690,44 @@ function proxySelectToUrl(sel) {
 }
 
 const proxySelect = ref(PROXY_SELECT_NONE);
+const rtQuickProxy = ref(PROXY_SELECT_NONE);
+const rtQuickProxyApplying = ref(false);
 const proxySaved = ref(false);
 const proxySaveBusy = ref(false);
 const proxySaveError = ref(null);
 const proxyProbeBusy = ref(false);
 const proxyProbeOk = ref(false);
 const proxyProbeError = ref(null);
+
+async function applyRtQuickProxyAndProbe(sel) {
+  if (rtQuickProxyApplying.value) return;
+  rtQuickProxyApplying.value = true;
+  proxySaveError.value = null;
+  rtError.value = null;
+  proxySelect.value = sel;
+  const url = proxySelectToUrl(sel);
+  try {
+    await setHttpProxy(url);
+    setRtHttpProxyCache(url || "");
+    rtQuickProxy.value = sel;
+    await appDebugLog("rutracker", "quick proxy applied", {
+      proxy: sel,
+      url: url ?? null,
+    });
+  } catch (e) {
+    const msg = e?.toString?.() ?? String(e);
+    proxySaveError.value = msg;
+    rtReachabilityError.value = msg;
+    await appDebugLog("rutracker", "quick proxy apply error", {
+      proxy: sel,
+      error: msg,
+    });
+    rtQuickProxyApplying.value = false;
+    return;
+  }
+  rtQuickProxyApplying.value = false;
+  await runRtConnectivityProbe(`quick-proxy-${sel}`);
+}
 
 /**
  * @returns {string}
@@ -585,6 +769,7 @@ async function saveProxy() {
     const url = proxySelectToUrl(proxySelect.value);
     await setHttpProxy(url);
     setRtHttpProxyCache(url || "");
+    rtQuickProxy.value = proxySelect.value;
     proxySaved.value = true;
     setTimeout(() => {
       proxySaved.value = false;
@@ -726,16 +911,6 @@ async function confirmClearStreaming() {
   }
 }
 
-async function onAppDebugChange(e) {
-  const enabled = Boolean(e.target.checked);
-  await invoke("set_app_debug_enabled", { enabled });
-  emit("update:appDebugEnabled", enabled);
-}
-
-async function openAppDebugLogWindow() {
-  await openAppDebugWindow().catch(() => {});
-}
-
 async function confirmClearCoverTorrents() {
   const ok = await ask(
     "Удалятся обложки, загруженные через BitTorrent из раздач (отдельная папка). Сбросится и кэш обложек SoulSeek в памяти приложения. Продолжить?",
@@ -772,1870 +947,7 @@ async function confirmResetAchievements() {
 
 </script>
 
-<template>
-  <div class="settings-view">
-    <h1 class="settings-title">Настройки</h1>
+<template src="./SettingsView.html"></template>
 
-    <!-- ── Источники ─────────────────────────────────────────── -->
-    <div class="settings-section">
-      <div class="settings-section-label">Источники музыки</div>
-      <p class="settings-section-lead">
-        Подключите те сервисы, которыми пользуетесь: оба независимы — регистрируются отдельно.
-      </p>
+<style src="./SettingsView.scoped.css"></style>
 
-      <div class="settings-card settings-card--integration">
-        <!-- ── Logged in: user card + выход ── -->
-        <div v-if="rtLoggedIn" class="settings-card-header">
-          <div class="rt-avatar">
-            <img
-              v-if="props.rtAvatarUrl && !avatarImgFailed"
-              :src="props.rtAvatarUrl"
-              :alt="props.rtUsername || 'R'"
-              @error="avatarImgFailed = true"
-            />
-            <span v-else>{{ (props.rtUsername || 'R').charAt(0).toUpperCase() }}</span>
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">{{ props.rtUsername }}</div>
-            <div class="settings-card-status">
-              <span class="settings-status-dot status-on" />
-              Подключено · Rutracker
-            </div>
-          </div>
-          <button
-            type="button"
-            class="settings-action-btn settings-action-btn--ghost"
-            @click="handleRtLogout"
-          >
-            Выйти
-          </button>
-        </div>
-
-        <!-- ── Restoring session: loading skeleton ── -->
-        <div v-else-if="restoringSession" class="settings-card-header">
-          <div class="settings-card-icon rt-loading-icon">
-            <span class="spinner" style="width:20px;height:20px;" />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Rutracker</div>
-            <div class="settings-card-status">
-              <span class="settings-status-dot status-loading" />
-              Проверяем доступность…
-            </div>
-          </div>
-        </div>
-
-        <!-- ── Not logged in: generic icon ── -->
-        <div v-else class="settings-card-header">
-          <div class="settings-card-icon">
-            <SystemIcon name="link" :size="22" />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Rutracker</div>
-            <div class="settings-card-status">
-              <span class="settings-status-dot status-off" />
-              Не подключено
-            </div>
-          </div>
-        </div>
-
-        <div
-          v-if="!rtLoggedIn && !restoringSession"
-          class="settings-integration-banner settings-integration-banner--rt"
-        >
-          <div class="settings-integration-banner__head">
-            <span class="integration-pill integration-pill--rt">Торрент-трекер</span>
-            <span class="integration-pill integration-pill--neutral">Поиск альбомов</span>
-          </div>
-          <p class="settings-integration-banner__text">
-            Нужен <strong>аккаунт форума RuTracker</strong> — тот же логин и пароль, что на
-            rutracker.org / rutracker.net. Если профиля ещё нет, зарегистрируйтесь на официальном зеркале форума.
-          </p>
-          <div class="settings-integration-banner__actions">
-            <button
-              type="button"
-              class="settings-integration-link-btn"
-              @click="openExternalUrl(RUTRACKER_FORUM_URL)"
-            >
-              Открыть форум RuTracker
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <p v-else-if="rtLoggedIn" class="settings-integration-compact settings-integration-compact--rt">
-          <span class="integration-pill integration-pill--rt integration-pill--tiny">RuTracker</span>
-          Поиск и прослушивание через торрент-раздачи; вход — ваш логин с форума.
-        </p>
-
-        <div v-if="!rtLoggedIn && !restoringSession" class="settings-card-body">
-          <template v-if="showRutrackerSessionRecovery">
-            <p v-if="rtReconnectMsg" class="rt-reconnect-msg rt-reconnect-msg--error">
-              {{ rtReconnectMsg }}
-            </p>
-            <p v-else class="settings-card-desc rt-session-desc">
-              Уже входили в этом приложении? Можно восстановить сессию без пароля.
-            </p>
-            <div class="rt-session-actions rt-session-actions--failure">
-              <button
-                type="button"
-                class="settings-action-btn settings-action-btn--primary"
-                :disabled="rtReconnectBusy"
-                @click="handleRtReconnect"
-              >
-                <span v-if="rtReconnectBusy" class="spinner" />
-                <template v-else>{{ rtCredentialsHiddenUntilLogout ? "Попробовать снова" : "Переподключиться" }}</template>
-              </button>
-              <button
-                type="button"
-                class="settings-action-btn settings-action-btn--ghost"
-                :disabled="rtReconnectBusy"
-                @click="handleRtLogout"
-              >
-                Выйти из аккаунта
-              </button>
-            </div>
-          </template>
-
-          <template v-if="!rtCredentialsHiddenUntilLogout">
-            <p class="settings-card-desc settings-card-desc--after-reconnect">
-              Введите данные аккаунта Rutracker, чтобы искать и слушать музыку.
-            </p>
-            <form class="settings-login-form" @submit="handleRtLogin">
-              <input
-                class="login-input"
-                type="text"
-                placeholder="Логин"
-                v-model="rtUsername"
-                autocomplete="username"
-              />
-              <input
-                class="login-input"
-                type="password"
-                placeholder="Пароль"
-                v-model="rtPassword"
-                autocomplete="current-password"
-              />
-              <p v-if="rtError" class="login-error">{{ rtError }}</p>
-              <button
-                class="login-btn"
-                type="submit"
-                :disabled="rtLoading || rtWebviewBusy || !rtUsername.trim() || !rtPassword"
-              >
-                <span v-if="rtLoading" class="spinner" />
-                <template v-else>Войти в Rutracker</template>
-              </button>
-              <button
-                v-if="rtNeedsCaptcha || rtWebviewBusy"
-                type="button"
-                class="login-btn login-btn--ghost"
-                :disabled="rtLoading || rtWebviewBusy"
-                @click="handleRtWebviewLogin"
-              >
-                <span v-if="rtWebviewBusy" class="spinner" />
-                <template v-else>Войти через встроенный браузер</template>
-              </button>
-              <p v-if="rtNeedsCaptcha && !rtWebviewBusy" class="rt-captcha-hint">
-                Сайт запросил проверку, что вход не автоматический — откроется окно браузера,
-                в котором нужно ввести логин/пароль и пройти проверку.
-              </p>
-            </form>
-          </template>
-        </div>
-      </div>
-
-      <!-- ── SoulSeek card ── -->
-      <div class="settings-card settings-card--slsk settings-card--integration">
-        <!-- Connected -->
-        <div v-if="slskConnected" class="settings-card-header">
-          <div class="slsk-avatar">
-            <span>S</span>
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">{{ slskUsername }}</div>
-            <div class="settings-card-status">
-              <span class="settings-status-dot status-on" />
-              Подключено · SoulSeek
-            </div>
-          </div>
-          <button
-            type="button"
-            class="settings-action-btn settings-action-btn--ghost"
-            @click="emit('slsk-logout')"
-          >
-            Выйти
-          </button>
-        </div>
-
-        <!-- Not connected -->
-        <div v-else class="settings-card-header">
-          <div class="settings-card-icon">
-            <SystemIcon name="music" :size="22" />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">SoulSeek</div>
-            <div class="settings-card-status">
-              <span class="settings-status-dot status-off" />
-              Не подключено
-            </div>
-          </div>
-        </div>
-
-        <div
-          v-if="!slskConnected"
-          class="settings-integration-banner settings-integration-banner--slsk"
-        >
-          <div class="settings-integration-banner__head">
-            <span class="integration-pill integration-pill--slsk">P2P-сеть</span>
-            <span class="integration-pill integration-pill--neutral">Отдельные треки</span>
-          </div>
-          <p class="settings-integration-banner__text">
-            <strong>Логин и пароль — от сети SoulSeek</strong>, те же, что в клиентах
-            Nicotine+, Soulseek Qt и др. Отдельной «регистрации на сайте» обычно нет: имя пользователя
-            и пароль задаются при первом входе в официальном клиенте. Здесь вводите те же данные.
-            Сброс пароля и справка — на сайте проекта Soulseek.
-          </p>
-          <div class="settings-integration-banner__actions">
-            <button
-              type="button"
-              class="settings-integration-link-btn settings-integration-link-btn--slsk"
-              @click="openExternalUrl(SOULSEEK_ACCOUNT_INFO_URL)"
-            >
-              Справка по аккаунту Soulseek
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <p v-else class="settings-integration-compact settings-integration-compact--slsk">
-          <span class="integration-pill integration-pill--slsk integration-pill--tiny">SoulSeek</span>
-          Поиск треков у пользователей сети; учётные данные — от вашего клиента SoulSeek.
-        </p>
-
-        <div v-if="!slskConnected" class="settings-card-body">
-          <p class="settings-card-desc">
-            Войдите, используя логин и пароль от сети SoulSeek (см. плашку выше).
-          </p>
-          <form
-            class="settings-login-form"
-            @submit.prevent="emit('slsk-login', slskFormUser, slskFormPass)"
-          >
-            <input
-              class="login-input"
-              type="text"
-              placeholder="Логин SoulSeek"
-              v-model="slskFormUser"
-              autocomplete="username"
-            />
-            <input
-              class="login-input"
-              type="password"
-              placeholder="Пароль"
-              v-model="slskFormPass"
-              autocomplete="current-password"
-            />
-            <p v-if="slskLoginError" class="login-error">{{ slskLoginError }}</p>
-            <button
-              class="login-btn"
-              type="submit"
-              :disabled="slskLoggingIn || !slskFormUser.trim() || !slskFormPass"
-            >
-              <span v-if="slskLoggingIn" class="spinner" />
-              <template v-else>Войти в SoulSeek</template>
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Внешний вид ────────────────────────────────────────── -->
-    <div class="settings-section">
-      <div class="settings-section-label">Внешний вид</div>
-
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">
-            <SystemIcon name="palette" :size="22" />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Тема</div>
-            <div class="settings-card-status">{{ theme === 'light' ? 'Светлая' : theme === 'system' ? 'Системная' : 'Тёмная' }}</div>
-          </div>
-          <div class="theme-toggle">
-            <button
-              :class="['theme-btn', theme === 'dark' ? 'active' : '']"
-              @click="emit('theme-change', 'dark')"
-            >Тёмная</button>
-            <button
-              :class="['theme-btn', theme === 'system' ? 'active' : '']"
-              @click="emit('theme-change', 'system')"
-            >Авто</button>
-            <button
-              :class="['theme-btn', theme === 'light' ? 'active' : '']"
-              @click="emit('theme-change', 'light')"
-            >Светлая</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Звук ─────────────────────────────────────────────────────── -->
-    <div class="settings-section">
-      <div class="settings-section-label">Звук</div>
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">
-            <SystemIcon name="sliders" :size="22" />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Эквалайзер</div>
-            <div class="settings-card-status">10 полос · Web Audio · локально</div>
-          </div>
-        </div>
-        <div class="settings-card-body settings-card-body--eq">
-          <EqualizerPanel />
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Кэш: быстрая очистка (вне «задротов») ─────────────────── -->
-    <div class="settings-section">
-      <div class="settings-section-label">Кэш</div>
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div class="settings-card-icon settings-card-icon--app">
-            <SystemIcon name="trash" :size="22" />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name">Очистка на диске</div>
-            <div class="settings-card-status">Удалить данные кэша без смены лимитов</div>
-          </div>
-        </div>
-        <div class="settings-card-body">
-          <p class="settings-card-desc cache-quick-desc">
-            Остановится воспроизведение при очистке стриминга. Обложки из торрентов хранятся отдельно.
-          </p>
-          <p v-if="cacheSettingsError" class="login-error nerd-probe-error">{{ cacheSettingsError }}</p>
-          <div class="cache-quick-actions">
-            <button
-              type="button"
-              class="ach-btn ach-btn--primary cache-quick-btn"
-              :disabled="cacheClearBusy || cacheSaveBusy"
-              @click="confirmClearStreaming"
-            >
-              <span v-if="cacheClearBusy" class="spinner" />
-              <template v-else>Очистить кэш стриминга</template>
-            </button>
-            <button
-              type="button"
-              class="ach-btn ach-btn--danger cache-quick-btn"
-              :disabled="cacheClearBusy || cacheSaveBusy"
-              @click="confirmClearCoverTorrents"
-            >
-              Очистить кэш обложек (торренты)
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Параметры для задротов / Щитпост ─────────────────────────────── -->
-    <div class="settings-section settings-section--bottom-extras">
-      <div class="settings-extra-toggles">
-        <button type="button" class="nerd-toggle nerd-toggle--row" @click="nerdOpen = !nerdOpen">
-          <span class="nerd-toggle-icon" aria-hidden="true">
-            <SystemIcon :name="nerdOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
-          </span>
-          Параметры для задротов
-          <span
-            v-if="hasCustomMirror() || hasHttpProxyConfigured()"
-            class="nerd-custom-dot"
-            title="Нестандартные зеркало или прокси"
-          />
-        </button>
-        <button type="button" class="nerd-toggle nerd-toggle--row" @click="shitpostOpen = !shitpostOpen">
-          <span class="nerd-toggle-icon" aria-hidden="true">
-            <SystemIcon :name="shitpostOpen ? 'chevron-down' : 'chevron-right'" :size="11" />
-          </span>
-          Щитпост
-          <span
-            v-if="achievementsOptIn"
-            class="nerd-custom-dot"
-            title="Достижения включены"
-          />
-        </button>
-      </div>
-
-      <div v-if="shitpostOpen" class="settings-shitpost-panel">
-        <div class="settings-card settings-card--achievements">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">
-              <SystemIcon name="sparkle" :size="22" />
-            </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Достижения</div>
-              <div class="settings-card-status">
-                {{
-                  achievementsOptIn
-                    ? `${unlockedAchievementsCount} из ${achievementRowsReal.length}`
-                    : "Выключено"
-                }}
-              </div>
-            </div>
-            <label class="ach-opt-toggle">
-              <input
-                type="checkbox"
-                :checked="achievementsOptIn"
-                class="ach-opt-toggle-input"
-                @change="emit('achievements-opt-in-change', $event.target.checked)"
-              />
-              <span class="ach-opt-toggle-ui" aria-hidden="true" />
-            </label>
-          </div>
-          <div class="settings-card-body settings-card-body--achievements">
-            <p class="settings-card-desc">
-              В
-              <a
-                v-if="telegramChannelUrl"
-                href="#"
-                class="ach-inline-link"
-                @click.prevent="openExternalUrl(telegramChannelUrl)"
-              >щитпост паблике</a>
-              <template v-else>щитпост паблике</template>
-              чел просил «крутые ачивки» (вплоть до рофла про тысячу минут одной песни) — ну на че
-            </p>
-
-            <p v-if="achievementsOptIn" class="settings-card-desc ach-copy ach-copy-tight">
-              Короткий пуш при получении; полный список — по кнопке.
-            </p>
-            <p v-else class="settings-card-desc ach-copy ach-copy--muted ach-copy-tight">
-              Включите переключатель, чтобы считать галочки и пуши; выключите — всё тихо.
-            </p>
-
-            <div v-if="achievementsOptIn" class="ach-actions">
-              <button type="button" class="ach-btn ach-btn--primary" @click="achievementsBrowseOpen = true">
-                Просмотреть достижения…
-              </button>
-              <button type="button" class="ach-btn ach-btn--danger" @click="confirmResetAchievements">
-                Сбросить достижения
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="nerdOpen" class="nerd-stack">
-        <div class="settings-card nerd-card nerd-card--cache-stats">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">
-              <SystemIcon name="clock" :size="22" />
-            </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Кэш на диске и статистика</div>
-              <div class="settings-card-status">Лимиты TTL, объёмы и папка данных</div>
-            </div>
-            <button
-              type="button"
-              class="nerd-refresh-stats"
-              :disabled="nerdDiagLoading"
-              title="Обновить статистику"
-              @click="loadNerdDiagnostics"
-            >
-              <span v-if="nerdDiagLoading" class="spinner nerd-refresh-spinner" />
-              <SystemIcon v-else name="refresh" :size="18" />
-            </button>
-          </div>
-          <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc">
-              Лимиты задают размер папки стриминга и время жизни неактивных торрентов. Ниже — фактические
-              объёмы RAM и диска (<span class="nerd-inline-ico" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span> обновляет цифры и подтягивает сохранённые лимиты).
-            </p>
-
-            <div class="nerd-merge-label">Лимиты</div>
-            <div class="nerd-cache-fields">
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Лимит кэша стриминга (МиБ)</span>
-                <input
-                  v-model.number="cacheFormMaxMib"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="50"
-                  max="8192"
-                  step="10"
-                />
-                <span class="nerd-cache-field-hint">50…8192 · при переполнении удаляются старые неактивные раздачи</span>
-              </label>
-              <label class="nerd-cache-field">
-                <span class="nerd-cache-field-label">Неиспользуемый кэш стриминга (минут)</span>
-                <input
-                  v-model.number="cacheFormTtlMinutes"
-                  class="login-input nerd-cache-input"
-                  type="number"
-                  min="5"
-                  max="20160"
-                  step="5"
-                />
-                <span class="nerd-cache-field-hint">5 мин…14 суток · дольше не держим торрент без воспроизведения</span>
-              </label>
-            </div>
-
-            <div class="nerd-cache-actions">
-              <button
-                type="button"
-                class="login-btn nerd-save-btn"
-                :disabled="cacheSaveBusy || cacheClearBusy"
-                @click="saveCacheSettings"
-              >
-                <span v-if="cacheSaveBusy" class="spinner" />
-                <span v-else-if="cacheSaveOk" class="settings-btn-saved">
-                  <SystemIcon name="check" :size="14" />
-                  <span>Сохранено</span>
-                </span>
-                <template v-else>Сохранить лимиты</template>
-              </button>
-            </div>
-
-            <div class="nerd-cache-stats-divider" />
-
-            <p class="settings-card-desc nerd-desc nerd-stats-lead nerd-stats-lead--merge">
-              Оценка RAM и размера каталога данных. «Всего по папке» — полный рекурсивный размер каталога;
-              ниже — два кэша и строка «Прочее» (всё, что не в этих подпапках). Лимит стриминга задаётся
-              выше; при выходе из приложения данные для воспроизведения обычно сбрасываются.
-            </p>
-
-            <p v-if="nerdDiagError" class="login-error nerd-probe-error">{{ nerdDiagError }}</p>
-
-            <div v-else-if="nerdDiagLoading && !nerdDiag" class="nerd-stats-loading">
-              <span class="spinner" />
-              <span>Считаем размеры…</span>
-            </div>
-
-            <div v-else-if="nerdDiag" class="nerd-stats-body">
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Память процесса (RSS)</span>
-                  <span class="nerd-stat-value">
-                    {{
-                      nerdDiag.residentMemoryBytes != null
-                        ? formatBytes(nerdDiag.residentMemoryBytes)
-                        : "—"
-                    }}
-                  </span>
-                </div>
-                <p class="nerd-stat-hint">Оценка «сколько оперативной памяти» занимает приложение сейчас.</p>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Папка данных (всего)</span>
-                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.totalAppDataBytes) }}</span>
-                </div>
-                <p class="nerd-stat-path">{{ nerdDiag.appDataPath }}</p>
-                <p class="nerd-stat-hint">
-                  Включает все файлы в этом пути, не только папки кэша ниже.
-                </p>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Кэш стриминга</span>
-                  <span class="nerd-stat-value">
-                    {{ formatBytes(nerdDiag.streamCacheBytes) }}
-                    <span class="nerd-stat-of">
-                      / {{ formatBytes(nerdDiag.streamCacheLimitBytes) }}
-                    </span>
-                  </span>
-                </div>
-                <p class="nerd-stat-hint">
-                  Папка «{{ nerdDiag.streamCacheDirLabel }}»: фрагменты треков для воспроизведения.
-                  Старые раздачи могут удаляться, если кэш переполняется или давно не использовались.
-                </p>
-                <div
-                  v-if="nerdDiag.streamCacheLimitBytes > 0"
-                  class="nerd-cache-bar"
-                  :title="`${Math.min(100, Math.round((nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100))}%`"
-                >
-                  <div
-                    class="nerd-cache-bar-fill"
-                    :style="{
-                      width: `${Math.min(
-                        100,
-                        (nerdDiag.streamCacheBytes / nerdDiag.streamCacheLimitBytes) * 100
-                      )}%`,
-                    }"
-                  />
-                </div>
-              </div>
-
-              <div class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Кэш обложек (торренты)</span>
-                  <span class="nerd-stat-value">{{ formatBytes(nerdDiag.coverTorrentCacheBytes) }}</span>
-                </div>
-                <p class="nerd-stat-hint">
-                  Отдельная папка «{{ nerdDiag.coverCacheDirLabel }}» для обложек из раздач.
-                </p>
-              </div>
-
-              <div v-if="nerdDiagOtherBytes > 0" class="nerd-stat-block">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Прочее в каталоге данных</span>
-                  <span class="nerd-stat-value">{{ formatBytes(nerdDiagOtherBytes) }}</span>
-                </div>
-                <p class="nerd-stat-hint">
-                  Разница между «всего по папке» и суммой двух кэшей выше: базы SQLite, состояние
-                  libtorrent / сессии стриминга, fastresume, журналы и другие файлы вне этих подпапок.
-                </p>
-              </div>
-
-              <div class="nerd-stat-block nerd-stat-block--inline">
-                <div class="nerd-stat-row">
-                  <span class="nerd-stat-label">Торрентов в сессии стриминга</span>
-                  <span class="nerd-stat-value">{{ nerdDiag.streamingTorrentCount }}</span>
-                </div>
-              </div>
-
-              <div class="nerd-policy-box">
-                <div class="nerd-policy-title">Как настроен кэш</div>
-                <ul class="nerd-policy-list">
-                  <li>
-                    Текущий лимит папки стриминга:
-                    <strong>{{ formatBytes(nerdDiag.streamCacheLimitBytes) }}</strong>
-                    — при превышении вытесняются старые неактивные раздачи (лимиты задаются в блоке выше).
-                  </li>
-                  <li>
-                    Неиспользуемые торренты старше
-                    <strong>{{ formatTtlHuman(nerdDiag.streamCacheTtlSecs) }}</strong>
-                    могут быть удалены (пока приложение запущено или при следующем старте).
-                  </li>
-                  <li>
-                    Запись на диск буферизуется примерно
-                    <strong>{{ nerdDiag.deferWritesMb }} МиБ</strong>
-                    — меньше мелких обращений к диску во время прослушивания.
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <p v-else class="nerd-stat-hint">
-              Нажми
-              <span class="nerd-inline-ico nerd-inline-ico--btn" aria-hidden="true"><SystemIcon name="refresh" :size="12" /></span>
-              чтобы обновить.
-            </p>
-          </div>
-        </div>
-
-        <div class="settings-card nerd-card">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">
-              <SystemIcon name="mirror" :size="22" />
-            </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Зеркало Rutracker</div>
-              <div class="settings-card-status">Адрес сайта для подключения</div>
-            </div>
-          </div>
-
-          <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc">
-              Если доступ к основному домену закрыт, включи автовыбор — приложение
-              переберёт известные зеркала и возьмёт первое отвечающее. Либо выбери
-              зеркало вручную из списка или введи свой URL.
-            </p>
-
-            <div class="nerd-mode-row" role="radiogroup" aria-label="Режим зеркала">
-              <label class="nerd-radio">
-                <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_AUTO" />
-                Автовыбор зеркала
-              </label>
-              <label class="nerd-radio">
-                <input type="radio" v-model="mirrorMode" :value="MIRROR_MODE_MANUAL" />
-                Вручную
-              </label>
-            </div>
-
-            <template v-if="mirrorMode === MIRROR_MODE_AUTO">
-              <p class="settings-card-desc nerd-desc nerd-active-mirror">
-                Сейчас:
-                <span class="nerd-mirror-host">{{ hostLabel(activeMirrorDisplay) }}</span>
-              </p>
-              <div class="nerd-mirror-actions">
-                <button
-                  type="button"
-                  class="login-btn nerd-save-btn"
-                  :disabled="nerdProbeBusy"
-                  @click="saveMirror"
-                >
-                  <span v-if="nerdProbeBusy" class="spinner" />
-                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
-                    <SystemIcon name="check" :size="14" />
-                    <span>Сохранено</span>
-                  </span>
-                  <template v-else>Сохранить</template>
-                </button>
-                <button
-                  v-if="persistedMirrorMode === MIRROR_MODE_AUTO"
-                  type="button"
-                  class="login-btn nerd-save-btn nerd-save-btn--ghost"
-                  :disabled="nerdProbeBusy"
-                  @click="refreshAutoMirror"
-                >
-                  Обновить зеркало
-                </button>
-              </div>
-            </template>
-
-            <template v-else>
-              <div class="nerd-mirror-row nerd-mirror-row--stack">
-                <select
-                  class="login-input nerd-mirror-select"
-                  v-model="mirrorSelect"
-                  @change="onMirrorSelectChange"
-                >
-                  <option v-for="u in KNOWN_MIRRORS" :key="u" :value="u">
-                    {{ hostLabel(u) }}
-                  </option>
-                  <option value="__custom__">Свой URL…</option>
-                </select>
-                <input
-                  v-if="mirrorSelect === '__custom__'"
-                  class="login-input nerd-mirror-input"
-                  type="url"
-                  placeholder="https://…"
-                  v-model="mirrorUrl"
-                  spellcheck="false"
-                />
-              </div>
-              <div class="nerd-mirror-row">
-                <button
-                  type="button"
-                  class="login-btn nerd-save-btn"
-                  :disabled="nerdProbeBusy"
-                  @click="saveMirror"
-                >
-                  <span v-if="nerdProbeBusy" class="spinner" />
-                  <span v-else-if="mirrorSaved" class="settings-btn-saved">
-                    <SystemIcon name="check" :size="14" />
-                    <span>Сохранено</span>
-                  </span>
-                  <template v-else>Сохранить</template>
-                </button>
-              </div>
-            </template>
-
-            <p v-if="nerdProbeError" class="login-error nerd-probe-error">{{ nerdProbeError }}</p>
-
-            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
-              Список зеркал: rutracker.net, rutracker.org, rutracker.nl, rutracker.cr,
-              maintracker.org, rutracker.lib. При смене зеркала сессия может сброситься —
-              войди в Rutracker снова.
-            </p>
-
-            <button
-              v-if="hasCustomMirror()"
-              type="button"
-              class="nerd-reset-btn"
-              @click="doResetMirror"
-            >
-              Сбросить к rutracker.net (ручной режим)
-            </button>
-          </div>
-        </div>
-
-        <div class="settings-card nerd-card">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">
-              <SystemIcon name="globe" :size="22" />
-            </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">HTTP-прокси</div>
-              <div class="settings-card-status">Тип HTTP · пресеты blockme</div>
-            </div>
-          </div>
-          <div class="settings-card-body">
-            <p class="settings-card-desc nerd-desc">
-              Исходящие запросы бэкенда (Rutracker, обложки iTunes) пойдут через выбранный
-              прокси. Торренты и стриминг к ним не относятся.
-            </p>
-            <div class="nerd-mirror-row nerd-mirror-row--stack">
-              <select v-model="proxySelect" class="login-input nerd-mirror-select">
-                <option :value="PROXY_SELECT_NONE">Нет</option>
-                <option :value="PROXY_SELECT_PX1">px1.blockme.site · порт 23128</option>
-                <option :value="PROXY_SELECT_PX2">px2.blockme.site · порт 3128</option>
-              </select>
-            </div>
-            <div class="nerd-mirror-actions">
-              <button
-                type="button"
-                class="login-btn nerd-save-btn"
-                :disabled="proxySaveBusy || proxyProbeBusy"
-                @click="saveProxy"
-              >
-                <span v-if="proxySaveBusy" class="spinner" />
-                <span v-else-if="proxySaved" class="settings-btn-saved">
-                  <SystemIcon name="check" :size="14" />
-                  <span>Сохранено</span>
-                </span>
-                <template v-else>Сохранить</template>
-              </button>
-              <button
-                type="button"
-                class="login-btn nerd-save-btn nerd-save-btn--ghost"
-                :disabled="proxyProbeBusy || proxySaveBusy"
-                @click="probeProxy"
-              >
-                <span v-if="proxyProbeBusy" class="spinner" />
-                <template v-else>Проверить</template>
-              </button>
-            </div>
-            <p v-if="proxyProbeOk" class="settings-card-desc nerd-desc nerd-proxy-probe-ok">
-              Запрос к текущему зеркалу (forum/index.php) прошёл — для выбранного варианта прокси
-              соединение работает.
-            </p>
-            <p v-if="proxyProbeError" class="login-error nerd-probe-error">{{ proxyProbeError }}</p>
-            <p v-if="proxySaveError" class="login-error nerd-probe-error">{{ proxySaveError }}</p>
-            <p class="settings-card-desc nerd-desc nerd-mirror-hint">
-              Проверка использует выбранный выше вариант (можно до «Сохранить») и адрес зеркала из
-              блока выше. По умолчанию без прокси. Порты: 23128 — для px1; 3128 — для px2.
-            </p>
-          </div>
-        </div>
-
-        <div class="settings-card nerd-card">
-          <div class="settings-card-header">
-            <div class="settings-card-icon settings-card-icon--app">
-              <SystemIcon name="bug" :size="22" />
-            </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Журнал отладки</div>
-              <div class="settings-card-status">Клики, экраны, плеер, торренты</div>
-            </div>
-            <label class="nerd-toggle-inline">
-              <input
-                type="checkbox"
-                :checked="appDebugEnabled"
-                @change="onAppDebugChange"
-              />
-            </label>
-          </div>
-          <div v-if="appDebugEnabled" class="settings-card-body">
-            <button
-              type="button"
-              class="login-btn nerd-save-btn"
-              @click="openAppDebugLogWindow"
-            >
-              Открыть журнал
-            </button>
-          </div>
-        </div>
-
-      </div>
-
-      <AchievementsModal v-model:open="achievementsBrowseOpen" :rows="achievementRows" />
-    </div>
-
-    <!-- ── О приложении ───────────────────────────────────────── -->
-    <div class="settings-section">
-      <div class="settings-section-label">О приложении</div>
-
-      <div ref="aboutStackEl" class="settings-about-stack">
-        <div ref="aboutAppCardEl" class="settings-card settings-about-stack__app">
-          <div class="settings-card-header settings-card-header--about">
-            <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo">
-              <img
-                class="settings-about-logo-img"
-                :src="appIconSrc"
-                alt="Нигде"
-                width="72"
-                height="72"
-              />
-            </div>
-            <div class="settings-card-info">
-              <div class="settings-card-name">Нигде</div>
-            <div class="settings-card-status">Версия {{ appVersion }} · Tauri + Vue 3</div>
-            <div
-              v-if="githubProjectUrl || telegramChannelUrl"
-              class="settings-about-links"
-            >
-              <a
-                v-if="githubProjectUrl"
-                class="settings-about-link"
-                :href="githubProjectUrl"
-                rel="noopener noreferrer"
-                @click.prevent="openExternalUrl(githubProjectUrl)"
-              >Проект на GitHub</a>
-              <span
-                v-if="githubProjectUrl && telegramChannelUrl"
-                class="settings-about-links-sep"
-                aria-hidden="true"
-              >·</span>
-              <a
-                v-if="telegramChannelUrl"
-                class="settings-about-link"
-                :href="telegramChannelUrl"
-                rel="noopener noreferrer"
-                title="Канал в Telegram"
-                @click.prevent="openExternalUrl(telegramChannelUrl)"
-              >Щитпост паблик</a>
-            </div>
-            <div v-if="githubReleaseApiUrl" class="settings-release-check">
-              <template v-if="releaseCheckState === 'loading'">
-                <span class="settings-status-dot status-loading" />
-                <span>Проверяем обновления…</span>
-              </template>
-              <template v-else-if="releaseCheckState === 'error'">
-                <span class="settings-status-dot status-off" />
-                <span>Не удалось проверить обновления</span>
-                <button
-                  type="button"
-                  class="settings-release-retry"
-                  @click="runReleaseCheck"
-                >
-                  Повторить
-                </button>
-              </template>
-              <template v-else-if="releaseCheckState === 'latest'">
-                <span class="settings-status-dot status-on" />
-                <span>Это последняя версия</span>
-              </template>
-              <template v-else-if="releaseCheckState === 'outdated'">
-                <span class="settings-status-dot status-off" />
-                <span>Доступна версия {{ releaseRemoteTag }}</span>
-                <a
-                  v-if="releasePageUrl"
-                  class="settings-release-link"
-                  :href="releasePageUrl"
-                  rel="noopener noreferrer"
-                  @click.prevent="openExternalUrl(releasePageUrl)"
-                >Релиз на GitHub</a>
-              </template>
-              <template v-else-if="releaseCheckState === 'ahead'">
-                <span class="settings-status-dot status-on" />
-                <span>Сборка новее опубликованного релиза ({{ releaseRemoteTag }})</span>
-              </template>
-              <template v-else-if="releaseCheckState === 'none'">
-                <span class="settings-status-dot status-off" />
-                <span>На GitHub пока нет релизов</span>
-              </template>
-            </div>
-          </div>
-        </div>
-        </div>
-
-        <div class="settings-about-connector" aria-hidden="true">
-          <span class="settings-about-connector__rail" />
-          <span class="settings-about-connector__pulse" />
-          <span class="settings-about-connector__pulse settings-about-connector__pulse--echo" />
-        </div>
-
-        <!-- vozduxan -->
-        <div ref="aboutVozCardEl" class="settings-card settings-card--vozduxan">
-        <div class="settings-card-header settings-card-header--about">
-          <div class="settings-card-icon settings-card-icon--app settings-card-icon--about-logo settings-card-icon--vozduxan-logo">
-            <img
-              class="settings-about-logo-img settings-about-vozduxan-img"
-              :src="vozduxanLogoSrc"
-              alt=""
-              width="72"
-              height="72"
-            />
-          </div>
-          <div class="settings-card-info">
-            <div class="settings-card-name settings-card-name--with-dep">
-              <span>vozduxan</span>
-              <template v-if="vozduxanVersion">
-                <span class="settings-about-dep-version">v{{ vozduxanVersion }}</span>
-              </template>
-            </div>
-            <div class="settings-card-status">Стриминг аудио из торрент-роёв в реальном времени · C++ · libtorrent</div>
-            <div class="settings-about-links">
-              <a
-                class="settings-about-link"
-                href="https://github.com/neegde/vozduxan"
-                rel="noopener noreferrer"
-                @click.prevent="openExternalUrl('https://github.com/neegde/vozduxan')"
-              >GitHub</a>
-            </div>
-          </div>
-        </div>
-        </div>
-      </div>
-    </div>
-
-  </div>
-</template>
-
-<style>
-/* ── Rutracker avatar ────────────────────────────────────────────────────── */
-.rt-avatar {
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  overflow: hidden;
-  background: var(--accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  font-weight: 700;
-  color: #000;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0,0,0,.35);
-}
-.rt-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.rt-session-desc {
-  margin-bottom: 12px;
-}
-.rt-session-actions--failure {
-  margin-top: 4px;
-  margin-bottom: 12px;
-}
-.rt-reconnect-msg--error {
-  color: var(--text);
-  margin-bottom: 10px;
-}
-.settings-card-desc--after-reconnect {
-  margin-top: 4px;
-  margin-bottom: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-}
-.rt-session-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-.rt-reconnect-msg {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.4;
-}
-.rt-captcha-hint {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.4;
-}
-
-/* ── Параметры для задротов / Щитпост ─────────────────────────────────────────────── */
-.settings-extra-toggles {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-.settings-extra-toggles .nerd-toggle {
-  margin-bottom: 0;
-}
-.settings-extra-toggles .nerd-toggle--row {
-  flex: none;
-  align-self: flex-start;
-}
-.settings-shitpost-panel {
-  margin-bottom: 12px;
-}
-
-/* ── Параметры для задротов ────────────────────────────────────────────────────────── */
-.nerd-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-  padding: 4px 0;
-  margin-bottom: 10px;
-  transition: color 0.15s;
-}
-.nerd-toggle:hover { color: var(--text); }
-.nerd-toggle-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-  flex-shrink: 0;
-}
-.settings-btn-saved {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  line-height: 1;
-}
-.nerd-inline-ico {
-  display: inline-flex;
-  vertical-align: -0.15em;
-  margin: 0 1px;
-  color: inherit;
-}
-.nerd-inline-ico--btn {
-  padding: 1px 2px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  vertical-align: -0.2em;
-}
-
-.nerd-toggle-inline {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  margin-left: auto;
-}
-.nerd-toggle-inline input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  accent-color: var(--accent);
-}
-
-.nerd-custom-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  display: inline-block;
-  margin-left: 2px;
-}
-
-.nerd-card { margin-top: 0; }
-
-/* Быстрая очистка кэша — те же карточка и кнопки, что в остальных секциях настроек */
-.cache-quick-desc {
-  margin-bottom: 4px;
-}
-.cache-quick-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 4px;
-}
-@media (min-width: 520px) {
-  .cache-quick-actions {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-}
-.cache-quick-btn {
-  flex: 1;
-  min-width: min(100%, 240px);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 40px;
-}
-.cache-quick-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.nerd-merge-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted2);
-  margin: 2px 0 10px;
-}
-.nerd-cache-stats-divider {
-  margin: 20px 0 14px;
-  height: 1px;
-  background: var(--border, rgba(255, 255, 255, 0.08));
-}
-.nerd-stats-lead--merge {
-  margin-top: 0;
-}
-
-.nerd-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.nerd-desc { font-size: 12px; }
-
-.nerd-mode-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px 20px;
-  margin-top: 12px;
-}
-.nerd-radio {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text);
-  cursor: pointer;
-}
-.nerd-radio input {
-  accent-color: var(--accent);
-}
-
-.nerd-active-mirror {
-  margin-top: 10px;
-  margin-bottom: 0;
-}
-.nerd-mirror-host {
-  color: var(--accent);
-  font-weight: 600;
-  word-break: break-all;
-}
-
-.nerd-mirror-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-  align-items: center;
-}
-
-.nerd-proxy-probe-ok {
-  margin-top: 10px;
-  margin-bottom: 0;
-  color: var(--success);
-}
-
-.nerd-mirror-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-top: 10px;
-}
-.nerd-mirror-row--stack {
-  flex-direction: column;
-  align-items: stretch;
-}
-.nerd-mirror-select {
-  width: 100%;
-  margin-bottom: 0;
-  cursor: pointer;
-}
-.nerd-mirror-input { flex: 1; margin-bottom: 0; }
-.nerd-save-btn { white-space: nowrap; margin-top: 0; min-width: 110px; }
-.nerd-save-btn--ghost {
-  background: transparent;
-  border: 1px solid var(--border, rgba(255,255,255,.12));
-  color: var(--text);
-}
-.nerd-save-btn--ghost:hover:not(:disabled) {
-  border-color: var(--muted);
-}
-
-.nerd-mirror-hint {
-  margin-top: 12px;
-  opacity: 0.85;
-}
-.nerd-probe-error {
-  margin-top: 10px;
-  margin-bottom: 0;
-}
-
-.nerd-reset-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 6px 0 0;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  transition: color 0.15s;
-}
-.nerd-reset-btn:hover { color: var(--red); }
-
-/* ── Кэш на диске ─────────────────────────────────────────────────────────── */
-.nerd-cache-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 4px;
-}
-.nerd-cache-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.nerd-cache-field-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.nerd-cache-input {
-  max-width: 200px;
-  margin-bottom: 0;
-}
-.nerd-cache-field-hint {
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--muted);
-}
-.nerd-cache-actions {
-  margin-top: 12px;
-}
-.nerd-app-debug {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 14px;
-}
-.nerd-app-debug-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text, #ddd);
-  cursor: pointer;
-  user-select: none;
-}
-.nerd-app-debug-row input {
-  margin-top: 3px;
-  flex-shrink: 0;
-}
-.nerd-app-debug-open-btn {
-  align-self: flex-start;
-}
-.nerd-btn-danger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 16px;
-  border-radius: 10px;
-  border: none;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  background: rgba(220, 80, 80, 0.22);
-  color: #ffb4b4;
-  transition: background 0.15s, color 0.15s;
-}
-.nerd-btn-danger:hover:not(:disabled) {
-  background: rgba(220, 80, 80, 0.35);
-  color: #fff;
-}
-.nerd-btn-danger:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.nerd-btn-danger--ghost {
-  background: transparent;
-  border: 1px solid rgba(220, 80, 80, 0.45);
-  color: #e8a0a0;
-}
-.nerd-btn-danger--ghost:hover:not(:disabled) {
-  background: rgba(220, 80, 80, 0.12);
-}
-
-/* ── Память и данные (диагностика) ─────────────────────────────────────────── */
-.nerd-card--stats .settings-card-header,
-.nerd-card--cache-stats .settings-card-header {
-  align-items: flex-start;
-}
-.nerd-refresh-stats {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  border: 1px solid var(--border, rgba(255,255,255,.12));
-  background: rgba(255,255,255,.04);
-  color: var(--text);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, border-color 0.15s;
-}
-.nerd-refresh-stats:hover:not(:disabled) {
-  background: rgba(255,255,255,.08);
-  border-color: var(--muted);
-}
-.nerd-refresh-stats:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.nerd-refresh-spinner {
-  width: 18px;
-  height: 18px;
-}
-.nerd-stats-lead {
-  margin-bottom: 14px;
-}
-.nerd-stats-loading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--muted);
-  padding: 8px 0;
-}
-.nerd-stats-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.nerd-stat-block {
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,.06));
-}
-.nerd-stat-block:last-of-type {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-.nerd-stat-block--inline {
-  padding-bottom: 0;
-  border-bottom: none;
-}
-.nerd-stat-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.nerd-stat-label {
-  font-size: 13px;
-  color: var(--text);
-  font-weight: 600;
-}
-.nerd-stat-value {
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  color: var(--accent);
-  font-weight: 700;
-}
-.nerd-stat-of {
-  font-weight: 600;
-  color: var(--muted);
-  font-size: 13px;
-}
-.nerd-stat-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--muted);
-}
-.nerd-stat-path {
-  margin: 6px 0 0;
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--muted);
-  opacity: 0.85;
-  word-break: break-all;
-  font-family: ui-monospace, monospace;
-}
-.nerd-cache-bar {
-  margin-top: 10px;
-  height: 6px;
-  border-radius: 4px;
-  background: rgba(255,255,255,.08);
-  overflow: hidden;
-}
-.nerd-cache-bar-fill {
-  height: 100%;
-  border-radius: 4px;
-  background: var(--accent);
-  max-width: 100%;
-  transition: width 0.25s ease;
-}
-.nerd-policy-box {
-  margin-top: 4px;
-  padding: 14px 14px 12px;
-  border-radius: 12px;
-  background: rgba(255,255,255,.04);
-  border: 1px solid var(--border, rgba(255,255,255,.08));
-}
-.nerd-policy-title {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 10px;
-}
-.nerd-policy-list {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--text);
-}
-.nerd-policy-list li {
-  margin-bottom: 8px;
-}
-.nerd-policy-list li:last-child {
-  margin-bottom: 0;
-}
-.nerd-policy-list strong {
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.settings-card-header--about {
-  align-items: flex-start;
-}
-.settings-about-stack {
-  --about-icon-size: 72px;
-  --about-connector-x: calc(20px + var(--about-icon-size) / 2);
-}
-.settings-about-stack > .settings-card > .settings-card-header > .settings-card-icon:first-child {
-  width: var(--about-icon-size);
-  min-width: var(--about-icon-size);
-  height: var(--about-icon-size);
-  flex-shrink: 0;
-}
-.settings-card-icon--about-logo {
-  padding: 0;
-  overflow: hidden;
-}
-.settings-about-logo-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  border-radius: inherit;
-}
-.settings-card-icon.settings-card-icon--vozduxan-logo {
-  border-radius: 14px;
-  background: transparent;
-}
-.settings-about-vozduxan-img {
-  object-fit: contain;
-  padding: 5px;
-  box-sizing: border-box;
-}
-.settings-about-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 4px;
-  margin-top: 8px;
-  font-size: 13px;
-  line-height: 1.45;
-}
-.settings-about-links-sep {
-  color: var(--muted);
-  user-select: none;
-}
-.settings-about-link {
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.settings-about-link:hover {
-  color: var(--text);
-}
-.settings-about-stack > .settings-about-stack__app.settings-card {
-  margin-bottom: 0;
-}
-.settings-about-stack .settings-card--vozduxan {
-  margin-top: 0;
-}
-.settings-about-connector {
-  position: relative;
-  height: 32px;
-  margin: 0;
-  pointer-events: none;
-}
-.settings-about-connector__rail {
-  position: absolute;
-  left: var(--about-connector-x);
-  top: 2px;
-  bottom: 2px;
-  width: 2px;
-  margin-left: -1px;
-  border-radius: 1px;
-  background: linear-gradient(
-    180deg,
-    rgba(var(--accent-rgb), 0.38) 0%,
-    rgba(var(--accent-rgb), 0.26) 55%,
-    rgba(var(--accent-rgb), 0.12) 100%
-  );
-  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.12);
-}
-.settings-about-connector__pulse {
-  position: absolute;
-  left: var(--about-connector-x);
-  top: 0;
-  width: 7px;
-  height: 7px;
-  margin-left: -3.5px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 30% 30%,
-    rgba(255, 255, 255, 0.45),
-    var(--accent) 55%,
-    rgba(var(--accent-rgb), 0.35) 100%
-  );
-  box-shadow:
-    0 0 10px rgba(var(--accent-rgb), 0.65),
-    0 0 18px rgba(var(--accent-rgb), 0.35);
-  animation: settings-about-pulse-move 2.6s ease-in-out infinite;
-  will-change: transform, opacity;
-}
-.settings-about-connector__pulse::after {
-  content: "";
-  position: absolute;
-  inset: -5px;
-  border-radius: 50%;
-  border: 1px solid rgba(var(--accent-rgb), 0.35);
-  opacity: 0.55;
-  animation: settings-about-pulse-ring 2.6s ease-in-out infinite;
-}
-.settings-about-connector__pulse--echo {
-  width: 5px;
-  height: 5px;
-  margin-left: -2.5px;
-  opacity: 0.55;
-  box-shadow:
-    0 0 8px rgba(var(--accent-rgb), 0.45),
-    0 0 14px rgba(var(--accent-rgb), 0.22);
-  animation-delay: 1.3s;
-}
-.settings-about-connector__pulse--echo::after {
-  display: none;
-}
-@keyframes settings-about-pulse-move {
-  0% {
-    transform: translateY(21px) scale(0.88);
-    opacity: 0.45;
-  }
-  40% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(5px) scale(1);
-    opacity: 0.55;
-  }
-}
-@keyframes settings-about-pulse-ring {
-  0% {
-    transform: scale(0.65);
-    opacity: 0.2;
-  }
-  45% {
-    opacity: 0.65;
-  }
-  100% {
-    transform: scale(1.35);
-    opacity: 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .settings-about-connector__pulse,
-  .settings-about-connector__pulse::after {
-    animation: none;
-  }
-  .settings-about-connector__pulse {
-    top: 50%;
-    transform: translateY(-50%);
-    opacity: 0.65;
-  }
-  .settings-about-connector__pulse::after {
-    display: none;
-  }
-  .settings-about-connector__pulse--echo {
-    display: none;
-  }
-}
-.settings-card-name--with-dep {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 0.4em;
-}
-.settings-about-dep-version {
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.2;
-  color: var(--muted);
-  letter-spacing: 0.01em;
-}
-.settings-release-check {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  margin-top: 10px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--muted);
-}
-.settings-release-check .settings-status-dot {
-  flex-shrink: 0;
-}
-.settings-release-link {
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.settings-release-link:hover {
-  color: var(--text);
-}
-.settings-release-retry {
-  background: none;
-  border: none;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.settings-release-retry:hover {
-  color: var(--text);
-}
-
-/* ── SoulSeek card ──────────────────────────────────────────────────────────── */
-.settings-card--slsk {
-  margin-top: 12px;
-}
-.slsk-avatar {
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  overflow: hidden;
-  background: #336699;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  font-weight: 700;
-  color: #fff;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0,0,0,.35);
-}
-
-/* ── Achievements (opt-in) ──────────────────────────────────────────────────── */
-.settings-card--achievements .settings-card-header {
-  align-items: center;
-}
-.ach-opt-toggle {
-  position: relative;
-  flex-shrink: 0;
-  width: 44px;
-  height: 26px;
-  cursor: pointer;
-}
-.ach-opt-toggle-input {
-  position: absolute;
-  opacity: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  cursor: pointer;
-}
-.ach-opt-toggle-ui {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border-radius: 13px;
-  background: var(--border);
-  transition: background 0.15s ease;
-  pointer-events: none;
-}
-.ach-opt-toggle-ui::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
-  transition: transform 0.15s ease;
-}
-.ach-opt-toggle-input:checked + .ach-opt-toggle-ui {
-  background: color-mix(in srgb, var(--accent) 75%, var(--border));
-}
-.ach-opt-toggle-input:checked + .ach-opt-toggle-ui::after {
-  transform: translateX(18px);
-}
-.ach-opt-toggle-input:focus-visible + .ach-opt-toggle-ui {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.settings-card-body--achievements {
-  /* Отступ от разделительной линии до текста (раньше было 0 — прилипало) */
-  padding-top: 22px;
-}
-.ach-inline-link {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.ach-inline-link:hover {
-  color: var(--text);
-}
-.ach-copy {
-  margin-bottom: 10px;
-}
-.ach-copy-tight {
-  margin-bottom: 12px;
-}
-.ach-copy--muted {
-  color: var(--muted);
-}
-.ach-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-.ach-btn {
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  background: var(--surface-h);
-  color: var(--text);
-}
-.ach-btn:hover {
-  background: color-mix(in srgb, var(--surface-h) 85%, var(--accent));
-}
-.ach-btn--primary {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
-  color: var(--text);
-}
-.ach-btn--primary:hover {
-  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
-}
-.ach-btn--danger {
-  border-color: color-mix(in srgb, #c44 35%, var(--border));
-  background: transparent;
-  color: color-mix(in srgb, #e66 88%, var(--text));
-}
-.ach-btn--danger:hover {
-  background: color-mix(in srgb, #c44 12%, transparent);
-}
-</style>

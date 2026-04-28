@@ -13,7 +13,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests (coverage)
+        run: npm run test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: ignore
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -74,29 +106,39 @@ jobs:
         run: npm run tauri build
         env:
           CI: true
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Upload Windows installer
+      - name: Upload Windows artifacts
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: tauri-windows
-          path: src-tauri/target/release/bundle/**/*.exe
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
           if-no-files-found: error
 
-      - name: Upload macOS DMG
+      - name: Upload macOS artifacts
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: tauri-macos
-          path: src-tauri/target/release/bundle/**/*.dmg
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
 
-      - name: Upload Linux .deb
+      - name: Upload Linux artifacts
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: tauri-linux
-          path: src-tauri/target/release/bundle/**/*.deb
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
           if-no-files-found: error
 
   publish:
@@ -132,13 +174,13 @@ jobs:
 
           VERSION=$(node -p "require('./package.json').version")
           if [ "$REF_NAME" = "dev" ]; then
-            TITLE="${VERSION}-dev"
             TAG="v${VERSION}-dev"
+            TITLE="${VERSION}-dev"
             VER_LABEL="${VERSION}-dev"
             PRERELEASE=(--prerelease)
           else
-            TITLE="${VERSION}"
             TAG="v${VERSION}"
+            TITLE="${VERSION}"
             VER_LABEL="${VERSION}"
             PRERELEASE=()
           fi
@@ -147,33 +189,83 @@ jobs:
           gh api --method DELETE -H "Accept: application/vnd.github+json" \
             "/repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || true
 
-          mapfile -t FILES_RAW < <(find release -type f \( \
-            -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' \
-          \) | sort)
-          if [ ${#FILES_RAW[@]} -eq 0 ]; then
-            echo "No installer files (.dmg/.exe/.msi/.deb) under release/"; exit 1
-          fi
-
           mkdir -p release-upload
-          for f in "${FILES_RAW[@]}"; do
+
+          # ── Rename distribution installers ────────────────────────────────
+          while IFS= read -r f; do
             case "${f,,}" in
-              *.dmg) out="NeegdeMacOS${VER_LABEL}.dmg" ;;
-              *.exe) out="NeegdeWindows${VER_LABEL}.exe" ;;
-              *.msi) out="NeegdeWindows${VER_LABEL}.msi" ;;
-              *.deb) out="NeegdeLinux${VER_LABEL}.deb" ;;
+              *.dmg)     out="NeegdeMacOS${VER_LABEL}.dmg" ;;
+              *.exe)     out="NeegdeWindows${VER_LABEL}.exe" ;;
+              *.msi)     out="NeegdeWindows${VER_LABEL}.msi" ;;
+              *.deb)     out="NeegdeLinux${VER_LABEL}.deb" ;;
               *.appimage) out="NeegdeLinux${VER_LABEL}.AppImage" ;;
-              *) out="Neegde_${VER_LABEL}_$(basename "$f")" ;;
+              *)         out="Neegde_${VER_LABEL}_$(basename "$f")" ;;
             esac
             cp "$f" "release-upload/$out"
-          done
-          mapfile -t FILES < <(find release-upload -maxdepth 1 -type f | sort)
+          done < <(find release -type f \( \
+            -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \
+            -o -name '*.deb' -o -name '*.AppImage' \
+          \) | sort)
 
-          NOTES="Здесь будет чейнджлог"
+          # ── Copy update archives + signatures with original names ─────────
+          find release -type f \( -name '*.tar.gz' -o -name '*.sig' \) \
+            -exec cp {} release-upload/ \;
+
+          # ── Generate latest.json ──────────────────────────────────────────
+          BASE_URL="https://github.com/$REPO/releases/download/$TAG"
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          WIN_EXE=$(find release-upload -name 'NeegdeWindows*.exe'    | head -1 | xargs -r basename)
+          MAC_TAR=$(find release-upload -name '*.app.tar.gz'          | head -1 | xargs -r basename)
+          LNX_TAR=$(find release-upload -name '*.AppImage.tar.gz'     | head -1 | xargs -r basename)
+
+          WIN_SIG_FILE=$(find release-upload -name '*.exe.sig'         | head -1)
+          MAC_SIG_FILE=$(find release-upload -name '*.app.tar.gz.sig'  | head -1)
+          LNX_SIG_FILE=$(find release-upload -name '*.AppImage.tar.gz.sig' | head -1)
+
+          WIN_SIG=$( [ -f "$WIN_SIG_FILE" ] && cat "$WIN_SIG_FILE" || echo "" )
+          MAC_SIG=$( [ -f "$MAC_SIG_FILE" ] && cat "$MAC_SIG_FILE" || echo "" )
+          LNX_SIG=$( [ -f "$LNX_SIG_FILE" ] && cat "$LNX_SIG_FILE" || echo "" )
+
+          # macos-latest runner is Apple Silicon (aarch64) since GitHub Actions macos-14
+          MAC_PLATFORM="darwin-aarch64"
+
+          python3 -c "
+          import json, sys
+          data = {
+            'version': '$VERSION',
+            'notes': 'Список изменений: $BASE_URL',
+            'pub_date': '$PUB_DATE',
+            'platforms': {}
+          }
+          if '$WIN_EXE' and '$WIN_SIG':
+            data['platforms']['windows-x86_64'] = {
+              'signature': '$WIN_SIG',
+              'url': '$BASE_URL/$WIN_EXE'
+            }
+          if '$MAC_TAR' and '$MAC_SIG':
+            data['platforms']['$MAC_PLATFORM'] = {
+              'signature': '$MAC_SIG',
+              'url': '$BASE_URL/$MAC_TAR'
+            }
+          if '$LNX_TAR' and '$LNX_SIG':
+            data['platforms']['linux-x86_64'] = {
+              'signature': '$LNX_SIG',
+              'url': '$BASE_URL/$LNX_TAR'
+            }
+          print(json.dumps(data, indent=2))
+          " > release-upload/latest.json
+
+          echo "=== latest.json ==="
+          cat release-upload/latest.json
+
+          # ── Create GitHub release ─────────────────────────────────────────
+          mapfile -t FILES < <(find release-upload -maxdepth 1 -type f | sort)
 
           gh release create "$TAG" \
             --repo "$REPO" \
             --target "${{ github.sha }}" \
             --title "$TITLE" \
-            --notes "$NOTES" \
+            --notes "Список изменений смотри ниже." \
             "${PRERELEASE[@]}" \
             "${FILES[@]}"

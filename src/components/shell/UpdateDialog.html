@@ -1,0 +1,68 @@
+<Teleport to="body">
+  <Transition name="update-dialog">
+    <div
+      v-if="visible"
+      class="update-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="update-dialog-title"
+      @click.self="!installing && emit('close')"
+    >
+      <div class="update-panel" @click.stop>
+
+        <div class="update-header">
+          <div class="update-badge">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            Обновление
+          </div>
+          <h2 id="update-dialog-title" class="update-version">v{{ version }}</h2>
+          <p v-if="date" class="update-date">{{ date }}</p>
+        </div>
+
+        <div v-if="notesHtml" class="update-notes" v-html="notesHtml" />
+        <div v-else class="update-notes update-notes--empty">Список изменений недоступен.</div>
+
+        <div v-if="installing" class="update-progress-wrap">
+          <div class="update-progress-bar">
+            <div
+              class="update-progress-fill"
+              :class="{ 'update-progress-fill--indet': installProgress === 0 }"
+              :style="installProgress > 0 ? { width: installProgress + '%' } : {}"
+            />
+          </div>
+          <span class="update-progress-label">
+            {{ installProgress > 0 ? installProgress + '%' : 'Скачивается…' }}
+          </span>
+        </div>
+
+        <p v-if="installError" class="update-error">{{ installError }}</p>
+
+        <div class="update-actions">
+          <button
+            type="button"
+            class="update-btn update-btn--ghost"
+            :disabled="installing"
+            @click="emit('close')"
+          >
+            Позже
+          </button>
+          <button
+            type="button"
+            class="update-btn update-btn--primary"
+            :disabled="installing"
+            @click="emit('install')"
+          >
+            <span v-if="installing" class="update-btn-spinner" aria-hidden="true" />
+            <template v-else>Установить и перезапустить</template>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </Transition>
+</Teleport>

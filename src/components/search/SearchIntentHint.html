@@ -1,0 +1,36 @@
+  <div v-if="resolving" class="sih sih--resolving">
+    <span class="sih-spin" aria-hidden="true" />
+    <span>Распознаём запрос…</span>
+  </div>
+
+  <div v-else-if="hasCanonical" class="sih">
+    <div class="sih-main">
+      <span v-if="intentLabel" class="sih-chip">{{ intentLabel }}</span>
+      <div class="sih-track-id">
+        <span class="sih-artist">{{ canonicalArtist }}</span>
+        <span v-if="canonicalTitle" class="sih-title">{{ canonicalTitle }}</span>
+      </div>
+    </div>
+    <button
+      type="button"
+      class="sih-revert"
+      :title="`Искать именно «${rawQuery}»`"
+      @click="emit('revert-to-raw')"
+    >
+      нет, искать «{{ rawQuery }}»
+    </button>
+    <div v-if="topCandidates.length" class="sih-alts">
+      <span class="sih-alts-label">Также:</span>
+      <button
+        v-for="c in topCandidates"
+        :key="`${c.artist}|${c.title}`"
+        type="button"
+        class="sih-alt-btn"
+        @click="emit('search-candidate', c)"
+      >{{ c.artist }}{{ c.title ? ` — ${c.title}` : '' }}</button>
+    </div>
+  </div>
+
+  <div v-else-if="resolved && resolved.intent === 'raw'" class="sih sih--muted">
+    <span>Каталоги ничего не распознали — ищу введённую строку.</span>
+  </div>

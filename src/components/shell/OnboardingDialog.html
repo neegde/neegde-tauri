@@ -1,0 +1,268 @@
+<Teleport to="body">
+  <Transition name="ob-fade-layer">
+    <div
+      v-if="visible"
+      class="ob-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Начало работы"
+    >
+      <div class="ob-panel">
+        <div class="ob-chat">
+          <Transition name="ob-step" mode="out-in">
+            <div :key="step" class="ob-inner">
+
+              <!-- ═══════════════════════════════════ Step 0: Welcome ═══ -->
+              <template v-if="step === 0">
+                <div class="ob-msg ob-item" :class="{ 'ob-item--visible': shownItems >= 1 }">
+                  <div class="ob-bubble">
+                    <p>Добро пожаловать в нигде.</p>
+                  </div>
+                </div>
+                <div class="ob-msg ob-item" :class="{ 'ob-item--visible': shownItems >= 2 }">
+                  <div class="ob-bubble">
+                    <p>Ищи музыку по Rutracker и SoulSeek — слушай прямо в приложении, без скачивания.</p>
+                  </div>
+                </div>
+                <Transition name="ob-btns">
+                  <div v-if="showBtns" class="ob-actions">
+                    <button type="button" class="ob-btn ob-btn--primary" @click="advance">
+                      Дальше
+                    </button>
+                  </div>
+                </Transition>
+              </template>
+
+              <!-- ══════════════════════════════════ Step 1: Rutracker ══ -->
+              <template v-else-if="step === 1">
+                <div class="ob-msg ob-item" :class="{ 'ob-item--visible': shownItems >= 1 }">
+                  <div class="ob-bubble">
+                    <p>
+                      Rutracker — альбомы и торрент-раздачи.
+                      Нужен аккаунт форума rutracker.org — логин и пароль те же, что на сайте.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="ob-card ob-item" :class="{ 'ob-item--visible': shownItems >= 2 }">
+                  <!-- Success state -->
+                  <div v-if="rtConnected" class="ob-card-success">
+                    <span class="ob-success-icon" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" stroke-width="2.5"
+                           stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                    </span>
+                    <span>Подключено{{ rtWho ? ` как ${rtWho}` : "" }}</span>
+                  </div>
+
+                  <!-- Probing connectivity -->
+                  <div
+                    v-else-if="rtChecking && rtReachable === null"
+                    class="ob-card-probing"
+                  >
+                    <span class="spinner" />
+                    <span>Проверяем доступность Rutracker…</span>
+                  </div>
+
+                  <!-- Site unreachable -->
+                  <div v-else-if="rtReachable === false" class="ob-card-unreachable">
+                    <p class="ob-unreach-title">Rutracker недоступен</p>
+                    <p class="ob-unreach-desc">
+                      Скорее всего сайт заблокирован. Попробуй встроенные прокси —
+                      они подменяют маршрут только для запросов к Rutracker.
+                    </p>
+                    <p v-if="rtConnError" class="ob-form-error">{{ rtConnError }}</p>
+                    <div class="ob-proxy-row">
+                      <button
+                        type="button"
+                        class="ob-btn ob-btn--ghost ob-btn--small"
+                        :class="{ 'ob-btn--active': rtActiveProxy === 'px1' }"
+                        :disabled="!!rtProxyBusy || rtChecking"
+                        @click="applyProxyPreset('px1')"
+                      >
+                        <span v-if="rtProxyBusy === 'px1'" class="spinner" />
+                        <template v-else>Прокси 1</template>
+                      </button>
+                      <button
+                        type="button"
+                        class="ob-btn ob-btn--ghost ob-btn--small"
+                        :class="{ 'ob-btn--active': rtActiveProxy === 'px2' }"
+                        :disabled="!!rtProxyBusy || rtChecking"
+                        @click="applyProxyPreset('px2')"
+                      >
+                        <span v-if="rtProxyBusy === 'px2'" class="spinner" />
+                        <template v-else>Прокси 2</template>
+                      </button>
+                      <button
+                        type="button"
+                        class="ob-btn ob-btn--ghost ob-btn--small"
+                        :disabled="!!rtProxyBusy || rtChecking"
+                        @click="runRtConnectivityCheck"
+                      >
+                        <span v-if="rtChecking" class="spinner" />
+                        <template v-else>Проверить</template>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Login form -->
+                  <form v-else class="ob-form" @submit="submitRt">
+                    <input
+                      v-model="rtUser"
+                      class="login-input ob-form-input"
+                      type="text"
+                      placeholder="Логин"
+                      autocomplete="username"
+                      :disabled="rtState === 'loading' || rtWebviewBusy"
+                    />
+                    <input
+                      v-model="rtPass"
+                      class="login-input ob-form-input"
+                      type="password"
+                      placeholder="Пароль"
+                      autocomplete="current-password"
+                      :disabled="rtState === 'loading' || rtWebviewBusy"
+                    />
+                    <p v-if="rtError" class="ob-form-error">{{ rtError }}</p>
+                    <p v-if="rtActiveProxy === 'px1' || rtActiveProxy === 'px2'" class="ob-form-hint">
+                      Используется встроенный прокси ({{ rtActiveProxy === 'px1' ? 'Прокси 1' : 'Прокси 2' }}).
+                    </p>
+                    <button
+                      type="submit"
+                      class="login-btn ob-form-submit"
+                      :disabled="rtState === 'loading' || rtWebviewBusy || !rtUser.trim() || !rtPass"
+                    >
+                      <span v-if="rtState === 'loading'" class="spinner" />
+                      <template v-else>Войти в Rutracker</template>
+                    </button>
+
+                    <!-- Webview fallback (CAPTCHA / Cloudflare) -->
+                    <button
+                      v-if="rtNeedsCaptcha || rtWebviewBusy"
+                      type="button"
+                      class="login-btn login-btn--ghost ob-form-submit"
+                      :disabled="rtState === 'loading' || rtWebviewBusy"
+                      @click="runWebviewLogin"
+                    >
+                      <span v-if="rtWebviewBusy" class="spinner" />
+                      <template v-else>Войти через встроенный браузер</template>
+                    </button>
+                    <p v-if="rtNeedsCaptcha && !rtWebviewBusy" class="ob-form-hint">
+                      Сайт просит подтвердить, что вход не автоматический — откроется окно браузера,
+                      в котором нужно ввести логин/пароль и пройти проверку.
+                    </p>
+                  </form>
+                </div>
+
+                <Transition name="ob-btns">
+                  <div v-if="showBtns" class="ob-actions">
+                    <button
+                      type="button"
+                      class="ob-btn"
+                      :class="rtConnected ? 'ob-btn--primary' : 'ob-btn--ghost'"
+                      :disabled="rtState === 'loading' || rtWebviewBusy"
+                      @click="advance"
+                    >
+                      {{ rtConnected ? "Дальше" : "Пропустить" }}
+                    </button>
+                  </div>
+                </Transition>
+              </template>
+
+              <!-- ═══════════════════════════════════ Step 2: SoulSeek ══ -->
+              <template v-else-if="step === 2">
+                <div class="ob-msg ob-item" :class="{ 'ob-item--visible': shownItems >= 1 }">
+                  <div class="ob-bubble">
+                    <p>
+                      SoulSeek — треки напрямую от пользователей.
+                      Нужен аккаунт на soulseek.net — или пропусти, если не нужен.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="ob-card ob-item" :class="{ 'ob-item--visible': shownItems >= 2 }">
+                  <div v-if="slskConnectedLocal" class="ob-card-success">
+                    <span class="ob-success-icon" aria-hidden="true">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" stroke-width="2.5"
+                           stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                    </span>
+                    <span>Подключено{{ slskWho ? ` как ${slskWho}` : "" }}</span>
+                  </div>
+
+                  <form v-else class="ob-form" @submit="submitSlsk">
+                    <input
+                      v-model="slskUser"
+                      class="login-input ob-form-input"
+                      type="text"
+                      placeholder="Логин"
+                      autocomplete="username"
+                      :disabled="slskState === 'loading'"
+                    />
+                    <input
+                      v-model="slskPass"
+                      class="login-input ob-form-input"
+                      type="password"
+                      placeholder="Пароль"
+                      autocomplete="current-password"
+                      :disabled="slskState === 'loading'"
+                    />
+                    <p v-if="slskError" class="ob-form-error">{{ slskError }}</p>
+                    <button
+                      type="submit"
+                      class="login-btn ob-form-submit"
+                      :disabled="slskState === 'loading' || !slskUser.trim() || !slskPass"
+                    >
+                      <span v-if="slskState === 'loading'" class="spinner" />
+                      <template v-else>Подключить SoulSeek</template>
+                    </button>
+                  </form>
+                </div>
+
+                <Transition name="ob-btns">
+                  <div v-if="showBtns" class="ob-actions">
+                    <button
+                      type="button"
+                      class="ob-btn"
+                      :class="slskConnectedLocal ? 'ob-btn--primary' : 'ob-btn--ghost'"
+                      :disabled="slskState === 'loading'"
+                      @click="advance"
+                    >
+                      {{ slskConnectedLocal ? "Дальше" : "Пропустить" }}
+                    </button>
+                  </div>
+                </Transition>
+              </template>
+
+              <!-- ══════════════════════════════════════ Step 3: Done ══ -->
+              <template v-else-if="step === 3">
+                <div class="ob-msg ob-item" :class="{ 'ob-item--visible': shownItems >= 1 }">
+                  <div class="ob-bubble">
+                    <p>Всё готово.</p>
+                  </div>
+                </div>
+                <div class="ob-msg ob-item" :class="{ 'ob-item--visible': shownItems >= 2 }">
+                  <div class="ob-bubble">
+                    <p>Открой строку поиска сверху — введи трек, исполнителя или альбом.</p>
+                  </div>
+                </div>
+                <Transition name="ob-btns">
+                  <div v-if="showBtns" class="ob-actions">
+                    <button type="button" class="ob-btn ob-btn--primary" @click="emit('close')">
+                      Начать
+                    </button>
+                  </div>
+                </Transition>
+              </template>
+
+            </div>
+          </Transition>
+        </div>
+      </div>
+    </div>
+  </Transition>
+</Teleport>

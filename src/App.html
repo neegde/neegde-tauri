@@ -1,0 +1,409 @@
+  <div class="app has-player">
+
+    <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="logo-text">Где слушаешь? <span class="logo-nigde">Нигде.</span></div>
+        </div>
+        <NavArrows
+          class="sidebar-nav-arrows"
+          :can-go-back="navCanGoBack"
+          :can-go-forward="forwardStack.length > 0"
+          @back="handleNavBack"
+          @forward="handleForwardNav"
+        />
+      </header>
+
+      <nav class="sidebar-nav">
+        <!-- Home -->
+        <button
+          :class="['source-btn', view === 'home' ? 'active' : '']"
+          @click="handleSidebarHome"
+        >
+          <span class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5z"/>
+              <polyline points="9,21 9,12 15,12 15,21"/>
+            </svg>
+          </span>
+          Главная
+        </button>
+
+        <!-- Library -->
+        <div class="nav-label" style="margin-top: 16px">Библиотека</div>
+        <button
+          :class="['source-btn', view === 'likes' ? 'active' : '']"
+          @click="view = 'likes'"
+        >
+          <span class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+          </span>
+          Мне нравится
+        </button>
+
+        <!-- Playlists -->
+        <div class="nav-label nav-label--pl">
+          Плейлисты
+          <button class="sidebar-pl-create-btn" title="Новый плейлист" @click="handleCreatePlaylist">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="sidebar-playlists">
+          <button
+            v-for="pl in libraryPlaylists"
+            :key="pl.id"
+            :class="['source-btn sidebar-pl-item', currentPlaylistId === pl.id && view === 'playlist' ? 'active' : '']"
+            @click="openPlaylist(pl.id)"
+          >
+            <span class="source-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+            </span>
+            {{ pl.title }}
+          </button>
+        </div>
+
+        <!-- Settings (bottom of nav) -->
+        <div style="flex: 1" />
+        <button
+          :class="['source-btn', view === 'settings' ? 'active' : '']"
+          @click="view = 'settings'"
+        >
+          <span class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </span>
+          Настройки
+          <!-- Orange dot when Rutracker is not connected -->
+          <span v-if="!rtLoggedIn" class="settings-warn-dot" />
+        </button>
+      </nav>
+
+      <div
+        v-if="restoringSession && !rtLoggedIn"
+        class="sidebar-rt-connecting"
+        aria-live="polite"
+        title="Проверяем доступность Rutracker"
+      >
+        <span class="spinner sidebar-rt-connecting-spinner" />
+        <span class="sidebar-rt-connecting-label">Проверяем доступность…</span>
+      </div>
+
+    </aside>
+
+    <!-- ── Main ────────────────────────────────────────────────────── -->
+    <div class="main-wrap" ref="mainRef">
+      <div class="main-content">
+        <Transition name="main-view" mode="out-in">
+        <!-- Home: поиск + недавнее + выдача / раздача -->
+        <div v-if="view === 'home'" key="home" class="main-view-surface">
+          <div class="main-toolbar">
+            <div class="main-toolbar-row">
+              <div class="main-toolbar-search">
+                <SearchBar
+                  v-model="searchQuery"
+                  :loading="loading"
+                  :show-categories="false"
+                  :history="searchHistory"
+                  @search="handleSearch"
+                  @remove-history="handleRemoveSearchQuery"
+                />
+              </div>
+              <button
+                type="button"
+                class="toolbar-magnet-btn"
+                title="Открыть раздачу по magnet-ссылке"
+                :disabled="loadingFiles"
+                @click="magnetPanelOpen = true"
+              >
+                По ссылке
+              </button>
+            </div>
+          </div>
+
+          <MagnetLinkDialog
+            v-model:open="magnetPanelOpen"
+            v-model:draft="magnetDraft"
+            :error="magnetError"
+            :resolving="loadingFiles && magnetPanelOpen"
+            @submit="submitMagnetLink"
+            @close="closeMagnetPanel"
+          />
+
+          <HomeView
+            v-show="!homeSearchActive && !selected && !currentAlbum"
+            :recent-history="recentHistory"
+            @open-recent="handleOpenRecent"
+            @remove-recent="handleRemoveFromRecent"
+            @go-to-search="navToSearch"
+            @search-query="(q) => { searchQuery = q; void handleSearch(q); }"
+          />
+
+          <p v-if="error && !loading && !homeSearchActive" class="error-msg">{{ error }}</p>
+
+          <!-- Onboarding: nudge to settings if not connected -->
+          <div
+            v-if="!restoringSession && !rtLoggedIn && !slskConnected && !hasSearchResults && !selected && !loading && !homeSearchActive"
+            class="onboarding"
+          >
+            <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
+              <div class="onboarding-icon" aria-hidden="true">
+                <SystemIcon name="link" :size="28" />
+              </div>
+              <div class="onboarding-body">
+                <div class="onboarding-title">Подключите источники поиска</div>
+                <div class="onboarding-desc">
+                  <strong style="color:var(--text)">Rutracker</strong> — альбомы и раздачи.
+                  <strong style="color:var(--text)">SoulSeek</strong> — отдельные треки.
+                  Настройки открываются здесь или в боковой панели.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <SearchIntentHint
+            v-if="!selected && !currentAlbum && homeSearchActive"
+            :resolving="searchResolving"
+            :resolved="searchResolved"
+            :raw-query="searchQuery"
+            @revert-to-raw="handleRevertToRaw"
+            @search-candidate="handleSearchCandidate"
+          />
+
+          <Results
+            v-if="!selected && !currentAlbum && homeSearchActive"
+            :search-epoch="searchResultsEpoch"
+            :entities="searchEntities"
+            :query="searchProviderQuery"
+            :resolved="searchResolved"
+            :resolving="searchResolving"
+            :slsk-peer-filter="slskPeerBrowseUser"
+            :loading-albums="searchLoadingRt"
+            :loading-tracks="searchLoadingSlsk"
+            :rt-logged-in="rtLoggedIn"
+            :slsk-connected="slskConnected"
+            :rt-error="searchRtError"
+            :slsk-error="searchSlskError"
+            :selected-id="null"
+            :now-playing-id="nowPlayingTrackId"
+            :player-playing="playerPlaying"
+            @select="handleSelect"
+            @play-slsk-track="handlePlaySlskTrack"
+            @download-slsk-track="handleDownloadSlskTrack"
+            @like-slsk-track="handleLikeSlskTrack"
+            @open-slsk-source="handleOpenSoulseekSourceFromResults"
+            @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
+            @add-to-playlist-slsk="handleShowAddToPlaylist"
+          />
+
+          <AlbumView
+            v-if="currentAlbum"
+            :album="currentAlbum"
+            :now-playing-id="nowPlayingTrackId"
+            :player-playing="playerPlaying"
+            :liked-track-ids="libraryLikedTrackIds"
+            :album-liked="currentAlbumLiked"
+            @play-track="onPlayTrack"
+            @play-all="handleAlbumPlayAll"
+            @toggle-like-track="onToggleLikeTrack"
+            @toggle-like-album="handleAlbumToggleLike"
+            @download-track="onDownloadTrack"
+            @download-album="handleAlbumDownloadAll"
+            @add-to-playlist="onAddTrackToPlaylist"
+            @add-to-queue="onAddToQueue"
+            @open-track-source="onOpenTrackSource"
+          />
+
+          <TorrentView
+            v-else-if="selected"
+            :torrent="selected"
+            :files="files"
+            :loading="loadingFiles"
+            :magnet="torrentMagnet"
+            :cover="torrentCover"
+            :now-playing-idx="nowPlayingIdxForTorrentView"
+            :player-playing="playerPlaying"
+            :likes="likes"
+            @play="handlePlay"
+            @play-all="handlePlayAll"
+            @play-album="handlePlayAlbum"
+            @download-album="handleDownloadAlbum"
+            @download="handleDownloadTrack"
+            @download-all="handleDownloadAll"
+            @toggle-like-track="handleToggleLike"
+            @open-album-preview="handleOpenAlbumPreview"
+            @add-to-playlist="handleShowAddToPlaylist"
+            @add-to-queue="handleAddToQueueFromTorrent"
+            @open-torrent-source="handleOpenTorrentSourceFromView"
+          />
+        </div>
+
+        <div v-else-if="view === 'likes'" key="likes" class="main-view-surface">
+          <KeepAlive>
+            <LikesView
+              :tracks="libraryLikedTracks"
+              :albums="libraryLikedAlbums"
+              :now-playing-id="nowPlayingTrackId"
+              :player-playing="playerPlaying"
+              @toggle-like-track="onToggleLikeTrack"
+              @open-liked-album="handleOpenLikedAlbum"
+              @play-track="onPlayTrack"
+              @open-track-source="onOpenTrackSource"
+              @download-track="onDownloadTrack"
+              @add-to-queue="onAddToQueue"
+              @add-to-playlist="onAddTrackToPlaylist"
+            />
+          </KeepAlive>
+        </div>
+
+        <div v-else-if="view === 'settings'" key="settings" class="main-view-surface">
+          <KeepAlive>
+            <SettingsView
+              :rt-logged-in="rtLoggedIn"
+              :rt-username="rtUsername"
+              :rt-avatar-url="rtAvatarUrl"
+              :restoring-session="restoringSession"
+              :theme="theme"
+              :achievements-opt-in="achievementsOptIn"
+              :achievements-unlocked="achievementsState.unlocked"
+              :slsk-connected="slskConnected"
+              :slsk-username="slskUsername"
+              :slsk-logging-in="slskLoggingIn"
+              :slsk-login-error="slskLoginError"
+              :close-tray="closeTray"
+              @login="handleLogin"
+              @logout="handleLogout"
+              @theme-change="handleThemeChange"
+              @achievements-opt-in-change="handleAchievementsOptInChange"
+              @achievements-reset="handleAchievementsReset"
+              @slsk-login="handleSoulseekLogin"
+              @slsk-logout="handleSoulseekLogout"
+              @show-update="showUpdateDialog"
+              @close-tray-change="setCloseTray"
+            />
+          </KeepAlive>
+        </div>
+
+        <div
+          v-else-if="view === 'playlist' && currentPlaylist"
+          :key="'pl-' + currentPlaylistId"
+          class="main-view-surface"
+        >
+          <PlaylistView
+            :playlist="currentPlaylist"
+            :tracks="currentPlaylistTracks"
+            :now-playing-id="nowPlayingTrackId"
+            :player-playing="playerPlaying"
+            @play="handlePlayPlaylist"
+            @open-track-source="onOpenTrackSource"
+            @remove-track="onRemoveTrackFromPlaylist"
+            @delete="onDeleteCurrentPlaylist"
+            @rename="onRenameCurrentPlaylist"
+            @add-to-queue="onAddToQueue"
+            @add-to-playlist="onAddTrackToPlaylist"
+            @download-track="onDownloadTrack"
+            @download-playlist="handleDownloadPlaylist"
+          />
+        </div>
+        </Transition>
+
+      </div>
+    </div>
+
+    <!-- ── Player ──────────────────────────────────────────────────── -->
+    <Player
+      @prev="handlePrev"
+      @next="handlePlayerNext"
+      @ended="handleTrackEnded"
+      @cycle-repeat="cycleRepeatMode"
+      @toggle-shuffle="toggleShuffle"
+      @request-stream="allowPlayerAutoplay"
+      @playing-change="playerPlaying = $event"
+      @toggle-like="onToggleLikeTrack"
+      @search-artist="handleSearchArtist"
+      @open-torrent="handleOpenTorrentFromPlayer"
+      @queue-jump="onQueueJump"
+      @queue-remove="onQueueRemove"
+      @queue-add-to-playlist="onAddTrackToPlaylist"
+      @queue-download="onDownloadTrack"
+    />
+
+    <AppSplash :visible="splashVisible" @complete="handleSplashComplete" />
+
+    <OnboardingDialog
+      :visible="showOnboarding"
+      :rt-logged-in="rtLoggedIn"
+      :rt-username="rtUsername"
+      :slsk-connected="slskConnected"
+      :slsk-username="slskUsername"
+      @close="dismissOnboarding"
+      @rt-connected="handleLogin"
+      @slsk-connected="handleOnboardingSlskConnected"
+    />
+
+    <UpdateDialog
+      :visible="updateDialogOpen"
+      :version="updateVersion"
+      :date="updateDate"
+      :notes-html="updateNotesHtml"
+      :installing="updateInstalling"
+      :install-progress="updateInstallProgress"
+      :install-error="updateInstallError"
+      @install="installUpdate"
+      @close="dismissUpdate"
+    />
+
+    <AchievementToast
+      v-model:open="achievementToastOpen"
+      :title="achievementToastTitle"
+      :description="achievementToastDesc"
+    />
+
+    <DownloadProgressOverlay
+      v-model:expanded="downloadOverlayExpanded"
+      :progress="downloadProgress"
+    />
+
+    <!-- Add-to-playlist modal -->
+    <Teleport to="body">
+      <div v-if="addToPlaylistModal" class="pl-modal-overlay" @click.self="addToPlaylistModal = false">
+        <div class="pl-modal">
+          <div class="pl-modal-title">Добавить в плейлист</div>
+          <div class="pl-modal-list">
+            <button
+              v-for="pl in libraryPlaylists"
+              :key="pl.id"
+              class="pl-modal-item"
+              @click="handleAddToPlaylist(pl.id)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+              {{ pl.title }}
+            </button>
+            <button class="pl-modal-new" @click="handleAddToPlaylistNew">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Новый плейлист
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+  </div>

@@ -1,0 +1,126 @@
+  <div class="search-results-combined">
+    <div class="likes-tabs search-results-tabs" role="tablist" aria-label="Тип результатов">
+      <button
+        type="button"
+        role="tab"
+        class="likes-tab"
+        :class="{ active: activeTab === 'tracks' }"
+        :aria-selected="activeTab === 'tracks'"
+        @click="activeTab = 'tracks'"
+      >
+        Треки
+        <span v-if="trackEntitiesFiltered.length" class="search-tab-badge">{{ trackEntitiesFiltered.length }}</span>
+        <span v-else-if="loadingTracks" class="search-tab-badge search-tab-badge--muted">…</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="likes-tab"
+        :class="{ active: activeTab === 'albums' }"
+        :aria-selected="activeTab === 'albums'"
+        @click="activeTab = 'albums'"
+      >
+        Альбомы
+        <span v-if="albumEntities.length" class="search-tab-badge">{{ albumEntities.length }}</span>
+        <span v-else-if="loadingAlbums" class="search-tab-badge search-tab-badge--muted">…</span>
+      </button>
+    </div>
+
+    <!-- ── Unified empty state ────────────────────────────────────────────── -->
+    <div v-if="allEmpty" class="search-empty-state">
+      <svg class="search-empty-icon" width="40" height="40" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/>
+        <line x1="16.5" y1="16.5" x2="22" y2="22"/>
+      </svg>
+      <p class="search-empty-title">Ничего не нашли</p>
+      <p v-if="emptyStateQuery" class="search-empty-sub">
+        по запросу <strong>{{ emptyStateQuery }}</strong>
+      </p>
+    </div>
+
+    <template v-else>
+      <!-- ── Альбомы ─────────────────────────────────────────────────────── -->
+      <section
+        v-show="activeTab === 'albums'"
+        class="search-section"
+        role="tabpanel"
+        aria-label="Альбомы"
+      >
+        <p v-if="!rtLoggedIn && !slskConnected" class="search-section-hint">
+          Войдите в <strong>Rutracker</strong> или подключите <strong>SoulSeek</strong> в настройках.
+        </p>
+        <p v-else-if="rtError" class="search-section-error">{{ rtError }}</p>
+        <p
+          v-else-if="!loadingAlbums && !albumEntities.length"
+          class="search-section-hint"
+        >
+          Альбомы не найдены.
+        </p>
+
+        <div v-if="albumEntities.length" class="results-grid">
+          <AlbumCard
+            v-for="album in visibleAlbums"
+            :key="album.id"
+            :album="album"
+            :selected="selectedId === album.id"
+            @select="onAlbumClick"
+          />
+        </div>
+        <div ref="sentinelAlbum" />
+      </section>
+
+      <!-- ── Треки ───────────────────────────────────────────────────────── -->
+      <section
+        v-show="activeTab === 'tracks'"
+        class="search-section"
+        role="tabpanel"
+        aria-label="Треки"
+      >
+        <p v-if="!slskConnected" class="search-section-hint">
+          Подключите <strong>SoulSeek</strong> в настройках.
+        </p>
+        <p v-else-if="slskError" class="search-section-error">{{ slskError }}</p>
+        <p
+          v-else-if="slskConnected && !loadingTracks && !trackEntitiesFiltered.length && !slskFilterEmptyHint"
+          class="search-section-hint"
+        >
+          Треки не найдены.
+        </p>
+        <p v-else-if="slskFilterEmptyHint" class="search-section-hint">
+          В этой выдаче нет файлов от пользователя <strong>{{ slskPeerFilter }}</strong>.
+          <button type="button" class="search-peer-filter-clear" @click="emit('clear-slsk-peer-filter')">
+            Показать все треки
+          </button>
+        </p>
+
+        <div
+          v-if="slskPeerFilter?.trim() && trackEntitiesFiltered.length"
+          class="search-peer-filter-banner"
+        >
+          <span>Файлы пользователя {{ slskPeerFilter }}</span>
+          <button type="button" class="search-peer-filter-clear" @click="emit('clear-slsk-peer-filter')">
+            Все треки выдачи
+          </button>
+        </div>
+
+        <div v-if="trackEntitiesFiltered.length" class="slsk-tracklist">
+          <SlskTrackRow
+            v-for="track in visibleTracks"
+            :key="track.id"
+            :track="track"
+            :enriched="slskMeta.get(track.id) ?? null"
+            :now-playing="nowPlayingId === track.id"
+            :player-playing="playerPlaying"
+            @play="emit('play-slsk-track', $event)"
+            @download="emit('download-slsk-track', $event)"
+            @like="emit('like-slsk-track', $event)"
+            @open-source="emit('open-slsk-source', $event)"
+            @add-to-playlist="emit('add-to-playlist-slsk', $event)"
+          />
+        </div>
+        <div ref="sentinelTrack" />
+      </section>
+    </template>
+  </div>

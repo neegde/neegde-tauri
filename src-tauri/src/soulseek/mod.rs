@@ -49,6 +49,15 @@ pub struct SlskSearchResultRow {
     /// True for image files from search (used for folder cover matching).
     #[serde(default)]
     pub slsk_is_image: bool,
+    /// Peer has at least one free upload slot (from FileSearchResponse tail).
+    #[serde(default, rename = "slotsFree")]
+    pub slots_free: bool,
+    /// Peer's advertised average upload speed in bytes/second.
+    #[serde(default, rename = "avgSpeed")]
+    pub avg_speed: u32,
+    /// Current length of the peer's upload queue (0 = free).
+    #[serde(default, rename = "queueLength")]
+    pub queue_length: u64,
 }
 
 #[derive(Serialize)]
@@ -111,12 +120,17 @@ impl SoulSeekState {
         }
     }
 
-    fn get_session(&self) -> Result<Arc<Session>, String> {
-        self.session
-            .lock()
-            .map_err(|_| "lock error".to_string())?
-            .clone()
-            .ok_or_else(|| "Not connected to SoulSeek".to_string())
+    pub(crate) fn get_session(&self) -> Result<Arc<Session>, String> {
+        let guard = self.session.lock().map_err(|_| "lock error".to_string())?;
+        let Some(s) = guard.as_ref() else {
+            return Err("Not connected to SoulSeek".to_string());
+        };
+        if s.is_dead() {
+            // Reader/listener loop already emitted `soulseek-disconnected`; the
+            // frontend listener will trigger an auto-reconnect using saved creds.
+            return Err("Соединение с SoulSeek потеряно — переподключение…".to_string());
+        }
+        Ok(Arc::clone(s))
     }
 }
 
@@ -124,6 +138,7 @@ impl SoulSeekState {
 
 #[tauri::command]
 pub async fn soulseek_login(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SoulSeekState>,
     ts: tauri::State<'_, crate::torrent_stream::TorrentStreamState>,
     username: String,
@@ -135,7 +150,7 @@ pub async fn soulseek_login(
         *guard = None; // drops Arc, background tasks see Weak upgrade fail and exit
     }
 
-    match Session::connect(username.clone(), password, ts.debug_log()).await {
+    match Session::connect(app, username.clone(), password, ts.debug_log()).await {
         Ok(sess) => {
             let mut guard = state.session.lock().map_err(|_| "lock error".to_string())?;
             *guard = Some(sess);
@@ -172,11 +187,50 @@ pub fn soulseek_logout(state: tauri::State<'_, SoulSeekState>) -> Result<(), Str
 pub fn soulseek_status(state: tauri::State<'_, SoulSeekState>) -> Result<SlskStatus, String> {
     let guard = state.session.lock().map_err(|_| "lock error".to_string())?;
     match guard.as_ref() {
-        Some(s) => Ok(SlskStatus {
+        // A dead session is logically disconnected — the network plumbing already
+        // terminated, only the struct lingers until `soulseek_login` replaces it.
+        Some(s) if !s.is_dead() => Ok(SlskStatus {
             connected: true,
             username: Some(s.username.clone()),
         }),
-        None => Ok(SlskStatus { connected: false, username: None }),
+        _ => Ok(SlskStatus { connected: false, username: None }),
+    }
+}
+
+#[derive(Serialize)]
+pub struct SlskConnectivityResult {
+    pub reachable: bool,
+    pub latency_ms: Option<u64>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn soulseek_check_connectivity() -> Result<SlskConnectivityResult, String> {
+    use std::time::Instant;
+    use tokio::net::TcpStream;
+    use tokio::time::timeout;
+
+    const HOST: &str = "server.slsknet.org";
+    const PORT: u16 = 2242;
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+    let start = Instant::now();
+    match timeout(PROBE_TIMEOUT, TcpStream::connect((HOST, PORT))).await {
+        Ok(Ok(_)) => Ok(SlskConnectivityResult {
+            reachable: true,
+            latency_ms: Some(start.elapsed().as_millis() as u64),
+            error: None,
+        }),
+        Ok(Err(e)) => Ok(SlskConnectivityResult {
+            reachable: false,
+            latency_ms: None,
+            error: Some(e.to_string()),
+        }),
+        Err(_) => Ok(SlskConnectivityResult {
+            reachable: false,
+            latency_ms: None,
+            error: Some(format!("Нет ответа от {HOST}:{PORT} (таймаут {}с)", PROBE_TIMEOUT.as_secs())),
+        }),
     }
 }
 
@@ -228,6 +282,9 @@ pub(super) fn file_results_to_rows(results: Vec<SlskFileResult>) -> Vec<SlskSear
                 bitrate: r.bitrate,
                 duration: r.duration,
                 slsk_is_image: r.is_image,
+                slots_free: r.slots_free,
+                avg_speed: r.avg_speed,
+                queue_length: r.queue_length,
             }
         })
         .collect()

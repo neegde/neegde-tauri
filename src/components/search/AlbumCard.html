@@ -1,0 +1,42 @@
+  <div
+    ref="cardRef"
+    :class="['album-card', selected ? 'selected' : '']"
+    :title="title"
+    @click="emit('select', album)"
+    @mouseenter="isSoulseek ? onMouseenterSlsk() : onMouseenter()"
+    @mouseleave="onMouseleave"
+  >
+    <div class="album-art">
+      <img
+        v-if="coverUrl && !coverErr"
+        :src="coverUrl"
+        class="album-art-img"
+        alt=""
+        @error="coverErr = true"
+      />
+      <svg v-else class="album-art-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M9 18V5l12-2v13"/>
+        <circle cx="6" cy="18" r="3"/>
+        <circle cx="18" cy="16" r="3"/>
+      </svg>
+      <button
+        class="album-art-play"
+        title="Открыть"
+        @click.stop="emit('select', album)"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <polygon points="5,3 19,12 5,21"/>
+        </svg>
+      </button>
+      <span v-if="formatLabel" class="album-format-badge">{{ formatLabel }}</span>
+    </div>
+    <div class="album-name">{{ title }}</div>
+    <div class="album-meta">
+      <span v-if="isSoulseek" class="album-seeds seeds-ok slsk-track-count">
+        {{ trackCount > 1 ? tracksLabel(trackCount) : (peers > 1 ? `${peers}×` : "SoulSeek") }}
+      </span>
+      <span v-else-if="isRutracker" :class="['album-seeds', seeders > 0 ? 'seeds-ok' : 'seeds-dead']">
+        {{ seedsLabel(seeders) }}
+      </span>
+    </div>
+  </div>

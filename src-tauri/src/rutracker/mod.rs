@@ -38,6 +38,18 @@ pub struct TorrentFile {
     pub size: u64,
 }
 
+/// Structured metadata extracted from `<span class="post-b">Label</span>: value<br>` rows.
+/// Everything here is torrent-scoped (applies to every track in the release).
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TopicMeta {
+    pub year: Option<String>,
+    pub genre: Option<String>,
+    pub country: Option<String>,
+    pub codec: Option<String>,
+    pub rip_type: Option<String>,
+    pub duration: Option<String>,
+}
+
 /// Full details for a topic: cover image, magnet link, and file list.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TorrentDetails {
@@ -47,6 +59,12 @@ pub struct TorrentDetails {
     pub files: Vec<TorrentFile>,
     /// Artist extracted from the post body (e.g. "Исполнитель: Кровосток"), if found.
     pub artist: Option<String>,
+    /// Album name extracted from the post body ("Альбом: X") or derived from topic name.
+    #[serde(default)]
+    pub album: Option<String>,
+    /// Structured fields from `<span class="post-b">Label</span>: value<br>` rows.
+    #[serde(default)]
+    pub meta: TopicMeta,
 }
 
 // ── Session file helpers ──────────────────────────────────────────────────────
@@ -334,6 +352,74 @@ fn extract_user_id(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Best-effort display name from forum index HTML (phpBB profile link text).
+fn extract_username_from_forum_page(html: &str) -> Option<String> {
+    for pat in &["mode=viewprofile&u=", "mode=viewprofile&amp;u="] {
+        let mut scan = 0usize;
+        while let Some(rel) = html[scan..].find(pat) {
+            let hit = scan + rel;
+            let after = &html[hit + pat.len()..];
+            let uid_len = after
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(after.len());
+            if uid_len == 0 {
+                scan = hit + pat.len();
+                continue;
+            }
+            let prefix = &html[..hit];
+            let Some(a_open) = prefix.rfind("<a ") else {
+                scan = hit + pat.len();
+                continue;
+            };
+            let tail = &html[a_open..];
+            let Some(gt) = tail.find('>') else {
+                scan = hit + pat.len();
+                continue;
+            };
+            let inner_start = a_open + gt + 1;
+            let inner_rest = &html[inner_start..];
+            let Some(close_a) = inner_rest.find("</a>") else {
+                scan = hit + pat.len();
+                continue;
+            };
+            let inner = inner_rest[..close_a].trim();
+            if inner.contains("<img") || inner.is_empty() {
+                scan = hit + pat.len();
+                continue;
+            }
+            let name = strip_simple_inline_markup(inner);
+            if !name.is_empty() && name.len() < 128 {
+                return Some(name);
+            }
+            scan = hit + pat.len();
+        }
+    }
+    None
+}
+
+/// Removes a single layer of common inline wrappers (`<b>`, `<span>`) from link HTML.
+fn strip_simple_inline_markup(s: &str) -> String {
+    let mut t = s.trim().to_string();
+    for (o, c) in [
+        ("<b>", "</b>"),
+        ("<B>", "</B>"),
+        ("<strong>", "</strong>"),
+        ("<STRONG>", "</STRONG>"),
+    ] {
+        if t.starts_with(o) && t.ends_with(c) && t.len() > o.len() + c.len() {
+            t = t[o.len()..t.len() - c.len()].trim().to_string();
+        }
+    }
+    if let Some(i) = t.find('>') {
+        if let Some(j) = t.rfind('<') {
+            if j > i {
+                t = t[i + 1..j].trim().to_string();
+            }
+        }
+    }
+    t.trim().to_string()
 }
 
 /// Extract avatar src from a profile page HTML.
@@ -1146,6 +1232,24 @@ pub async fn rutracker_login_via_webview(
 }
 
 /// Search Rutracker music sections by query string.
+/// Prefer the mirror used at login (cookies are scoped to that host); fall
+/// back to the mirror the UI passes only when no login mirror is saved. Used
+/// by every authenticated command so search / cover / details all hit the
+/// host the cookie jar knows about.
+pub(crate) fn auth_base_for_dev(state: &RutrackerState, from_ui: &str) -> String {
+    auth_base(state, from_ui)
+}
+
+fn auth_base(state: &RutrackerState, from_ui: &str) -> String {
+    let from_ui_norm = from_ui.trim().trim_end_matches('/').to_string();
+    let meta = load_meta(&state.meta_path);
+    meta.login_mirror
+        .as_ref()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(from_ui_norm)
+}
+
 /// Requires an active authenticated session.
 #[tauri::command]
 pub async fn rutracker_search(
@@ -1159,7 +1263,7 @@ pub async fn rutracker_search(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     search::search_music(&client, &base, &query).await
 }
@@ -1195,7 +1299,7 @@ pub async fn rutracker_get_cover(
         return Ok(Some(cached));
     }
 
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     let result = topic::get_cover_data_url(&client, &base, &topic_id).await?;
 
@@ -1220,7 +1324,7 @@ pub async fn rutracker_get_torrent_details(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     let details = topic::get_torrent_details(&client, &base, &topic_id).await?;
     // Persist cover to disk so grid loads are instant on next visit.
@@ -1243,7 +1347,7 @@ pub async fn rutracker_topic_has_playable_audio(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     topic::topic_has_playable_audio(&client, &base, &topic_id).await
 }
@@ -1261,11 +1365,337 @@ pub async fn rutracker_download_torrent_file_b64(
             return Err("Необходимо войти в Rutracker".into());
         }
     }
-    let base = mirror.trim_end_matches('/').to_string();
+    let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
     let raw = topic::download_torrent_file_bytes(&client, &base, &topic_id).await?;
     Ok(base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         &raw,
     ))
+}
+
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+
+fn page_looks_logged_in(html: &str) -> bool {
+    let has_login_form = html.contains(r#"name="login_username""#)
+        || html.contains(r#"name='login_username'"#);
+    let has_guest_link = html.contains("login.php?redirect=");
+    let has_cf_challenge = html.contains("cf-browser-verification")
+        || html.contains("challenge-platform")
+        || html.contains("just a moment");
+    if has_login_form || has_guest_link || has_cf_challenge {
+        return false;
+    }
+
+    let logged_in_markers = [
+        "logout.php",
+        "login.php?logout",
+        "?logout=1",
+        "&logout=1",
+        "mode=logout",
+        "profile.php?mode=editprofile",
+        "privmsg.php?folder=inbox",
+        "pm.php?folder=inbox",
+        "ucp.php?mode=logout",
+    ];
+    logged_in_markers.iter().any(|m| html.contains(m))
+}
+
+/// Re-fetch and persist the logged-in user's avatar without requiring a full
+/// re-login. Returns the new data URL, or `None` if not logged in or the
+/// request fails (caller should keep the previously stored avatar).
+#[tauri::command]
+pub async fn rutracker_refresh_avatar(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+) -> Result<Option<String>, String> {
+    {
+        let inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+        if !inner.logged_in {
+            return Ok(None);
+        }
+    }
+
+    let client = state.http_client()?;
+    let base = auth_base(&state, &mirror);
+
+    let resp = match client
+        .get(format!("{}/forum/index.php", base))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
+    let bytes = resp.bytes().await.unwrap_or_default();
+    let (html, _, _) = WINDOWS_1251.decode(&bytes);
+    let html = html.into_owned();
+
+    let avatar_data_url = fetch_avatar(&client, &html, &base).await;
+
+    if let Some(ref url) = avatar_data_url {
+        let mut meta = load_meta(&state.meta_path);
+        meta.avatar_data_url = Some(url.clone());
+        save_meta(&state.meta_path, &meta);
+        if let Ok(mut inner) = state.inner.lock() {
+            inner.avatar_url = Some(url.clone());
+        }
+    }
+
+    Ok(avatar_data_url)
+}
+
+// ── Connectivity probe ────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct ConnectivityResult {
+    pub reachable: bool,
+    pub status: Option<u16>,
+    pub using_proxy: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn rutracker_check_connectivity(
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+) -> Result<ConnectivityResult, String> {
+    let base = mirror.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Ok(ConnectivityResult {
+            reachable: false,
+            status: None,
+            using_proxy: load_http_proxy_url(&state.proxy_path),
+            error: Some("Пустой URL зеркала".into()),
+        });
+    }
+    let url = format!("{}/forum/index.php", base);
+    let client = state.http_client()?;
+    let using_proxy = load_http_proxy_url(&state.proxy_path);
+
+    match client.get(&url).timeout(Duration::from_secs(10)).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let code = status.as_u16();
+            let ok = status.is_success() || status.is_redirection();
+            Ok(ConnectivityResult {
+                reachable: ok,
+                status: Some(code),
+                using_proxy,
+                error: if ok { None } else { Some(format!("HTTP {}", code)) },
+            })
+        }
+        Err(e) => Ok(ConnectivityResult {
+            reachable: false,
+            status: None,
+            using_proxy,
+            error: Some(format!("{}", e)),
+        }),
+    }
+}
+
+// ── WebView login (для CAPTCHA / Cloudflare) ──────────────────────────────────
+
+const LOGIN_WEBVIEW_LABEL: &str = "rt-login-webview";
+
+fn ingest_webview_cookies(
+    cookies: &[cookie::Cookie<'static>],
+    request_url: &Url,
+    store: &Arc<CookieStoreMutex>,
+) -> usize {
+    let Ok(mut guard) = store.lock() else {
+        return 0;
+    };
+    let mut count = 0usize;
+    for c in cookies {
+        if guard.insert_raw(c, request_url).is_ok() {
+            count += 1;
+            continue;
+        }
+        let header = c.to_string();
+        if guard.parse(&header, request_url).is_ok() {
+            count += 1;
+        }
+    }
+    count
+}
+
+async fn try_promote_webview_session(
+    window: &tauri::WebviewWindow,
+    state: &tauri::State<'_, RutrackerState>,
+    base: &str,
+    login_url: &Url,
+) -> Result<Option<String>, String> {
+    let mut all_cookies: Vec<cookie::Cookie<'static>> = window.cookies().unwrap_or_default();
+    let for_url = window
+        .cookies_for_url(login_url.clone())
+        .unwrap_or_default();
+    for c in for_url {
+        let dup = all_cookies
+            .iter()
+            .any(|e| e.name() == c.name() && e.domain() == c.domain() && e.path() == c.path());
+        if !dup {
+            all_cookies.push(c);
+        }
+    }
+
+    if all_cookies.is_empty() {
+        return Ok(None);
+    }
+
+    let _ = ingest_webview_cookies(&all_cookies, login_url, &state.cookie_store);
+
+    let probe_url = format!("{}/forum/index.php", base);
+    let client = state.http_client()?;
+    let resp = client
+        .get(&probe_url)
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+
+    let bytes = resp.bytes().await.unwrap_or_default();
+    let (decoded, _, _) = WINDOWS_1251.decode(&bytes);
+    let html = decoded.into_owned();
+
+    if page_looks_logged_in(&html) {
+        Ok(Some(html))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn finalize_webview_login(
+    state: &tauri::State<'_, RutrackerState>,
+    base: &str,
+    html: &str,
+) -> Result<LoginResult, String> {
+    let client = state.http_client()?;
+    let username = extract_username_from_forum_page(html);
+    let avatar_data_url = fetch_avatar(&client, html, base).await;
+
+    state.persist(&SessionMeta {
+        username: username.clone(),
+        avatar_data_url: avatar_data_url.clone(),
+        login_mirror: Some(base.to_string()),
+    });
+
+    {
+        let mut inner = state
+            .inner
+            .lock()
+            .map_err(|_| "lock error".to_string())?;
+        inner.logged_in = true;
+        inner.username = username.clone();
+        inner.avatar_url = avatar_data_url.clone();
+    }
+
+    Ok(LoginResult {
+        success: true,
+        error: None,
+        username,
+        avatar_url: avatar_data_url,
+    })
+}
+
+/// Open an embedded WebView at the rutracker login page and wait for a session.
+///
+/// Polls every 1.5 s by copying webview cookies into the reqwest jar and
+/// probing `/forum/index.php`. Returns once login is detected, the window is
+/// closed, or the 10-minute timeout elapses.
+#[tauri::command]
+pub async fn rutracker_login_via_webview(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, RutrackerState>,
+    mirror: String,
+) -> Result<LoginResult, String> {
+    let base = mirror.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Err("Пустое зеркало".into());
+    }
+    let login_url_str = format!("{}/forum/login.php", base);
+    let login_url: Url = login_url_str
+        .parse()
+        .map_err(|e| format!("Некорректный URL зеркала: {}", e))?;
+
+    // Reuse an existing login window instead of destroying and recreating it.
+    // Recreating races with Tauri's async label cleanup and causes "already exists"
+    // errors when the IPC protocol fallback triggers a second command invocation.
+    // Note: proxy_url() on WebviewWindowBuilder panics in tauri-runtime-wry on
+    // Windows (RecvError in the wry event loop channel), so proxy is not forwarded
+    // to the webview. Users who need proxy for the browser login should configure
+    // a Windows system proxy.
+    let window = if let Some(existing) = app.get_webview_window(LOGIN_WEBVIEW_LABEL) {
+        let _ = existing.set_focus();
+        existing
+    } else {
+        {
+            let mut b = WebviewWindowBuilder::new(
+                &app,
+                LOGIN_WEBVIEW_LABEL,
+                WebviewUrl::External(login_url.clone()),
+            )
+            .title("Rutracker — вход")
+            .inner_size(720.0, 860.0)
+            .min_inner_size(480.0, 600.0)
+            .resizable(true)
+            .focused(true)
+            .center();
+
+            // proxy_url() and additional_browser_args() applied to the shared
+            // WebView2 environment both panic in tauri-runtime-wry on Windows.
+            // Workaround: give the login window its own data directory so WebView2
+            // creates an isolated environment where browser args are applied at
+            // init time, before any shared state is locked.
+            if let Some(proxy) = load_http_proxy_url(&state.proxy_path) {
+                if let Ok(data_dir) = app.path().app_data_dir().map(|d| d.join("rt_login_webview")) {
+                    b = b
+                        .data_directory(data_dir)
+                        .additional_browser_args(&format!("--proxy-server={}", proxy));
+                }
+            }
+
+            b.build()
+                .map_err(|e| format!("Не удалось открыть окно входа: {}", e))?
+        }
+    };
+
+    let poll_interval = Duration::from_millis(1500);
+    let timeout = Duration::from_secs(600);
+    let start = std::time::Instant::now();
+
+    loop {
+        if app.get_webview_window(LOGIN_WEBVIEW_LABEL).is_none() {
+            if let Ok(Some(html)) =
+                try_promote_webview_session(&window, &state, &base, &login_url).await
+            {
+                return finalize_webview_login(&state, &base, &html).await;
+            }
+            return Ok(LoginResult {
+                success: false,
+                error: Some("Окно входа закрыто — вход отменён".into()),
+                username: None,
+                avatar_url: None,
+            });
+        }
+        if start.elapsed() > timeout {
+            let _ = window.destroy();
+            return Ok(LoginResult {
+                success: false,
+                error: Some("Истекло время ожидания входа".into()),
+                username: None,
+                avatar_url: None,
+            });
+        }
+
+        if let Ok(Some(html)) =
+            try_promote_webview_session(&window, &state, &base, &login_url).await
+        {
+            let _ = window.destroy();
+            return finalize_webview_login(&state, &base, &html).await;
+        }
+
+        tokio::time::sleep(poll_interval).await;
+    }
 }

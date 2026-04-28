@@ -1,0 +1,111 @@
+  <!-- Компактная кнопка при сворачивании -->
+  <Teleport to="body">
+    <Transition name="dl-dock">
+      <div v-if="showDock" class="dl-dock-wrap">
+        <button
+          type="button"
+          class="dl-dock"
+          title="Развернуть окно скачивания"
+          @click="expand"
+        >
+          <span v-if="!isCancelled" class="dl-dock-spinner" aria-hidden="true" />
+          <span class="dl-dock-text">Скачивание</span>
+          <span v-if="progress?.batchTotal > 1" class="dl-dock-batch">
+            {{ progress.batchIndex }}/{{ progress.batchTotal }}
+          </span>
+          <span class="dl-dock-pct">{{ Math.round(overallPct) }}%</span>
+        </button>
+        <button
+          v-if="canStop"
+          type="button"
+          class="dl-dock-stop"
+          title="Остановить скачивание"
+          aria-label="Остановить"
+          @click.stop="requestStop"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="5" y="5" width="14" height="14" rx="1" />
+          </svg>
+        </button>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- Полноэкранный оверлей -->
+  <Teleport to="body">
+    <Transition name="dl-overlay">
+      <div v-if="showModal" class="dl-overlay" role="dialog" aria-modal="true" aria-live="polite">
+        <div class="dl-panel">
+          <div class="dl-panel-head">
+            <span v-if="!isCancelled" class="dl-spinner" aria-hidden="true" />
+            <span class="dl-phase">{{ phaseLabel }}</span>
+            <div class="dl-head-actions">
+              <button
+                v-if="canStop"
+                type="button"
+                class="dl-stop"
+                title="Остановить скачивание"
+                @click="requestStop"
+              >
+                Остановить
+              </button>
+              <button
+                type="button"
+                class="dl-minimize"
+                aria-label="Свернуть"
+                @click="minimize"
+              >
+                Свернуть
+              </button>
+            </div>
+          </div>
+
+          <p v-if="progress?.message" class="dl-msg">{{ progress.message }}</p>
+
+          <div
+            v-if="progress?.phase === 'downloading' || progress?.phase === 'preparing'"
+            class="dl-bar-wrap"
+            :class="{ 'dl-bar-wrap--pulse': barIndeterminate }"
+          >
+            <div
+              class="dl-bar"
+              :class="{ 'dl-bar--indet': barIndeterminate }"
+              :style="barIndeterminate ? {} : { width: `${barPct}%` }"
+            />
+          </div>
+
+          <div v-if="progress?.phase === 'downloading' && progress.totalBytes > 0" class="dl-bytes">
+            {{ fmtBytes(progress.progressBytes) }} / {{ fmtBytes(progress.totalBytes) }}
+            <span class="dl-pct">· {{ Math.round(progress.pct ?? 0) }}%</span>
+            <template v-if="progress.batchTotal > 1">
+              <span class="dl-pct"> · трек {{ progress.batchIndex }}/{{ progress.batchTotal }}</span>
+            </template>
+          </div>
+
+          <div v-if="progress?.phase === 'copying'" class="dl-bar-wrap dl-bar-wrap--copy">
+            <div class="dl-bar dl-bar--copy" :style="{ width: `${barPct}%` }" />
+          </div>
+
+          <p v-if="progress?.phase === 'copying' && progress.copyLabel" class="dl-copy-hint">
+            {{ progress.copyIndex }} / {{ progress.copyTotal }} — {{ progress.copyLabel }}
+          </p>
+
+          <div v-if="progress?.queueLabels?.length" class="dl-queue">
+            <div class="dl-queue-title">Очередь</div>
+            <ul class="dl-queue-list">
+              <li
+                v-for="(label, i) in progress.queueLabels"
+                :key="i"
+                :class="['dl-queue-item', { 'dl-queue-item--done': progress.batchIndex != null && i < (progress.batchIndex - 1) && progress.phase !== 'preparing' }]"
+              >
+                <span class="dl-queue-idx">{{ i + 1 }}.</span>
+                <span class="dl-queue-name" :title="label">{{ label }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <p class="dl-hint">Треки качаются по одному: сначала загрузка, затем сохранение. BitTorrent зависит от сидов.</p>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>

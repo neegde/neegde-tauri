@@ -1,0 +1,57 @@
+  <div class="eq-panel">
+    <p class="eq-intro">
+      Настройка тембра для воспроизведения. Работает сразу для текущего трека;
+      настройки сохраняются на этом устройстве.
+    </p>
+
+    <div class="eq-toolbar">
+      <label class="eq-preset-label" for="eq-preset-select">Пресет</label>
+      <div class="eq-preset-controls">
+        <select
+          id="eq-preset-select"
+          class="login-input eq-preset-select"
+          :value="presetSelectValue"
+          aria-label="Пресет эквалайзера"
+          @change="onPresetSelect($event)"
+        >
+          <option v-for="p in EQ_PRESETS" :key="p.id" :value="p.id" :title="p.hint">
+            {{ p.name }}
+          </option>
+          <option value="__custom__">Свой профиль</option>
+        </select>
+        <button
+          type="button"
+          class="eq-reset"
+          @click="resetEqFlat"
+        >
+          Сбросить
+        </button>
+      </div>
+    </div>
+
+    <div class="eq-sliders" role="group" aria-label="Полосы эквалайзера">
+      <div
+        v-for="(b, i) in EQ_BANDS"
+        :key="b.freq"
+        class="eq-col"
+      >
+        <span class="eq-db" :class="{ 'eq-db--pos': eqBandsDb[i] > 0, 'eq-db--neg': eqBandsDb[i] < 0 }">
+          {{ fmtDb(eqBandsDb[i]) }}
+        </span>
+        <div class="eq-slider-wrap">
+          <input
+            :id="`eq-band-${i}`"
+            type="range"
+            class="eq-slider"
+            :min="EQ_MIN_DB"
+            :max="EQ_MAX_DB"
+            step="0.5"
+            :value="eqBandsDb[i]"
+            :aria-label="`Усиление ${b.label} Гц`"
+            @input="onSliderInput(i, $event)"
+          />
+        </div>
+        <label class="eq-hz" :for="`eq-band-${i}`">{{ b.label }}</label>
+      </div>
+    </div>
+  </div>
