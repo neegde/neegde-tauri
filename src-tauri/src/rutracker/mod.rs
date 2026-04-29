@@ -962,47 +962,6 @@ fn page_looks_logged_in(html: &str) -> bool {
     logged_in_markers.iter().any(|m| html.contains(m))
 }
 
-/// Best-effort username extraction from an authenticated forum page.
-///
-/// Arguments:
-///     html: Decoded HTML of any logged-in rutracker page.
-///
-/// Returns:
-///     Username if a `profile.php?mode=viewprofile&u=...` anchor with
-///     non-empty text content was found.
-fn extract_username_from_forum_page(html: &str) -> Option<String> {
-    for marker in &["viewprofile&amp;u=", "viewprofile&u="] {
-        let mut cursor = 0usize;
-        while let Some(rel) = html[cursor..].find(marker) {
-            let pos = cursor + rel;
-            let Some(gt) = html[pos..].find('>') else {
-                break;
-            };
-            let text_start = pos + gt + 1;
-            let Some(close) = html[text_start..].find("</a>") else {
-                break;
-            };
-            let text_end = text_start + close;
-            let raw = html[text_start..text_end].trim();
-            cursor = text_end;
-            if raw.is_empty() || raw.starts_with('<') {
-                continue;
-            }
-            // Decode the two entities that phpBB actually emits in nicknames.
-            let decoded = raw
-                .replace("&amp;", "&")
-                .replace("&quot;", "\"")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&#39;", "'");
-            if !decoded.is_empty() {
-                return Some(decoded);
-            }
-        }
-    }
-    None
-}
-
 /// Copy cookies from the login WebView into the shared reqwest cookie store.
 ///
 /// Uses two insertion paths because tauri/cookie versions do not always agree
@@ -1172,24 +1131,47 @@ pub async fn rutracker_login_via_webview(
         .parse()
         .map_err(|e| format!("Некорректный URL зеркала: {}", e))?;
 
-    if let Some(old) = app.get_webview_window(LOGIN_WEBVIEW_LABEL) {
-        let _ = old.destroy();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    // Reuse an existing login window instead of destroying and recreating it.
+    // Recreating races with Tauri's async label cleanup and causes "already exists"
+    // errors when the IPC protocol fallback triggers a second command invocation.
+    // Note: proxy_url() on WebviewWindowBuilder panics in tauri-runtime-wry on
+    // Windows (RecvError in the wry event loop channel), so proxy is not forwarded
+    // to the webview. Users who need proxy for the browser login should configure
+    // a Windows system proxy.
+    let window = if let Some(existing) = app.get_webview_window(LOGIN_WEBVIEW_LABEL) {
+        let _ = existing.set_focus();
+        existing
+    } else {
+        {
+            let mut b = WebviewWindowBuilder::new(
+                &app,
+                LOGIN_WEBVIEW_LABEL,
+                WebviewUrl::External(login_url.clone()),
+            )
+            .title("Rutracker — вход")
+            .inner_size(720.0, 860.0)
+            .min_inner_size(480.0, 600.0)
+            .resizable(true)
+            .focused(true)
+            .center();
 
-    let window = WebviewWindowBuilder::new(
-        &app,
-        LOGIN_WEBVIEW_LABEL,
-        WebviewUrl::External(login_url.clone()),
-    )
-    .title("Rutracker — вход")
-    .inner_size(720.0, 860.0)
-    .min_inner_size(480.0, 600.0)
-    .resizable(true)
-    .focused(true)
-    .center()
-    .build()
-    .map_err(|e| format!("Не удалось открыть окно входа: {}", e))?;
+            // proxy_url() and additional_browser_args() applied to the shared
+            // WebView2 environment both panic in tauri-runtime-wry on Windows.
+            // Workaround: give the login window its own data directory so WebView2
+            // creates an isolated environment where browser args are applied at
+            // init time, before any shared state is locked.
+            if let Some(proxy) = load_http_proxy_url(&state.proxy_path) {
+                if let Ok(data_dir) = app.path().app_data_dir().map(|d| d.join("rt_login_webview")) {
+                    b = b
+                        .data_directory(data_dir)
+                        .additional_browser_args(&format!("--proxy-server={}", proxy));
+                }
+            }
+
+            b.build()
+                .map_err(|e| format!("Не удалось открыть окно входа: {}", e))?
+        }
+    };
 
     let poll_interval = Duration::from_millis(1500);
     let timeout = Duration::from_secs(600);
@@ -1374,33 +1356,6 @@ pub async fn rutracker_download_torrent_file_b64(
     ))
 }
 
-// ── Auth helpers ──────────────────────────────────────────────────────────────
-
-fn page_looks_logged_in(html: &str) -> bool {
-    let has_login_form = html.contains(r#"name="login_username""#)
-        || html.contains(r#"name='login_username'"#);
-    let has_guest_link = html.contains("login.php?redirect=");
-    let has_cf_challenge = html.contains("cf-browser-verification")
-        || html.contains("challenge-platform")
-        || html.contains("just a moment");
-    if has_login_form || has_guest_link || has_cf_challenge {
-        return false;
-    }
-
-    let logged_in_markers = [
-        "logout.php",
-        "login.php?logout",
-        "?logout=1",
-        "&logout=1",
-        "mode=logout",
-        "profile.php?mode=editprofile",
-        "privmsg.php?folder=inbox",
-        "pm.php?folder=inbox",
-        "ucp.php?mode=logout",
-    ];
-    logged_in_markers.iter().any(|m| html.contains(m))
-}
-
 /// Re-fetch and persist the logged-in user's avatar without requiring a full
 /// re-login. Returns the new data URL, or `None` if not logged in or the
 /// request fails (caller should keep the previously stored avatar).
@@ -1445,257 +1400,4 @@ pub async fn rutracker_refresh_avatar(
     }
 
     Ok(avatar_data_url)
-}
-
-// ── Connectivity probe ────────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-pub struct ConnectivityResult {
-    pub reachable: bool,
-    pub status: Option<u16>,
-    pub using_proxy: Option<String>,
-    pub error: Option<String>,
-}
-
-#[tauri::command]
-pub async fn rutracker_check_connectivity(
-    state: tauri::State<'_, RutrackerState>,
-    mirror: String,
-) -> Result<ConnectivityResult, String> {
-    let base = mirror.trim().trim_end_matches('/').to_string();
-    if base.is_empty() {
-        return Ok(ConnectivityResult {
-            reachable: false,
-            status: None,
-            using_proxy: load_http_proxy_url(&state.proxy_path),
-            error: Some("Пустой URL зеркала".into()),
-        });
-    }
-    let url = format!("{}/forum/index.php", base);
-    let client = state.http_client()?;
-    let using_proxy = load_http_proxy_url(&state.proxy_path);
-
-    match client.get(&url).timeout(Duration::from_secs(10)).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            let code = status.as_u16();
-            let ok = status.is_success() || status.is_redirection();
-            Ok(ConnectivityResult {
-                reachable: ok,
-                status: Some(code),
-                using_proxy,
-                error: if ok { None } else { Some(format!("HTTP {}", code)) },
-            })
-        }
-        Err(e) => Ok(ConnectivityResult {
-            reachable: false,
-            status: None,
-            using_proxy,
-            error: Some(format!("{}", e)),
-        }),
-    }
-}
-
-// ── WebView login (для CAPTCHA / Cloudflare) ──────────────────────────────────
-
-const LOGIN_WEBVIEW_LABEL: &str = "rt-login-webview";
-
-fn ingest_webview_cookies(
-    cookies: &[cookie::Cookie<'static>],
-    request_url: &Url,
-    store: &Arc<CookieStoreMutex>,
-) -> usize {
-    let Ok(mut guard) = store.lock() else {
-        return 0;
-    };
-    let mut count = 0usize;
-    for c in cookies {
-        if guard.insert_raw(c, request_url).is_ok() {
-            count += 1;
-            continue;
-        }
-        let header = c.to_string();
-        if guard.parse(&header, request_url).is_ok() {
-            count += 1;
-        }
-    }
-    count
-}
-
-async fn try_promote_webview_session(
-    window: &tauri::WebviewWindow,
-    state: &tauri::State<'_, RutrackerState>,
-    base: &str,
-    login_url: &Url,
-) -> Result<Option<String>, String> {
-    let mut all_cookies: Vec<cookie::Cookie<'static>> = window.cookies().unwrap_or_default();
-    let for_url = window
-        .cookies_for_url(login_url.clone())
-        .unwrap_or_default();
-    for c in for_url {
-        let dup = all_cookies
-            .iter()
-            .any(|e| e.name() == c.name() && e.domain() == c.domain() && e.path() == c.path());
-        if !dup {
-            all_cookies.push(c);
-        }
-    }
-
-    if all_cookies.is_empty() {
-        return Ok(None);
-    }
-
-    let _ = ingest_webview_cookies(&all_cookies, login_url, &state.cookie_store);
-
-    let probe_url = format!("{}/forum/index.php", base);
-    let client = state.http_client()?;
-    let resp = client
-        .get(&probe_url)
-        .send()
-        .await
-        .map_err(|e| format!("{}", e))?;
-
-    let bytes = resp.bytes().await.unwrap_or_default();
-    let (decoded, _, _) = WINDOWS_1251.decode(&bytes);
-    let html = decoded.into_owned();
-
-    if page_looks_logged_in(&html) {
-        Ok(Some(html))
-    } else {
-        Ok(None)
-    }
-}
-
-async fn finalize_webview_login(
-    state: &tauri::State<'_, RutrackerState>,
-    base: &str,
-    html: &str,
-) -> Result<LoginResult, String> {
-    let client = state.http_client()?;
-    let username = extract_username_from_forum_page(html);
-    let avatar_data_url = fetch_avatar(&client, html, base).await;
-
-    state.persist(&SessionMeta {
-        username: username.clone(),
-        avatar_data_url: avatar_data_url.clone(),
-        login_mirror: Some(base.to_string()),
-    });
-
-    {
-        let mut inner = state
-            .inner
-            .lock()
-            .map_err(|_| "lock error".to_string())?;
-        inner.logged_in = true;
-        inner.username = username.clone();
-        inner.avatar_url = avatar_data_url.clone();
-    }
-
-    Ok(LoginResult {
-        success: true,
-        error: None,
-        username,
-        avatar_url: avatar_data_url,
-    })
-}
-
-/// Open an embedded WebView at the rutracker login page and wait for a session.
-///
-/// Polls every 1.5 s by copying webview cookies into the reqwest jar and
-/// probing `/forum/index.php`. Returns once login is detected, the window is
-/// closed, or the 10-minute timeout elapses.
-#[tauri::command]
-pub async fn rutracker_login_via_webview(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, RutrackerState>,
-    mirror: String,
-) -> Result<LoginResult, String> {
-    let base = mirror.trim().trim_end_matches('/').to_string();
-    if base.is_empty() {
-        return Err("Пустое зеркало".into());
-    }
-    let login_url_str = format!("{}/forum/login.php", base);
-    let login_url: Url = login_url_str
-        .parse()
-        .map_err(|e| format!("Некорректный URL зеркала: {}", e))?;
-
-    // Reuse an existing login window instead of destroying and recreating it.
-    // Recreating races with Tauri's async label cleanup and causes "already exists"
-    // errors when the IPC protocol fallback triggers a second command invocation.
-    // Note: proxy_url() on WebviewWindowBuilder panics in tauri-runtime-wry on
-    // Windows (RecvError in the wry event loop channel), so proxy is not forwarded
-    // to the webview. Users who need proxy for the browser login should configure
-    // a Windows system proxy.
-    let window = if let Some(existing) = app.get_webview_window(LOGIN_WEBVIEW_LABEL) {
-        let _ = existing.set_focus();
-        existing
-    } else {
-        {
-            let mut b = WebviewWindowBuilder::new(
-                &app,
-                LOGIN_WEBVIEW_LABEL,
-                WebviewUrl::External(login_url.clone()),
-            )
-            .title("Rutracker — вход")
-            .inner_size(720.0, 860.0)
-            .min_inner_size(480.0, 600.0)
-            .resizable(true)
-            .focused(true)
-            .center();
-
-            // proxy_url() and additional_browser_args() applied to the shared
-            // WebView2 environment both panic in tauri-runtime-wry on Windows.
-            // Workaround: give the login window its own data directory so WebView2
-            // creates an isolated environment where browser args are applied at
-            // init time, before any shared state is locked.
-            if let Some(proxy) = load_http_proxy_url(&state.proxy_path) {
-                if let Ok(data_dir) = app.path().app_data_dir().map(|d| d.join("rt_login_webview")) {
-                    b = b
-                        .data_directory(data_dir)
-                        .additional_browser_args(&format!("--proxy-server={}", proxy));
-                }
-            }
-
-            b.build()
-                .map_err(|e| format!("Не удалось открыть окно входа: {}", e))?
-        }
-    };
-
-    let poll_interval = Duration::from_millis(1500);
-    let timeout = Duration::from_secs(600);
-    let start = std::time::Instant::now();
-
-    loop {
-        if app.get_webview_window(LOGIN_WEBVIEW_LABEL).is_none() {
-            if let Ok(Some(html)) =
-                try_promote_webview_session(&window, &state, &base, &login_url).await
-            {
-                return finalize_webview_login(&state, &base, &html).await;
-            }
-            return Ok(LoginResult {
-                success: false,
-                error: Some("Окно входа закрыто — вход отменён".into()),
-                username: None,
-                avatar_url: None,
-            });
-        }
-        if start.elapsed() > timeout {
-            let _ = window.destroy();
-            return Ok(LoginResult {
-                success: false,
-                error: Some("Истекло время ожидания входа".into()),
-                username: None,
-                avatar_url: None,
-            });
-        }
-
-        if let Ok(Some(html)) =
-            try_promote_webview_session(&window, &state, &base, &login_url).await
-        {
-            let _ = window.destroy();
-            return finalize_webview_login(&state, &base, &html).await;
-        }
-
-        tokio::time::sleep(poll_interval).await;
-    }
 }
