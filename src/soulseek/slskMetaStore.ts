@@ -27,3 +27,13 @@ export function clearCoverTimer(): void {
   if (coverTimer != null) clearTimeout(coverTimer);
   coverTimer = null;
 }
+
+/**
+ * Track ids for which Deezer canonical-name enrichment has already been
+ * dispatched in the current query. Lives at module scope (next to slskMeta)
+ * so a Results.vue remount preserves it — re-mounting the search panel
+ * mid-query shouldn't re-iterate the per-track resolve/cache path.
+ *
+ * Cleared by the searchEpoch / empty-rows watchers in `Results.vue`.
+ */
+export const enrichedIds = new Set<string>();

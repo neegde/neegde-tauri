@@ -64,7 +64,55 @@ export interface TrackNameInput {
   sources: readonly TrackSource[];
 }
 
+/**
+ * Memoization cache. The resolver is deterministic in its public input shape
+ * and is hot during search: it runs once per row in `groupSlskRowsToEntities`
+ * (via `trackDedupKey`), once more in `buildTrack` (via `resolveNames`), and a
+ * third time in `applyFilenameMetadata` for the same rows. With ~500 rows
+ * per popular SoulSeek search and many incremental batches, the unmemoized
+ * cost compounds into tens of thousands of regex-heavy passes per query and
+ * stalls the UI thread.
+ *
+ * Keyed by the fields the resolver actually reads. Bounded with FIFO eviction
+ * so a long session doesn't grow the map indefinitely.
+ */
+const _cache = new Map<string, ResolvedNames>();
+const _CACHE_LIMIT = 5000;
+const _CACHE_EVICT = 1024;
+
+/**
+ * Build the memoization key for a resolver input. Captures every field the
+ * resolver branches on — kind, filename, label artist, folder album, and
+ * (SoulSeek only) the full filepath used for parent-folder walks.
+ */
+function _cacheKey(input: TrackNameInput): string {
+  const src = input.sources?.[0];
+  const kind = src?.kind ?? "?";
+  const slskFp =
+    kind === "soulseek"
+      ? (src as SoulseekTrackSource | undefined)?.refs?.slskFilepath ?? ""
+      : "";
+  return `${kind}\t${input.fileName}\t${input.artist ?? ""}\t${input.albumTitle ?? ""}\t${slskFp}`;
+}
+
+/**
+ * Resolve display names from a track's structural input. Memoized per input
+ * fingerprint — see `_cache` above for rationale.
+ *
+ * Args:
+ *   input: Minimal track shape (fileName + sources). Provider-stamped
+ *     `artist` / `albumTitle` are respected and feed the RT branch.
+ *
+ * Returns:
+ *   ResolvedNames with `{artist, title, album, confidence, source}`. The
+ *   returned object is shared across callers via the cache; treat it as
+ *   read-only.
+ */
 export function resolveTrackNames(input: TrackNameInput): ResolvedNames {
+  const key = _cacheKey(input);
+  const cached = _cache.get(key);
+  if (cached) return cached;
+
   const filename = input.fileName ?? "";
   const baseNoPrefix = trackDisplayBasename(filename);
   const basenameSplit = parseArtistTitleFromTrackFilename(filename);
@@ -74,7 +122,22 @@ export function resolveTrackNames(input: TrackNameInput): ResolvedNames {
     ? resolveRT(input, basenameSplit, baseNoPrefix)
     : resolveSlsk(input, basenameSplit, baseNoPrefix);
 
-  return cleanTitleSubstrings(base);
+  const result = cleanTitleSubstrings(base);
+
+  if (_cache.size >= _CACHE_LIMIT) {
+    let i = 0;
+    for (const k of _cache.keys()) {
+      _cache.delete(k);
+      if (++i >= _CACHE_EVICT) break;
+    }
+  }
+  _cache.set(key, result);
+  return result;
+}
+
+/** Test-only escape hatch — drops the memoization cache. */
+export function _clearTrackNameResolverCache(): void {
+  _cache.clear();
 }
 
 /** Post-process the resolved title: drop an artist-name occurrence baked into

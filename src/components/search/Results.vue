@@ -8,6 +8,7 @@ import {
   slskMeta,
   coverGeneration, bumpCoverGeneration,
   coverTimer, setCoverTimer, clearCoverTimer,
+  enrichedIds,
 } from "../../soulseek/slskMetaStore.js";
 import { resolveTrackNames } from "../../track/nameResolver.js";
 import { enrichTrackNames } from "../../track/deezerCanonical.js";
@@ -275,9 +276,16 @@ function slskBasenameMetaKey(name) {
 }
 
 function applyFilenameMetadata(tracks) {
-  const incomingIds = new Set(tracks.map((t) => t.id));
-  for (const id of [...slskMeta.keys()]) {
-    if (!incomingIds.has(id)) slskMeta.delete(id);
+  // Streaming searches grow the row set monotonically — `slskMeta.size <=
+  // tracks.length` holds after each settle, so the stale-key sweep would
+  // be pure overhead for the common popular-query case. Run it only when
+  // there ARE potential orphans (size dropped, or stale meta carried over
+  // from a previous query without an epoch bump).
+  if (slskMeta.size > tracks.length) {
+    const incomingIds = new Set(tracks.map((t) => t.id));
+    for (const id of [...slskMeta.keys()]) {
+      if (!incomingIds.has(id)) slskMeta.delete(id);
+    }
   }
   for (const track of tracks) {
     if (slskMeta.has(track.id)) continue;
@@ -298,9 +306,14 @@ function applyFilenameMetadata(tracks) {
       slskMeta.set(track.id, { artist: donor.artist, title: donor.title });
     }
   }
-  // Stage 2 — Deezer canonical names for medium/low confidence tracks.
-  // Fires async; result mutates track.data + bumps entities so rows redraw.
-  for (const track of tracks) enrichTrackNames(track);
+  // Stage 2 — Deezer canonical names. Dispatch once per id per query so a
+  // 30-batch streaming search doesn't re-enter the per-track resolve/cache
+  // path 30× for the same track.
+  for (const track of tracks) {
+    if (enrichedIds.has(track.id)) continue;
+    enrichedIds.add(track.id);
+    enrichTrackNames(track);
+  }
 }
 
 function scheduleCoverFetches() {
@@ -357,11 +370,22 @@ function runCoverFetches() {
   }
 }
 
+// Once-per-query reset: drop stale meta from the previous search so the
+// donor index doesn't pull names from unrelated rows. Cheaper than running
+// a cleanup loop on every streaming batch.
+watch(() => props.searchEpoch, () => {
+  slskMeta.clear();
+  enrichedIds.clear();
+  bumpCoverGeneration();
+  clearCoverTimer();
+});
+
 watch(
   trackEntities,
   (rows) => {
     if (!rows?.length) {
       slskMeta.clear();
+      enrichedIds.clear();
       bumpCoverGeneration();
       clearCoverTimer();
       return;

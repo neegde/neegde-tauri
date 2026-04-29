@@ -284,9 +284,26 @@ function groupSlskRowsToEntities(rawRows: SlskAudioRow[]): PipelineEntity[] {
 
 interface SlskBatchEvent { payload: { requestId: number; rows: SlskAudioRow[] } | null }
 
+/** Yield to the next animation frame; falls back to setTimeout when rAF
+ *  is unavailable (e.g. some test environments). */
+function _nextFrame(): Promise<void> {
+  return new Promise<void>((r) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => r());
+    } else {
+      setTimeout(() => r(), 0);
+    }
+  });
+}
+
 /**
  * SoulSeek search provider. Wraps `soulseek_search` + `soulseek-search-batch`
  * event stream. Incremental: yields a full Entity snapshot on each new batch.
+ *
+ * Performance: the listener only appends rows and marks `dirty` — the actual
+ * O(N) regrouping happens once per generator wake on the consumer side and
+ * is rAF-throttled, so a burst of peer responses (popular query) collapses
+ * into one regrouping pass per frame instead of one per peer event.
  */
 class SoulseekProvider extends SearchProvider {
   readonly kind = "soulseek" as const;
@@ -297,22 +314,22 @@ class SoulseekProvider extends SearchProvider {
     this.log(ctx, `search start: "${query}" (req=${ctx.requestId})`);
 
     const raw: SlskAudioRow[] = [];
-    const queue: PipelineEntity[][] = [];
+    let dirty = false;
     let pendingResolve: (() => void) | null = null;
     let finished = false;
     let finalError: unknown = null;
 
     const nudge = (): void => { const r = pendingResolve; pendingResolve = null; r?.(); };
+    const markDirty = (): void => {
+      if (ctx.signal.aborted) return;
+      dirty = true;
+      nudge();
+    };
     const finish = (err: unknown): void => {
       if (finished) return;
       finished = true;
       if (err) finalError = err;
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-      nudge();
-    };
-    const emitSnapshot = (): void => {
-      if (ctx.signal.aborted) return;
-      queue.push(groupSlskRowsToEntities(raw));
       nudge();
     };
 
@@ -335,7 +352,7 @@ class SoulseekProvider extends SearchProvider {
       if (!p || p.requestId !== ctx.requestId) return;
       if (ctx.signal.aborted) return;
       raw.push(...p.rows);
-      emitSnapshot();
+      markDirty();
       armIdleTimer();
     });
 
@@ -348,7 +365,7 @@ class SoulseekProvider extends SearchProvider {
         if (ctx.signal.aborted) return;
         raw.length = 0;
         raw.push(...finalRows);
-        emitSnapshot();
+        markDirty();
         this.log(ctx, `final rows: ${finalRows.length} (${Math.round(performance.now() - t0)}ms)`);
       })
       .catch((err: unknown) => { finalError = err; })
@@ -356,10 +373,15 @@ class SoulseekProvider extends SearchProvider {
 
     try {
       while (true) {
-        if (queue.length) {
-          const snap = queue[queue.length - 1]!;
-          queue.length = 0;
-          yield snap;
+        if (dirty) {
+          dirty = false;
+          yield groupSlskRowsToEntities(raw);
+          // rAF gate: peer responses to a popular query arrive in dense
+          // bursts. Awaiting a frame here lets multiple in-flight events
+          // coalesce into a single regroup on the next loop iteration,
+          // keeping the main thread responsive.
+          if (!finished && !ctx.signal.aborted) await _nextFrame();
+          continue;
         }
         if (finished) break;
         if (ctx.signal.aborted) break;
