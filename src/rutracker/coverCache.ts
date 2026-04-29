@@ -1,12 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ref, watch } from "vue";
 import { getMirror } from "./config.js";
 import { appDebugLog } from "../appDebugLog.js";
 import { makeCoverCache } from "../lib/coverCacheCore.js";
+import { rtLoggedIn } from "../stores/auth.js";
 
 /**
  * RuTracker cover cache — keyed by `${mirror}\n${topicId}` so a mirror switch
  * does not poison a different mirror's URLs.
  */
+
+/**
+ * Counter bumped when Rutracker auth transitions to logged-in.
+ *
+ * `CoverThumb` watches this so its `IntersectionObserver` can be re-attached
+ * after a failed pre-auth render — the observer disconnects on first
+ * intersection and would not otherwise retry once auth becomes available.
+ */
+export const rutrackerCoverFetchEpoch = ref(0);
+
+watch(rtLoggedIn, (next, prev) => {
+  if (next && !prev) rutrackerCoverFetchEpoch.value += 1;
+});
 
 function cacheKey(topicId: unknown): string {
   return `${getMirror()}\n${String(topicId)}`;

@@ -3,9 +3,13 @@ import { getMirror } from "./config.js";
 import {
   rememberRutrackerCover, getRutrackerCoverDataUrl,
   peekRutrackerCover, getCoverReactive, clearRutrackerCoverCache,
+  rutrackerCoverFetchEpoch,
 } from "./coverCache.js";
 
-export { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, clearRutrackerCoverCache };
+export {
+  getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, clearRutrackerCoverCache,
+  rutrackerCoverFetchEpoch,
+};
 
 export interface RutrackerSearchRow {
   id: string | number;
