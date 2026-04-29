@@ -29,8 +29,7 @@ function setupCtx() {
     error: ref<string | null>(null),
     forwardStack: ref<unknown[]>([]),
     backStack: ref<unknown[]>([]),
-    snapshotTorrentForBack: () => ({ type: "torrent" }),
-    snapshotSearchForBack: () => ({ type: "search" }),
+    snapshotCurrentScreen: () => ({ type: "search" }),
     mainRef: ref<HTMLElement | null>(null),
   };
 }

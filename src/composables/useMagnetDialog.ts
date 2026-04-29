@@ -26,8 +26,13 @@ export interface UseMagnetDialogCtx {
   error: Ref<string | null>;
   forwardStack: Ref<unknown[]>;
   backStack: Ref<unknown[]>;
-  snapshotTorrentForBack: () => unknown;
-  snapshotSearchForBack: () => unknown;
+  /**
+   * "What screen is currently visible?" — same single-snapshot contract
+   * used by `useTorrentDetail` and `useNavStack`. Ensures that opening a
+   * magnet from Likes / Settings / a playlist correctly records that
+   * screen as the predecessor on the back stack.
+   */
+  snapshotCurrentScreen: () => unknown;
   mainRef: Ref<HTMLElement | null>;
 }
 
@@ -79,9 +84,7 @@ export function useMagnetDialog(ctx: UseMagnetDialogCtx) {
       source: "magnet",
     };
 
-    if (ctx.selected.value) ctx.backStack.value.push(ctx.snapshotTorrentForBack());
-    else                    ctx.backStack.value.push(ctx.snapshotSearchForBack());
-
+    ctx.backStack.value.push(ctx.snapshotCurrentScreen());
     ctx.forwardStack.value = [];
     ctx.torrentFilesBeforeAlbumPreview.value = null;
     ctx.torrentSelectedBeforeAlbumPreview.value = null;

@@ -28,6 +28,14 @@ export interface UsePlaylistCrudOptions {
   currentPlaylistId: Ref<string | null>;
   view: Ref<string>;
   resolveTrackFromPayload: (payload: unknown) => Track | null;
+  /**
+   * Optional history-recording playlist opener. When provided, replaces the
+   * default `currentPlaylistId / view` mutation so programmatic navigation
+   * (after creating a playlist or adding-to-new) participates in the
+   * back/forward stack. Late-binding via a getter is supported because
+   * `useNavStack` is constructed *after* `usePlaylistCrud` in App.vue.
+   */
+  onOpenPlaylist?: (id: string) => void;
 }
 
 export interface UsePlaylistCrudApi {
@@ -48,6 +56,10 @@ export function usePlaylistCrud(opts: UsePlaylistCrudOptions): UsePlaylistCrudAp
   const addToPlaylistTrack = shallowRef<Track | null>(null);
 
   function openPlaylist(id: string): void {
+    if (opts.onOpenPlaylist) {
+      opts.onOpenPlaylist(id);
+      return;
+    }
     opts.currentPlaylistId.value = id;
     opts.view.value = "playlist";
   }

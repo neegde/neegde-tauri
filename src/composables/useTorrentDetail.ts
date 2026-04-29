@@ -91,9 +91,14 @@ export interface UseTorrentDetailOptions {
   // Nav stack
   backStack: Ref<NavEntryLike[]>;
   forwardStack: Ref<NavEntryLike[]>;
-  snapshotSearchForBack: () => NavEntryLike;
-  snapshotTorrentForBack: () => NavEntryLike;
-  snapshotAlbumForBack: () => NavEntryLike;
+  /**
+   * Single source of truth for "what screen is currently visible?". Returns
+   * the right NavEntry shape (search / torrent / album / likes / settings /
+   * playlist) based on the live view+selection state. Replaces the legacy
+   * 3-snapshot tuple — using one function ensures we never push a `search`
+   * snapshot when the user is actually on Likes / Settings / a playlist.
+   */
+  snapshotCurrentScreen: () => NavEntryLike;
   // Recent history ref — updated when the user opens an Album / legacy topic.
   recentHistory: Ref<RecentHistoryEntry[]>;
   // Autoplay gate — cleared when the user explicitly starts playback.
@@ -271,9 +276,7 @@ export function useTorrentDetail(opts: UseTorrentDetailOptions): UseTorrentDetai
     }
 
     appDebugLog("search", `album opened: ${a.id} "${a.title}"`);
-    if (currentAlbum.value) opts.backStack.value.push(opts.snapshotAlbumForBack());
-    else if (selected.value) opts.backStack.value.push(opts.snapshotTorrentForBack());
-    else                     opts.backStack.value.push(opts.snapshotSearchForBack());
+    opts.backStack.value.push(opts.snapshotCurrentScreen());
     opts.forwardStack.value = [];
 
     // Clear legacy TorrentView state — the two paths are mutually exclusive.
@@ -317,8 +320,7 @@ export function useTorrentDetail(opts: UseTorrentDetailOptions): UseTorrentDetai
       torrentSelectedBeforeAlbumPreview.value = null;
       return;
     }
-    if (selected.value) opts.backStack.value.push(opts.snapshotTorrentForBack());
-    else                opts.backStack.value.push(opts.snapshotSearchForBack());
+    opts.backStack.value.push(opts.snapshotCurrentScreen());
     opts.forwardStack.value = [];
     torrentFilesBeforeAlbumPreview.value = null;
     torrentSelectedBeforeAlbumPreview.value = null;

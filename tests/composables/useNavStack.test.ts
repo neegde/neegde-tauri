@@ -160,13 +160,12 @@ describe("useNavStack — handleForwardNav", () => {
     nav.forwardStack.value.push({
       type: "torrent",
       selected: { id: "F1" }, files: [], magnet: "m", cover: null,
-      restoreLikesView: true,
       torrentFilesBeforeAlbumPreview: null,
       torrentSelectedBeforeAlbumPreview: null,
     });
     nav.handleForwardNav();
     expect(ctx.selected.value?.id).toBe("F1");
-    expect(ctx.returnView.value).toBe("likes");
+    expect(ctx.view.value).toBe("home");
   });
   it("restores album-preview snapshot", () => {
     const { ctx, nav } = setup();
@@ -185,6 +184,194 @@ describe("useNavStack — handleForwardNav", () => {
     nav.forwardStack.value.push({ type: "album", album: { id: "A1" } });
     nav.handleForwardNav();
     expect(ctx.currentAlbum.value?.id).toBe("A1");
+  });
+  it("restores likes snapshot from forward", () => {
+    const { ctx, nav } = setup();
+    nav.forwardStack.value.push({ type: "likes" });
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("likes");
+  });
+  it("restores settings snapshot from forward", () => {
+    const { ctx, nav } = setup();
+    nav.forwardStack.value.push({ type: "settings" });
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("settings");
+  });
+  it("restores playlist snapshot from forward", () => {
+    const { ctx, nav } = setup();
+    nav.forwardStack.value.push({ type: "playlist", playlistId: "p7" });
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("playlist");
+    expect(ctx.currentPlaylistId.value).toBe("p7");
+  });
+  it("restores search snapshot from forward", () => {
+    const { ctx, nav } = setup();
+    nav.forwardStack.value.push({
+      type: "search", searchQuery: "q1",
+      resultsEntities: [{ id: "r" }],
+      error: null, slskPeerBrowseUser: null,
+    });
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("home");
+    expect(ctx.searchQuery.value).toBe("q1");
+    expect(ctx.searchEntities.value).toEqual([{ id: "r" }]);
+  });
+  it("pushes current screen onto backStack symmetrically", () => {
+    const { ctx, nav } = setup();
+    ctx.selected.value = { id: "current" };
+    ctx.files.value = [{ path: "x.mp3" }];
+    nav.forwardStack.value.push({ type: "likes" });
+    nav.handleForwardNav();
+    expect(nav.backStack.value).toHaveLength(1);
+    expect(nav.backStack.value[0]?.type).toBe("torrent");
+  });
+});
+
+describe("useNavStack — navigateToTopLevelView", () => {
+  it("home → likes pushes home onto backStack and applies likes", () => {
+    const { ctx, nav } = setup();
+    nav.navigateToTopLevelView("likes");
+    expect(ctx.view.value).toBe("likes");
+    expect(nav.backStack.value).toHaveLength(1);
+    expect(nav.backStack.value[0]?.type).toBe("search");
+  });
+  it("clears forwardStack on a fresh navigation", () => {
+    const { nav } = setup();
+    nav.forwardStack.value.push({ type: "settings" });
+    nav.navigateToTopLevelView("likes");
+    expect(nav.forwardStack.value).toEqual([]);
+  });
+  it("clicking the same view again is a no-op", () => {
+    const { ctx, nav } = setup();
+    ctx.view.value = "likes";
+    nav.navigateToTopLevelView("likes");
+    expect(nav.backStack.value).toEqual([]);
+  });
+  it("home keeps existing search/torrent state, only flips view", () => {
+    const { ctx, nav } = setup();
+    ctx.view.value = "settings";
+    ctx.searchQuery.value = "kept";
+    ctx.searchEntities.value = [{ id: "row" }];
+    nav.navigateToTopLevelView("home");
+    expect(ctx.view.value).toBe("home");
+    expect(ctx.searchQuery.value).toBe("kept");
+    expect(ctx.searchEntities.value).toEqual([{ id: "row" }]);
+  });
+  it("playlist requires playlistId and applies it", () => {
+    const { ctx, nav } = setup();
+    nav.navigateToTopLevelView("playlist", "pl-99");
+    expect(ctx.view.value).toBe("playlist");
+    expect(ctx.currentPlaylistId.value).toBe("pl-99");
+  });
+});
+
+describe("useNavStack — snapshotCurrentScreen", () => {
+  it("returns 'likes' entry when on Likes view (regression: back from album in Likes used to land on home)", () => {
+    const { ctx, nav } = setup();
+    ctx.view.value = "likes";
+    expect(nav.snapshotCurrentScreen()).toEqual({ type: "likes" });
+  });
+  it("returns 'settings' entry on Settings view", () => {
+    const { ctx, nav } = setup();
+    ctx.view.value = "settings";
+    expect(nav.snapshotCurrentScreen()).toEqual({ type: "settings" });
+  });
+  it("returns 'playlist' with id when on a playlist view", () => {
+    const { ctx, nav } = setup();
+    ctx.view.value = "playlist";
+    ctx.currentPlaylistId.value = "pl-7";
+    expect(nav.snapshotCurrentScreen()).toMatchObject({ type: "playlist", playlistId: "pl-7" });
+  });
+  it("on Home with currentAlbum returns 'album' entry", () => {
+    const { ctx, nav } = setup();
+    ctx.currentAlbum.value = { id: "A1" };
+    expect(nav.snapshotCurrentScreen()).toMatchObject({ type: "album" });
+  });
+  it("on Home with selected torrent returns 'torrent' entry", () => {
+    const { ctx, nav } = setup();
+    ctx.selected.value = { id: "T1" };
+    expect(nav.snapshotCurrentScreen()).toMatchObject({ type: "torrent" });
+  });
+  it("on Home with no selection returns 'search' entry", () => {
+    const { nav } = setup();
+    expect(nav.snapshotCurrentScreen()).toMatchObject({ type: "search" });
+  });
+});
+
+describe("useNavStack — Likes → album → Back regression", () => {
+  it("opening an album from Likes records Likes on backStack so Back returns there", () => {
+    const { ctx, nav } = setup();
+    // User clicks Likes in the sidebar.
+    nav.navigateToTopLevelView("likes");
+    expect(ctx.view.value).toBe("likes");
+
+    // User clicks an album. App.vue's handleOpenTorrentFromPlayer pushes
+    // snapshotCurrentScreen() (which now correctly captures Likes), then
+    // applies torrent state.
+    nav.backStack.value.push(nav.snapshotCurrentScreen());
+    nav.forwardStack.value = [];
+    ctx.view.value = "home";
+    ctx.selected.value = { id: "T-from-album" };
+
+    // User presses Back. Previously this landed on home (empty search);
+    // with the fix, it flips the view back to Likes. The dormant torrent
+    // state intentionally persists in memory so a subsequent sidebar-Home
+    // click restores the open torrent — but it's not visible because
+    // `view === "likes"` selects the Likes panel.
+    nav.handleBack();
+    expect(ctx.view.value).toBe("likes");
+  });
+
+  it("Likes → torrent → Back → Forward symmetric round trip", () => {
+    const { ctx, nav } = setup();
+    nav.navigateToTopLevelView("likes");
+    nav.backStack.value.push(nav.snapshotCurrentScreen());
+    nav.forwardStack.value = [];
+    ctx.view.value = "home";
+    ctx.selected.value = { id: "T1" };
+
+    nav.handleBack();
+    expect(ctx.view.value).toBe("likes");
+
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("home");
+    expect(ctx.selected.value?.id).toBe("T1");
+  });
+});
+
+describe("useNavStack — back↔forward symmetry", () => {
+  it("home → likes → back → forward returns to likes", () => {
+    const { ctx, nav } = setup();
+    nav.navigateToTopLevelView("likes");
+    nav.handleBack();
+    expect(ctx.view.value).toBe("home");
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("likes");
+  });
+  it("three-step nav: home → likes → settings → back twice → forward twice", () => {
+    const { ctx, nav } = setup();
+    nav.navigateToTopLevelView("likes");
+    nav.navigateToTopLevelView("settings");
+    expect(ctx.view.value).toBe("settings");
+    nav.handleBack();
+    expect(ctx.view.value).toBe("likes");
+    nav.handleBack();
+    expect(ctx.view.value).toBe("home");
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("likes");
+    nav.handleForwardNav();
+    expect(ctx.view.value).toBe("settings");
+  });
+  it("new nav after Back clears forwardStack (browser semantics)", () => {
+    const { nav } = setup();
+    nav.navigateToTopLevelView("likes");
+    nav.navigateToTopLevelView("settings");
+    nav.handleBack(); // settings → likes; forward = [settings]
+    expect(nav.forwardStack.value).toHaveLength(1);
+    nav.navigateToTopLevelView("likes"); // already on likes — no-op
+    expect(nav.forwardStack.value).toHaveLength(1);
+    nav.navigateToTopLevelView("settings"); // re-fork
+    expect(nav.forwardStack.value).toEqual([]);
   });
 });
 

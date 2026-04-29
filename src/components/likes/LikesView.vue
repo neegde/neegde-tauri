@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { computed, watch } from "vue";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import TrackCover from "../shared/TrackCover.vue";
@@ -14,6 +14,7 @@ import {
   libraryTrackActions,
 } from "../../composables/useTrackContextMenu.js";
 import { sourceShortLabel } from "../../track/labels.js";
+import { likesTab } from "./likesViewState.js";
 
 const props = withDefaults(
   defineProps<{
@@ -38,8 +39,9 @@ const emit = defineEmits<{
   "add-to-playlist": [track: Track];
 }>();
 
-/** Active sub-tab under «Мне нравится». */
-const likesTab = ref<"tracks" | "albums">("tracks");
+// `likesTab` lives in `./likesViewState.ts` — module scope so it survives
+// the LikesView remount that happens when navigating away (the surrounding
+// `<KeepAlive>` is itself unmounted and can't preserve component state).
 
 const {
   ctxOpen,

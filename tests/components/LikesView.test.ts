@@ -5,8 +5,14 @@ import LikesView from "../../src/components/likes/LikesView.vue";
 import { buildTrack } from "../../src/track/factory.js";
 import { buildAlbum } from "../../src/album/factory.js";
 import { clearEntities } from "../../src/stores/entities.js";
+import { likesTab } from "../../src/components/likes/likesViewState.js";
 
-beforeEach(() => clearEntities());
+beforeEach(() => {
+  clearEntities();
+  // `likesTab` is module-scoped (survives remounts intentionally — see
+  // likesViewState.ts), so reset it between test cases for isolation.
+  likesTab.value = "tracks";
+});
 
 const track = buildTrack({
   type: "track", id: "t1", title: "Song 1", artist: "Artist",
@@ -52,6 +58,26 @@ describe("LikesView", () => {
     });
     await w.findAll(".likes-tab").at(1)?.trigger("click");
     expect(w.find(".album-art-like").exists()).toBe(false);
+  });
+
+  it("preserves selected tab across remount (regression: nav away + back snapped to 'tracks')", async () => {
+    // Mount #1 — switch to Albums tab, then unmount to simulate navigating
+    // away from Likes (the surrounding KeepAlive can't preserve state, so
+    // the component instance is destroyed on every leave/return).
+    const first = mount(LikesView, {
+      props: { tracks: [track], albums: [likedRtAlbum], nowPlayingId: null, playerPlaying: false },
+    });
+    await first.findAll(".likes-tab").at(1)?.trigger("click");
+    expect(likesTab.value).toBe("albums");
+    first.unmount();
+
+    // Mount #2 — fresh component instance (Likes → album → Back → Likes).
+    // The albums tab should still be active because state is module-scoped.
+    const second = mount(LikesView, {
+      props: { tracks: [track], albums: [likedRtAlbum], nowPlayingId: null, playerPlaying: false },
+    });
+    expect(second.findAll(".likes-tab").at(1)?.classes()).toContain("active");
+    expect(second.findAll(".album-card")).toHaveLength(1);
   });
 
   it("renders one row per track with hero count", () => {

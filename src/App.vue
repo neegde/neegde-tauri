@@ -404,6 +404,12 @@ function resolveTrackFromPayload(payload) {
   return getTrack(ent.id);
 }
 
+// Late-bound history-recording playlist opener. `useNavStack` runs further
+// down (it depends on torrent-detail refs), so this ref is set to a no-op
+// during construction and reassigned to the real `navigateToTopLevelView`
+// once the nav stack is wired. Same indirection trick used by the snapshot
+// callbacks below — see torrentDetailOpts comment.
+let onOpenPlaylistRef = (_id) => {};
 const {
   addToPlaylistModal,
   addToPlaylistTrack,
@@ -415,7 +421,12 @@ const {
   handleShowAddToPlaylist,
   handleAddToPlaylist,
   handleAddToPlaylistNew,
-} = usePlaylistCrud({ currentPlaylistId, view, resolveTrackFromPayload });
+} = usePlaylistCrud({
+  currentPlaylistId,
+  view,
+  resolveTrackFromPayload,
+  onOpenPlaylist: (id) => onOpenPlaylistRef(id),
+});
 
 // ── Per-track actions from LikesView / PlaylistView / search ───────────────
 
@@ -520,18 +531,19 @@ const mainRef = ref(null);
 
 const navBackStack     = ref([]);
 const navForwardStack  = ref([]);
-let navSnapSearchRef    = () => ({ type: "search" });
-let navSnapTorrentRef   = () => ({ type: "torrent" });
-let navSnapAlbumRef     = () => ({ type: "album" });
+// Late-bound "what screen is showing right now?" callback — points at
+// useNavStack's `snapshotCurrentScreen` once it's constructed below.
+// During the brief window between this declaration and the assignment
+// further down the file, the placeholder returns a generic search entry
+// (no nav events fire that early in the lifecycle).
+let navSnapCurrentScreenRef = () => ({ type: "search" });
 
 // Mutable options object — we re-assign `downloadOverlayExpanded` + `downloadProgress`
 // after useDownloads runs so useTorrentDetail's handlers can write to the real refs.
 const torrentDetailOpts = {
   backStack: navBackStack,
   forwardStack: navForwardStack,
-  snapshotSearchForBack: () => navSnapSearchRef(),
-  snapshotTorrentForBack: () => navSnapTorrentRef(),
-  snapshotAlbumForBack: () => navSnapAlbumRef(),
+  snapshotCurrentScreen: () => navSnapCurrentScreenRef(),
   recentHistory,
   allowPlayerAutoplay,
   openTorrentFromPlayer: (payload) => handleOpenTorrentFromPlayer(payload),
@@ -566,10 +578,9 @@ const {
 const {
   forwardStack,
   backStack,
-  snapshotSearchForBack,
-  snapshotTorrentForBack,
-  snapshotAlbumForBack,
+  snapshotCurrentScreen,
   pushCurrentScreenToForwardStack,
+  navigateToTopLevelView,
   handleBack,
   handleForwardNav,
   handleNavBack,
@@ -584,10 +595,10 @@ const {
   forwardStack: navForwardStack,
 });
 
-// Late-bind snapshot functions into useTorrentDetail's closures.
-navSnapSearchRef = snapshotSearchForBack;
-navSnapTorrentRef = snapshotTorrentForBack;
-navSnapAlbumRef = snapshotAlbumForBack;
+// Late-bind the current-screen snapshot into useTorrentDetail's /
+// useMagnetDialog's closures, plus the playlist nav callback.
+navSnapCurrentScreenRef = snapshotCurrentScreen;
+onOpenPlaylistRef = (id) => navigateToTopLevelView("playlist", id);
 
 // Download state + handlers (overlay progress, export helpers) live in
 // useDownloads. See src/composables/useDownloads.js for the full surface.
@@ -687,10 +698,10 @@ const nowPlayingIdxForTorrentView = computed(() => {
 // ── Computed ──────────────────────────────────────────────────────────────────
 
 const navCanGoBack = computed(() => {
-  if (view.value !== "home") return false;
+  // Album-preview drill-down inside an open torrent is poppable independently
+  // of the cross-screen back stack — the first Back press exits the preview.
   if (torrentFilesBeforeAlbumPreview.value) return true;
-  if (backStack.value.length > 0) return true;
-  return !!selected.value;
+  return backStack.value.length > 0;
 });
 
 watch(
@@ -779,7 +790,7 @@ const {
   torrentFilesBeforeAlbumPreview, torrentSelectedBeforeAlbumPreview,
   loadingFiles, view, error,
   forwardStack, backStack,
-  snapshotTorrentForBack, snapshotSearchForBack,
+  snapshotCurrentScreen,
   mainRef,
 });
 
@@ -894,6 +905,10 @@ function handleOpenSoulseekSourceFromResults(track) {
 async function handleNavigateSoulseekPeer(username) {
   const u = String(username ?? "").trim();
   if (!u) return;
+  // Record the previous screen (Likes / playlist / search / open album)
+  // before swapping to the peer-filtered search view.
+  backStack.value.push(snapshotCurrentScreen());
+  forwardStack.value = [];
   slskPeerBrowseUser.value = u;
   searchQuery.value = u;
   view.value = "home";
@@ -905,10 +920,16 @@ async function handleNavigateSoulseekPeer(username) {
 }
 
 function handleSearchArtist(artist) {
-  if (!artist?.trim()) return;
-  searchQuery.value = artist.trim();
-  appDebugLog("search", `artist filter: "${artist.trim()}"`);
-  void handleSearch(artist.trim());
+  const trimmed = artist?.trim();
+  if (!trimmed) return;
+  // Artist click from the player is a navigation event — record current
+  // screen so Back returns to wherever the user was (open album, Likes,
+  // a different search query, etc).
+  backStack.value.push(snapshotCurrentScreen());
+  forwardStack.value = [];
+  searchQuery.value = trimmed;
+  appDebugLog("search", `artist filter: "${trimmed}"`);
+  void handleSearch(trimmed);
 }
 
 
@@ -979,12 +1000,12 @@ function handleOpenTorrentFromPlayer(track) {
     if (mainRef.value) mainRef.value.scrollTo(0, 0);
     return;
   }
+  // Record the screen the user was on (Likes / playlist / search / open
+  // torrent / album) BEFORE we flip view to home. Without this, opening a
+  // liked album from Likes would push a stale empty-search snapshot and
+  // Back would land on home instead of returning to Likes.
+  backStack.value.push(snapshotCurrentScreen());
   forwardStack.value = [];
-  if (selected.value) {
-    backStack.value.push(snapshotTorrentForBack());
-  } else {
-    backStack.value.push(snapshotSearchForBack());
-  }
   torrentFilesBeforeAlbumPreview.value = null;
   torrentSelectedBeforeAlbumPreview.value = null;
   view.value = "home";
@@ -1171,13 +1192,19 @@ function navToSearch() {
 }
 
 /**
- * Sidebar home button: switches to home; if already on home, clears search results, query,
- * open torrent, and nav stacks (habitual «clean home»).
+ * Sidebar Home button.
+ *
+ * Two distinct intents folded into one button:
+ *   1. From any non-home screen → cross-screen back/forward navigation
+ *      records the switch (history-preserving like Spotify's sidebar).
+ *   2. Already on home → "clean home" affordance: clears search, open
+ *      torrent / album, and the entire history stack so the user gets
+ *      a fresh start. This is opinionated UX that diverges from Spotify
+ *      but is the established neegde behavior.
  */
 function handleSidebarHome() {
   if (view.value !== "home") {
-    view.value = "home";
-    if (mainRef.value) mainRef.value.scrollTo(0, 0);
+    navigateToTopLevelView("home");
     return;
   }
   if (!homeSearchActive.value && !selected.value && !currentAlbum.value) {
@@ -1192,6 +1219,21 @@ function handleSidebarHome() {
   forwardStack.value = [];
   backStack.value = [];
   if (mainRef.value) mainRef.value.scrollTo(0, 0);
+}
+
+/** Sidebar Likes button — history-recording navigation. */
+function handleSidebarLikes() {
+  navigateToTopLevelView("likes");
+}
+
+/** Sidebar Settings button — history-recording navigation. */
+function handleSidebarSettings() {
+  navigateToTopLevelView("settings");
+}
+
+/** Sidebar playlist click — history-recording navigation. */
+function handleSidebarOpenPlaylist(id) {
+  navigateToTopLevelView("playlist", id);
 }
 
 useMouseSideButtonNav({

@@ -36,7 +36,7 @@
         <div class="nav-label" style="margin-top: 16px">Библиотека</div>
         <button
           :class="['source-btn', view === 'likes' ? 'active' : '']"
-          @click="view = 'likes'"
+          @click="handleSidebarLikes"
         >
           <span class="source-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -60,7 +60,7 @@
             v-for="pl in libraryPlaylists"
             :key="pl.id"
             :class="['source-btn sidebar-pl-item', currentPlaylistId === pl.id && view === 'playlist' ? 'active' : '']"
-            @click="openPlaylist(pl.id)"
+            @click="handleSidebarOpenPlaylist(pl.id)"
           >
             <span class="source-icon">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -76,7 +76,7 @@
         <div style="flex: 1" />
         <button
           :class="['source-btn', view === 'settings' ? 'active' : '']"
-          @click="view = 'settings'"
+          @click="handleSidebarSettings"
         >
           <span class="source-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -159,7 +159,7 @@
             v-if="!restoringSession && !rtLoggedIn && !slskConnected && !hasSearchResults && !selected && !loading && !homeSearchActive"
             class="onboarding"
           >
-            <div class="onboarding-card" style="cursor:pointer" @click="view = 'settings'">
+            <div class="onboarding-card" style="cursor:pointer" @click="handleSidebarSettings">
               <div class="onboarding-icon" aria-hidden="true">
                 <SystemIcon name="link" :size="28" />
               </div>
