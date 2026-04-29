@@ -33,7 +33,6 @@ tokio = { version = "1.50.0", features = ["net", "io-util", "sync", "time"] }
 sysinfo = "0.32"
 dashmap = "6"
 lru = "0.12"
-cookie = "0.18"
 # Rich Presence: DISCORD_CLIENT_ID=<app id>; optional DISCORD_PRESENCE_BUTTON_URL (empty disables the button)
 discord-rich-presence = "1.1"
 tauri-plugin-opener = "2"
