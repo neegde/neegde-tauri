@@ -7,11 +7,14 @@ const rtMocks = vi.hoisted(() => ({
   getRutrackerCoverDataUrlMock: vi.fn(() => Promise.resolve("data:rt")),
   peekRutrackerCoverMock: vi.fn(() => undefined),
   getCoverReactiveMock: vi.fn(() => null),
+  // Component reads `.value` on this — a plain ref-shaped object is enough.
+  rutrackerCoverFetchEpoch: { value: 0 },
 }));
 vi.mock("../../src/rutracker/search.js", () => ({
   getRutrackerCoverDataUrl: rtMocks.getRutrackerCoverDataUrlMock,
   peekRutrackerCover: rtMocks.peekRutrackerCoverMock,
   getCoverReactive: rtMocks.getCoverReactiveMock,
+  rutrackerCoverFetchEpoch: rtMocks.rutrackerCoverFetchEpoch,
 }));
 
 const tiMocks = vi.hoisted(() => ({
