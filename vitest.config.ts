@@ -41,6 +41,12 @@ export default defineConfig({
         // Dev-only UI surfaces (debug window, splash, onboarding) — visual, low value.
         "src/components/debug/**",
         "src/components/shell/AppSplash.vue",
+        "src/components/shell/OnboardingDialog.vue",
+        // Pure-visual atoms with no script logic — `<script setup>` only declares
+        // props and forwards them to a static template. v8 reports them as 0%
+        // because there's nothing executable to instrument.
+        "src/components/shell/NavArrows.vue",
+        "src/components/shared/SystemIcon.vue",
         // Unused dead branch kept for reference.
         "src/components/unused/**",
         // Canvas / WebGL / audio graph: unrunnable in jsdom without extensive stubs.
