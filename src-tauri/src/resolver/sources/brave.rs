@@ -14,9 +14,11 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use rand::RngCore;
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::resolver::types::MatchKind;
+use crate::torrent_stream::debug_log::AppDebugLog;
 
 /// Challenge shape served by Brave when we get a 429.
 #[derive(Deserialize, Debug)]
@@ -88,7 +90,6 @@ fn solve_pow_sync(challenge: &Challenge) -> Option<OwnedSolution> {
 
     for tok in &challenge.tokens {
         if t0.elapsed().as_millis() > POW_MAX_MS {
-            eprintln!("[brave] PoW budget exceeded — giving up");
             return None;
         }
         let mut found: Option<String> = None;
@@ -366,6 +367,7 @@ pub async fn lookup(
     client: &Client,
     query: &str,
     limit: usize,
+    dlog: Arc<AppDebugLog>,
 ) -> Result<Vec<(String, String, MatchKind)>, String> {
     // Constrain the search to known lyrics pages. `site:X OR site:Y` is a
     // native Brave operator — we get only pages whose URL is on one of
@@ -416,17 +418,15 @@ pub async fn lookup(
                 .bytes()
                 .await
                 .map_err(|e| format!("brave: body read: {e}"))?;
-            eprintln!(
-                "[brave] got {} bytes, content-type={:?} content-encoding={:?}, first-30={:?}",
-                bytes.len(),
-                ct,
-                ce,
-                &bytes[..30.min(bytes.len())],
+            dlog.push(
+                "brave",
+                format!("got {} bytes, content-type={ct:?} content-encoding={ce:?}, first-30={:?}", bytes.len(), &bytes[..30.min(bytes.len())]),
+                None,
             );
             let html = String::from_utf8_lossy(&bytes);
             let mut out = Vec::new();
             for title in extract_titles(&html) {
-                eprintln!("[brave] snippet-title: {title:?}");
+                dlog.push("brave", format!("snippet-title: {title:?}"), None);
                 // Brave honours `site:genius.com` only loosely — it still
                 // mixes in YouTube / Last.fm / Apple Music / Lenta / etc.
                 // results when the corpus hit count is low. We force the
@@ -437,7 +437,7 @@ pub async fn lookup(
                     continue;
                 }
                 if let Some((a, t, k)) = parse_artist_title(&title) {
-                    eprintln!("[brave] parsed: artist={a:?} title={t:?} kind={k:?}");
+                    dlog.push("brave", format!("parsed: artist={a:?} title={t:?} kind={k:?}"), None);
                     out.push((a, t, k));
                     if out.len() >= limit { break; }
                 }

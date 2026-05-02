@@ -13,7 +13,7 @@ const props = defineProps<{
 }>();
 
 const rootRef = ref<HTMLElement | null>(null);
-const { coverUrl: entityCoverUrl, coverErr } = useEntityCover(
+const { coverUrl: entityCoverUrl, coverErr, fetching } = useEntityCover(
   toRef(props, "entity") as Ref<Track | Album | null>,
   rootRef,
 );
@@ -39,6 +39,7 @@ const coverUrl = computed<string | null>(() => {
       draggable="false"
       @error="coverErr = true"
     />
+    <div v-else-if="fetching" class="cover-loading-spinner" />
     <svg v-else class="track-cover-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M9 18V5l12-2v13"/>
       <circle cx="6" cy="18" r="3"/>

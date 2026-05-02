@@ -264,6 +264,7 @@ pub fn run() {
             apply_app_debug_from_disk(app.handle(), &ts);
             let vozduxan_debug = ts.debug_log();
             let image_debug = ts.debug_log();
+            let resolver_debug = ts.debug_log();
             app.manage(VozduxanStreamState::new(app.handle(), vozduxan_debug));
             app.manage(ts);
 
@@ -279,7 +280,7 @@ pub fn run() {
 
             app.manage(torrent_image::TorrentImageState::new(app.handle(), image_debug));
             app.manage(DiscordPresenceState::new());
-            app.manage(resolver::ResolverState::new());
+            app.manage(resolver::ResolverState::new(resolver_debug));
 
             // System tray
             let open_item = MenuItem::with_id(app, "open", "Открыть нигде", true, None::<&str>)?;

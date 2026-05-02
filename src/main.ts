@@ -14,27 +14,38 @@ const isAppDebugWindow =
   hash.startsWith("#/streaming-debug");
 const isPlayerVizWindow = hash === "#/player-viz" || hash.startsWith("#/player-viz");
 
-type ConsoleMethod = "log" | "info" | "warn" | "error";
+type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";
 
-// Route all console output to the in-app debug window. Original behaviour
-// (DevTools console) is preserved; skip patching inside the debug windows
-// themselves to avoid echo loops.
+function serializeArg(a: unknown): string {
+  if (a === null) return "null";
+  if (a === undefined) return "undefined";
+  if (a instanceof Error) return a.stack ?? String(a);
+  if (typeof a === "object") {
+    try { return JSON.stringify(a); } catch { return String(a); }
+  }
+  return String(a);
+}
+
+// Route ALL console output exclusively to the in-app debug window.
+// Skip the debug/viz windows themselves to avoid echo loops.
 if (!isAppDebugWindow && !isPlayerVizWindow) {
-  for (const method of ["log", "info", "warn", "error"] as ConsoleMethod[]) {
+  for (const method of ["log", "info", "warn", "error", "debug"] as ConsoleMethod[]) {
     (console[method] as (...args: unknown[]) => void) = (...args: unknown[]) => {
-      const message = args
-        .map((a) => {
-          if (a === null) return "null";
-          if (a === undefined) return "undefined";
-          if (typeof a === "object") {
-            try { return JSON.stringify(a); } catch { return String(a); }
-          }
-          return String(a);
-        })
-        .join(" ");
-      void appDebugLog(method === "log" ? "js" : method, message).catch(() => {});
+      const category = method === "log" || method === "debug" ? "js" : method;
+      void appDebugLog(category, args.map(serializeArg).join(" ")).catch(() => {});
     };
   }
+
+  window.addEventListener("error", (ev) => {
+    const msg = ev.error instanceof Error ? (ev.error.stack ?? String(ev.error)) : ev.message;
+    void appDebugLog("error", `uncaught: ${msg}`).catch(() => {});
+  });
+
+  window.addEventListener("unhandledrejection", (ev: PromiseRejectionEvent) => {
+    const r: unknown = ev.reason;
+    const msg = r instanceof Error ? (r.stack ?? String(r)) : String(r);
+    void appDebugLog("error", `unhandled rejection: ${msg}`).catch(() => {});
+  });
 }
 
 if (isAppDebugWindow) {

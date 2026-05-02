@@ -25,7 +25,9 @@ const props = defineProps({
 
 const rootRef = ref(null);
 const coverErr = ref(false);
+const fetching = ref(false);
 let observer = null;
+let activeFetchId = 0;
 
 /**
  * Reactive computed — auto-updates whenever either cover cache is populated,
@@ -67,6 +69,7 @@ function disconnectObserver() {
 function setupCover() {
   disconnectObserver();
   coverErr.value = false;
+  fetching.value = false;
 
   const override = (props.overrideCoverUrl && String(props.overrideCoverUrl).trim()) || "";
   if (override) return;
@@ -98,15 +101,27 @@ function setupCover() {
     ([entry]) => {
       if (!entry?.isIntersecting) return;
       disconnectObserver();
+      const myId = ++activeFetchId;
+      fetching.value = true;
+      const promises = [];
       if (needTorrentFetch && magnet && idx != null) {
         void appDebugLog("cover", `CoverThumb visible — starting torrent cover fetch fileIdx=${idx} torrentId=${props.torrentId}`);
-        torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
-          .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
-          .catch((e) => void appDebugLog("cover", `CoverThumb torrent fetch failed — fileIdx=${idx} err=${String(e)}`));
+        promises.push(
+          torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
+            .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
+            .catch((e) => void appDebugLog("cover", `CoverThumb torrent fetch failed — fileIdx=${idx} err=${String(e)}`))
+        );
       }
       if (needRutrackerFetch && topicId) {
         void appDebugLog("cover", `CoverThumb visible — starting rutracker cover fetch topicId=${topicId}`);
-        getRutrackerCoverDataUrl(topicId).catch((e) => void appDebugLog("cover", `CoverThumb rutracker fetch failed — topicId=${topicId} err=${String(e)}`));
+        promises.push(
+          getRutrackerCoverDataUrl(topicId).catch((e) => void appDebugLog("cover", `CoverThumb rutracker fetch failed — topicId=${topicId} err=${String(e)}`))
+        );
+      }
+      if (promises.length) {
+        Promise.all(promises).finally(() => {
+          if (activeFetchId === myId) fetching.value = false;
+        });
       }
     },
     { rootMargin: "400px" }

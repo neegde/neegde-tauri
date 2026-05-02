@@ -20,9 +20,11 @@ mod types;
 
 pub use types::{ArtistTitle, Intent, MatchKind, ResolveResult, TrackCandidate};
 
+use crate::torrent_stream::debug_log::AppDebugLog;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::State;
 
@@ -45,6 +47,7 @@ async fn run_source<F>(
     name: &'static str,
     timeout: Duration,
     fut: F,
+    dlog: &Arc<AppDebugLog>,
 ) -> Vec<(String, String, MatchKind)>
 where
     F: Future<Output = Result<Vec<(String, String, MatchKind)>, String>>,
@@ -54,15 +57,15 @@ where
     let ms = t.elapsed().as_millis();
     match res {
         Ok(Ok(v)) => {
-            eprintln!("[resolver] {name}: {} hits in {ms} ms", v.len());
+            dlog.push("resolver", format!("{name}: {} hits in {ms} ms", v.len()), None);
             v
         }
         Ok(Err(e)) => {
-            eprintln!("[resolver] {name}: ERR in {ms} ms — {e}");
+            dlog.push("resolver", format!("{name}: ERR in {ms} ms — {e}"), None);
             Vec::new()
         }
         Err(_) => {
-            eprintln!("[resolver] {name}: TIMEOUT after {ms} ms");
+            dlog.push("resolver", format!("{name}: TIMEOUT after {ms} ms"), None);
             Vec::new()
         }
     }
@@ -72,10 +75,11 @@ where
 /// commands so connection pooling works across sources.
 pub struct ResolverState {
     client: Client,
+    dlog: Arc<AppDebugLog>,
 }
 
 impl ResolverState {
-    pub fn new() -> Self {
+    pub fn new(dlog: Arc<AppDebugLog>) -> Self {
         // UA mirrors the test/track_search.py prototype so we get the same
         // behaviour on APIs that sniff headers (Brave definitely does).
         const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
@@ -88,13 +92,7 @@ impl ResolverState {
             .pool_max_idle_per_host(4)
             .build()
             .expect("failed to build resolver reqwest client");
-        Self { client }
-    }
-}
-
-impl Default for ResolverState {
-    fn default() -> Self {
-        Self::new()
+        Self { client, dlog }
     }
 }
 
@@ -299,6 +297,7 @@ pub async fn resolve_query(
     }
 
     let client = state.client.clone();
+    let dlog = state.dlog.clone();
 
     // Fast tier: all sources fire in parallel. Each source's own error
     // is logged-and-ignored here; we only fail the whole command if a
@@ -314,7 +313,8 @@ pub async fn resolve_query(
     let brave_pairs = run_source(
         "brave",
         BRAVE_TIMEOUT,
-        sources::brave::lookup(&client, trimmed, 10),
+        sources::brave::lookup(&client, trimmed, 10, dlog.clone()),
+        &dlog,
     )
     .await;
 
@@ -567,12 +567,10 @@ pub async fn resolve_query(
     };
 
     let elapsed_ms = t0.elapsed().as_millis() as u64;
-    eprintln!(
-        "[resolver] \"{}\" → {:?} ({} candidates, {} ms)",
-        trimmed,
-        intent,
-        candidates.len(),
-        elapsed_ms,
+    dlog.push(
+        "resolver",
+        format!("\"{}\" → {:?} ({} candidates, {} ms)", trimmed, intent, candidates.len(), elapsed_ms),
+        None,
     );
 
     Ok(ResolveResult {

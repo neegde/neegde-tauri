@@ -1761,6 +1761,22 @@ body {
   opacity: 0.4;
 }
 
+/* ── Cover loading spinner ─────────────────────────────────────────────── */
+@keyframes cover-spin {
+  to { transform: rotate(360deg); }
+}
+.cover-loading-spinner {
+  width: 38%;
+  height: 38%;
+  max-width: 18px;
+  max-height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: rgba(255, 255, 255, 0.55);
+  animation: cover-spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
 /* Likes: 3 колонки — # (узко, вправо) | обложка + название | действия */
 .likes-tracklist-header,
 .likes-track-row {

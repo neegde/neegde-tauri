@@ -13,6 +13,8 @@ import type { Track } from "../track/Track.js";
 import type { Album } from "../album/Album.js";
 import { entitiesVersion } from "../stores/entities.js";
 
+const FETCH_TIMEOUT_MS = 20_000;
+
 type Entity = Track | Album | null | undefined;
 
 /** Duck-type: both Track and Album expose `coverUrl()` + `startCoverFetch()`. */
@@ -34,9 +36,16 @@ export function useEntityCover(
   rootRef: Ref<HTMLElement | null>,
 ) {
   const coverErr = ref(false);
+  const fetching = ref(false);
   const coverUrl = computed(() => coverOfEntity(entityRef.value));
 
   let observer: IntersectionObserver | null = null;
+  let fetchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearTimer(): void {
+    if (fetchTimer) { clearTimeout(fetchTimer); fetchTimer = null; }
+  }
+
   function disconnect(): void {
     if (observer) { observer.disconnect(); observer = null; }
   }
@@ -44,6 +53,8 @@ export function useEntityCover(
   function arm(): void {
     disconnect();
     coverErr.value = false;
+    fetching.value = false;
+    clearTimer();
     const ent = entityRef.value;
     if (!hasCoverApi(ent)) return;
     if (ent.coverUrl()) return;  // cached already
@@ -52,6 +63,8 @@ export function useEntityCover(
       ([entry]) => {
         if (!entry?.isIntersecting) return;
         disconnect();
+        fetching.value = true;
+        fetchTimer = setTimeout(() => { fetching.value = false; fetchTimer = null; }, FETCH_TIMEOUT_MS);
         ent.startCoverFetch();
       },
       { rootMargin: "400px" },
@@ -59,10 +72,14 @@ export function useEntityCover(
     if (rootRef.value) observer.observe(rootRef.value);
   }
 
-  watch(() => entityRef.value?.id, () => { coverErr.value = false; arm(); });
+  watch(coverUrl, (v) => {
+    if (v) { fetching.value = false; clearTimer(); }
+  });
+
+  watch(() => entityRef.value?.id, () => { coverErr.value = false; fetching.value = false; clearTimer(); arm(); });
 
   onMounted(arm);
-  onUnmounted(disconnect);
+  onUnmounted(() => { disconnect(); clearTimer(); });
 
-  return { coverUrl, coverErr };
+  return { coverUrl, coverErr, fetching };
 }

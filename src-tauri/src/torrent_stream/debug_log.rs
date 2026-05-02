@@ -68,10 +68,6 @@ impl AppDebugLog {
             message: message.into(),
             detail,
         };
-        // TEMP(refactor/search-engine): mirror every debug line to stderr so
-        // JS-side appDebugLog shows up in `cargo tauri dev` output while the
-        // search engine is being iterated on. Revert before merging.
-        eprintln!("[dbg] {}: {}", line.category, line.message);
         {
             let mut q = self.lines.lock().unwrap();
             while q.len() >= self.max_lines {
