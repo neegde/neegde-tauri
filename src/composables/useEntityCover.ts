@@ -4,14 +4,17 @@
  * Both entity kinds expose `coverUrl()` / `startCoverFetch()` polymorphically
  * (Track hierarchy in `src/track/`, Album hierarchy in `src/album/`).
  *
- * IntersectionObserver kicks the lazy fetch when the root element enters
- * the viewport with a 400 px margin. Unmount tears it down.
+ * IntersectionObserver (400 px margin) kicks the lazy fetch when the root
+ * element enters the viewport and cancels it when the element leaves — this
+ * prevents wasted requests when SoulSeek search results shift rapidly.
+ * Unmount tears everything down.
  */
 
 import { ref, computed, watch, onMounted, onUnmounted, type Ref } from "vue";
 import type { Track } from "../track/Track.js";
 import type { Album } from "../album/Album.js";
 import { entitiesVersion } from "../stores/entities.js";
+import { appDebugLog } from "../appDebugLog.js";
 
 const FETCH_TIMEOUT_MS = 20_000;
 
@@ -41,9 +44,15 @@ export function useEntityCover(
 
   let observer: IntersectionObserver | null = null;
   let fetchTimer: ReturnType<typeof setTimeout> | null = null;
+  let abortCtrl: AbortController | null = null;
 
   function clearTimer(): void {
     if (fetchTimer) { clearTimeout(fetchTimer); fetchTimer = null; }
+  }
+
+  function cancelFetch(): void {
+    abortCtrl?.abort();
+    abortCtrl = null;
   }
 
   function disconnect(): void {
@@ -52,20 +61,38 @@ export function useEntityCover(
 
   function arm(): void {
     disconnect();
+    cancelFetch();
     coverErr.value = false;
     fetching.value = false;
     clearTimer();
     const ent = entityRef.value;
     if (!hasCoverApi(ent)) return;
-    if (ent.coverUrl()) return;  // cached already
+    if (ent.coverUrl()) return;  // already cached
 
     observer = new IntersectionObserver(
       ([entry]) => {
-        if (!entry?.isIntersecting) return;
-        disconnect();
-        fetching.value = true;
-        fetchTimer = setTimeout(() => { fetching.value = false; fetchTimer = null; }, FETCH_TIMEOUT_MS);
-        ent.startCoverFetch();
+        if (!entry) return;
+        if (entry.isIntersecting) {
+          cancelFetch();
+          abortCtrl = new AbortController();
+          fetching.value = true;
+          clearTimer();
+          fetchTimer = setTimeout(() => {
+            void appDebugLog("cover", `entity: timeout 20s — ${ent.kind}:${ent.id}`);
+            fetching.value = false;
+            fetchTimer = null;
+          }, FETCH_TIMEOUT_MS);
+          void appDebugLog("cover", `entity: visible — ${ent.kind}:${ent.id}`);
+          ent.startCoverFetch(abortCtrl.signal);
+        } else {
+          // Left the visible zone — stop any in-progress guess
+          if (abortCtrl) {
+            void appDebugLog("cover", `entity: left viewport — ${ent.kind}:${ent.id}`);
+            cancelFetch();
+            clearTimer();
+            if (!coverUrl.value) fetching.value = false;
+          }
+        }
       },
       { rootMargin: "400px" },
     );
@@ -73,13 +100,27 @@ export function useEntityCover(
   }
 
   watch(coverUrl, (v) => {
-    if (v) { fetching.value = false; clearTimer(); }
+    if (v) {
+      const ent = entityRef.value;
+      void appDebugLog("cover", `entity: loaded — ${ent?.kind}:${ent?.id}`);
+      fetching.value = false;
+      clearTimer();
+      cancelFetch();
+      // Cover found — observer no longer needed
+      disconnect();
+    }
   });
 
-  watch(() => entityRef.value?.id, () => { coverErr.value = false; fetching.value = false; clearTimer(); arm(); });
+  watch(() => entityRef.value, (newEnt, oldEnt) => {
+    if (newEnt === oldEnt) return;
+    coverErr.value = false;
+    fetching.value = false;
+    clearTimer();
+    arm();
+  });
 
   onMounted(arm);
-  onUnmounted(() => { disconnect(); clearTimer(); });
+  onUnmounted(() => { disconnect(); clearTimer(); cancelFetch(); });
 
   return { coverUrl, coverErr, fetching };
 }

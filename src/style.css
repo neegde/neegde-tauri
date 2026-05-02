@@ -3,6 +3,8 @@
   --sidebar-bg:  #0c0b0a;
   --surface:     #1c1a18;
   --surface-h:   #262320;
+  --cover-spinner-fg:    rgba(255, 255, 255, 0.6);
+  --cover-spinner-track: rgba(255, 255, 255, 0.15);
   --border:      rgba(255, 255, 255, 0.07);
   --accent:      #fc741d;
   --accent-h:    #ff9350;
@@ -1771,8 +1773,8 @@ body {
   max-width: 18px;
   max-height: 18px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.12);
-  border-top-color: rgba(255, 255, 255, 0.55);
+  border: 2px solid var(--cover-spinner-track);
+  border-top-color: var(--cover-spinner-fg);
   animation: cover-spin 0.75s linear infinite;
   flex-shrink: 0;
 }
@@ -2497,6 +2499,8 @@ body {
   --bg:         #f0ebe6;
   --sidebar-bg: #e8e2dc;
   --surface:    #ffffff;
+  --cover-spinner-fg:    rgba(0, 0, 0, 0.4);
+  --cover-spinner-track: rgba(0, 0, 0, 0.1);
   --surface-h:  #ebe6e1;
   --border:     rgba(0, 0, 0, 0.09);
   --text:       #1a1816;
@@ -2707,6 +2711,9 @@ body {
 }
 .slsk-track-thumb--placeholder {
   background: linear-gradient(135deg, var(--surface-h), var(--surface));
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .slsk-track-row {
   display: flex;

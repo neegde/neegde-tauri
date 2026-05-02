@@ -15,6 +15,7 @@ import {
 } from "../rutracker/coverCache.js";
 import { enrichMagnetWithOpenTrackers } from "../lib/utils.js";
 import { torrentFileB64ForTrack } from "../torrent/api.js";
+import { appDebugLog } from "../appDebugLog.js";
 
 export class RutrackerTrack extends Track {
   protected readonly sourceKind: "rutracker" | "magnet" = "rutracker";
@@ -72,10 +73,15 @@ export class RutrackerTrack extends Track {
     return getCoverReactive(String(topicId));
   }
 
-  override startCoverFetch(): void {
+  override startCoverFetch(_signal?: AbortSignal): void {
     const topicId = this.refs.topicId;
     if (!topicId) return;
-    if (peekRutrackerCover(String(topicId)) !== undefined) return;
+    const peek = peekRutrackerCover(String(topicId));
+    if (peek !== undefined) {
+      if (peek === null) void appDebugLog("cover", `rt track: neg-TTL skip — topicId=${topicId}`);
+      return;
+    }
+    void appDebugLog("cover", `rt track: fetch — topicId=${topicId}`);
     void getRutrackerCoverDataUrl(String(topicId)).catch(() => {});
   }
 

@@ -5,6 +5,7 @@ import {
   peekRutrackerCover,
   getRutrackerCoverDataUrl,
 } from "../rutracker/coverCache.js";
+import { appDebugLog } from "../appDebugLog.js";
 
 export class RutrackerAlbum extends Album {
   private get refs(): RutrackerAlbumSource["refs"] {
@@ -21,11 +22,16 @@ export class RutrackerAlbum extends Album {
     return getCoverReactive(topicId);
   }
 
-  override startCoverFetch(): void {
+  override startCoverFetch(_signal?: AbortSignal): void {
     if (this.data.coverUrl) return;
     const topicId = this.refs?.topicId;
     if (!topicId) return;
-    if (peekRutrackerCover(topicId) !== undefined) return;
+    const peek = peekRutrackerCover(topicId);
+    if (peek !== undefined) {
+      if (peek === null) void appDebugLog("cover", `rt album: neg-TTL skip — topicId=${topicId}`);
+      return;
+    }
+    void appDebugLog("cover", `rt album: fetch — topicId=${topicId}`);
     void getRutrackerCoverDataUrl(topicId).catch(() => {});
   }
 }

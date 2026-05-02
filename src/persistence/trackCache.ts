@@ -22,7 +22,7 @@
 
 import { reactive } from "vue";
 import type { Track } from "../track/Track.js";
-import type { TrackData } from "../track/types.js";
+import type { TrackData, SoulseekTrackRaw } from "../track/types.js";
 import { buildTrack } from "../track/factory.js";
 
 export interface TrackCacheOptions {
@@ -152,7 +152,9 @@ export class TrackCache {
       a.albumId === b.albumId &&
       (a.coverUrl ?? null) === (b.coverUrl ?? null) &&
       a.sources.length === b.sources.length &&
-      a.sources[0]!.kind === b.sources[0]!.kind
+      a.sources[0]!.kind === b.sources[0]!.kind &&
+      !!(a.sources[0]!.raw as SoulseekTrackRaw | undefined)?.cover ===
+        !!(b.sources[0]!.raw as SoulseekTrackRaw | undefined)?.cover
     );
   }
 }

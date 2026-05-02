@@ -92,6 +92,7 @@ const entityCover = useEntityCover(toRef(props, "track"), rowRef);
 // has none.
 const coverUrl = computed(() => entityCover.coverUrl.value ?? props.enriched?.coverUrl ?? null);
 const coverErr = entityCover.coverErr;
+const coverFetching = entityCover.fetching;
 
 // ── Title animation (preserved from previous impl) ───────────────────────────
 const animPhase = ref("waiting");

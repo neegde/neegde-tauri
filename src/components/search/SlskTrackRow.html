@@ -12,7 +12,9 @@
         alt=""
         @error="coverErr = true"
       >
-      <div v-else class="slsk-track-thumb slsk-track-thumb--placeholder" />
+      <div v-else class="slsk-track-thumb slsk-track-thumb--placeholder">
+        <div v-if="coverFetching" class="cover-loading-spinner" />
+      </div>
     </div>
 
     <button class="slsk-track-play" title="Слушать" @click.stop="emit('play', track)">
