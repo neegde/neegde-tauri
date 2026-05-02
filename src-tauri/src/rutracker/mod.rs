@@ -682,61 +682,77 @@ pub async fn rutracker_restore_session(
         .filter(|s| !s.is_empty())
         .unwrap_or(from_ui);
 
-    // Light healthcheck: try loading the forum index
-    let resp = client
+    // Light healthcheck: try loading the forum index.
+    // On network error (DDoS, timeout) we fall through to optimistic restore —
+    // cookies are intact and actual requests will detect a stale session themselves.
+    let index_resp = client
         .get(format!("{}/forum/index.php", base))
         .send()
-        .await
-        .map_err(|e| format!("Сетевая ошибка: {}", e))?;
+        .await;
 
-    if resp.url().path().contains("login") {
-        // Session expired — wipe files
-        state.wipe();
-        return Ok(LoginStatus {
-            logged_in: false,
-            username: None,
-            avatar_url: None,
-        });
+    match index_resp {
+        Err(_) => {
+            // RT unreachable — assume cookies are still valid, let real requests confirm.
+            let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+            inner.logged_in = true;
+            inner.username = meta.username.clone();
+            inner.avatar_url = meta.avatar_data_url.clone();
+            return Ok(LoginStatus {
+                logged_in: true,
+                username: meta.username,
+                avatar_url: meta.avatar_data_url,
+            });
+        }
+        Ok(resp) if resp.url().path().contains("login") => {
+            state.wipe();
+            return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
+        }
+        Ok(_) => {}
     }
 
     // Tracker search page: same auth barrier as `search_music` — index alone can load for guests.
-    let resp_t = client
+    let tracker_resp = client
         .get(format!("{}/forum/tracker.php", base))
         .query(&[("nm", ".")])
         .send()
-        .await
-        .map_err(|e| format!("Сетевая ошибка: {}", e))?;
+        .await;
 
-    if resp_t.url().path().contains("login") {
-        state.wipe();
-        return Ok(LoginStatus {
-            logged_in: false,
-            username: None,
-            avatar_url: None,
-        });
+    match tracker_resp {
+        Err(_) => {
+            // Network error on second request — same optimistic logic.
+            let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
+            inner.logged_in = true;
+            inner.username = meta.username.clone();
+            inner.avatar_url = meta.avatar_data_url.clone();
+            return Ok(LoginStatus {
+                logged_in: true,
+                username: meta.username,
+                avatar_url: meta.avatar_data_url,
+            });
+        }
+        Ok(resp) if resp.url().path().contains("login") => {
+            state.wipe();
+            return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
+        }
+        Ok(resp) => {
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| format!("Ошибка чтения ответа трекера: {}", e))?;
+            let html_track = if std::str::from_utf8(&bytes).is_ok() {
+                String::from_utf8(bytes.to_vec()).unwrap()
+            } else {
+                let (cow, _, _) = WINDOWS_1251.decode(&bytes);
+                cow.into_owned()
+            };
+            if html_track.contains(r#"name="login_username""#) {
+                state.wipe();
+                return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
+            }
+        }
     }
 
-    let bytes = resp_t
-        .bytes()
-        .await
-        .map_err(|e| format!("Ошибка чтения ответа трекера: {}", e))?;
-    let html_track = if std::str::from_utf8(&bytes).is_ok() {
-        String::from_utf8(bytes.to_vec()).unwrap()
-    } else {
-        let (cow, _, _) = WINDOWS_1251.decode(&bytes);
-        cow.into_owned()
-    };
-
-    if html_track.contains(r#"name="login_username""#) {
-        state.wipe();
-        return Ok(LoginStatus {
-            logged_in: false,
-            username: None,
-            avatar_url: None,
-        });
-    }
-
-    // Index + tracker both indicate an authenticated session — restore from saved meta
+    // Index + tracker both indicate an authenticated session — restore from saved meta.
     let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
     inner.logged_in = true;
     inner.username = meta.username.clone();
