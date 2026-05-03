@@ -415,6 +415,10 @@
   margin-bottom: 0;
   cursor: pointer;
 }
+.nerd-mirror-select option {
+  background: var(--bg, #141210);
+  color: var(--text, #f5f2ef);
+}
 .nerd-mirror-input { flex: 1; margin-bottom: 0; }
 .nerd-save-btn { white-space: nowrap; margin-top: 0; min-width: 110px; }
 .nerd-save-btn--ghost {
