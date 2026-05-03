@@ -545,6 +545,14 @@ body {
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
   background: linear-gradient(135deg, #3d2e28, #161210);
 }
+/* TrackCover in the hero placeholder must blend with the container gradient, not show its own surface-h tile. */
+.torrent-page--album-hero .album-hero-cover .track-cover {
+  background: transparent;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+}
 /* overflow:hidden на обложке обрезает тень; картинку режем на корне AlbumFolderCover. */
 .torrent-page--album-hero .album-hero-cover .album-folder-cover-root {
   border-radius: 4px;
