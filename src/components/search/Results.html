@@ -113,7 +113,7 @@
             :enriched="slskMeta.get(track.id) ?? null"
             :now-playing="nowPlayingId === track.id"
             :player-playing="playerPlaying"
-            @play="emit('play-slsk-track', $event)"
+            @play="emit('play-slsk-track', { track: $event, queue: trackEntitiesFiltered })"
             @download="emit('download-slsk-track', $event)"
             @like="emit('like-slsk-track', $event)"
             @open-source="emit('open-slsk-source', $event)"

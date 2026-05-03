@@ -450,7 +450,13 @@ function onToggleLikeTrack(track) {
 function onPlayTrack(track) {
   if (!isTrack(track)) return;
   allowPlayerAutoplay();
-  playTrackNow(track);
+  const albumTracks = currentAlbumTracks();
+  if (albumTracks.length) {
+    const idx = Math.max(0, albumTracks.findIndex((t) => t.id === track.id));
+    replaceQueue(albumTracks, idx);
+  } else {
+    playTrackNow(track);
+  }
 }
 
 function onOpenTrackSource(track) {
@@ -578,6 +584,7 @@ const {
   torrentFilesBeforeAlbumPreview,
   torrentSelectedBeforeAlbumPreview,
   currentAlbumLiked,
+  currentAlbumTracks,
   handleSelect,
   handleSelectLegacyTopic,
   handlePlay,
@@ -843,11 +850,17 @@ const {
  * A reference to the original `__entity` stays attached so we don't lose
  * the connection when TorrentView is finally migrated in Phase 6.
  */
-/** Play a single Track entity directly from search results. */
-function handlePlaySlskTrack(track) {
+/** Play a SoulSeek track and queue all subsequent results. */
+function handlePlaySlskTrack({ track, queue }) {
   if (!isTrack(track)) return;
   allowPlayerAutoplay();
-  playTrackNow(track);
+  const tracks = Array.isArray(queue) ? queue.filter(isTrack) : [];
+  if (tracks.length > 1) {
+    const idx = Math.max(0, tracks.findIndex((t) => t.id === track.id));
+    replaceQueue(tracks, idx);
+  } else {
+    playTrackNow(track);
+  }
 }
 
 /** SLSK track-row click → toggle like via the library store. */
