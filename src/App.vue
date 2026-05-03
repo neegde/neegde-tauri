@@ -539,7 +539,7 @@ const searchResultsTab = ref("tracks");
 
 watch(searchResolved, (resolved) => {
   if (!resolved) return;
-  const intent = (resolved as { intent?: string }).intent;
+  const intent = resolved?.intent;
   searchResultsTab.value = (intent === "album" || intent === "artist") ? "albums" : "tracks";
 });
 
