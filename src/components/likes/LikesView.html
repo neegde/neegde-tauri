@@ -1,0 +1,166 @@
+  <div class="likes-view">
+
+    <!-- Hero -->
+    <div class="likes-hero">
+      <div class="likes-hero-icon">
+        <svg width="60" height="60" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+      </div>
+      <div class="likes-hero-info">
+        <div class="likes-hero-label">Плейлист</div>
+        <div class="likes-hero-title">Мне нравится</div>
+        <div class="likes-hero-meta">
+          <span>{{ likesHeroMeta }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="likes-tabs" role="tablist" aria-label="Разделы избранного">
+      <button
+        type="button"
+        role="tab"
+        :class="['likes-tab', likesTab === 'tracks' ? 'active' : '']"
+        :aria-selected="likesTab === 'tracks'"
+        @click="likesTab = 'tracks'"
+      >
+        Треки
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :class="['likes-tab', likesTab === 'albums' ? 'active' : '']"
+        :aria-selected="likesTab === 'albums'"
+        @click="likesTab = 'albums'"
+      >
+        Альбомы
+      </button>
+    </div>
+
+    <!-- Tracks -->
+    <div v-show="likesTab === 'tracks'" class="likes-content">
+      <p v-if="tracks.length === 0" class="empty-msg">Нет понравившихся треков.</p>
+      <template v-else>
+        <div class="tracklist-header likes-tracklist-header">
+          <span class="likes-th-num">#</span>
+          <div class="likes-th-main">
+            <span class="likes-th-name-label">Название</span>
+          </div>
+          <span class="likes-th-actions-head" aria-hidden="true" />
+        </div>
+        <div
+          v-for="(row, i) in tracksWithLines"
+          :key="row.track.id"
+          :class="['track-row', 'likes-track-row', ...likesTrackRowClass(row.track)]"
+          @click="emit('play-track', row.track)"
+          @contextmenu.prevent="openTrackCtx($event, row.track)"
+        >
+          <div class="track-num">
+            <PlayingIndicator v-if="isNowPlayingTrack(row.track)" :live="playerPlaying" />
+            <template v-else>
+              <span class="track-num-val">{{ i + 1 }}</span>
+              <span class="track-num-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="5,3 19,12 5,21"/>
+                </svg>
+              </span>
+            </template>
+          </div>
+          <div class="likes-track-main">
+            <div
+              class="likes-thumb-frame"
+              :class="row.track.kind === 'soulseek' ? 'likes-thumb-frame--slsk' : 'likes-thumb-frame--rt'"
+              :title="row.track.kind === 'soulseek' ? 'SoulSeek' : 'RuTracker'"
+            >
+              <TrackCover :entity="row.track" :size="40" />
+            </div>
+            <div class="track-info">
+              <div class="track-name-wrap">
+                <div class="track-name" :title="likeTrackTooltip(row.track)">{{ row.lines.title }}</div>
+              </div>
+              <button
+                v-if="row.lines.subtitle"
+                class="likes-track-sub"
+                @click.stop="emit('open-track-source', row.track)"
+              >{{ row.lines.subtitle }}</button>
+            </div>
+          </div>
+          <div class="track-actions">
+            <button
+              class="track-btn like-btn liked"
+              title="Убрать лайк"
+              @click.stop="emit('toggle-like-track', row.track)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+            </button>
+            <button
+              class="track-btn dl"
+              title="Скачать"
+              @click.stop="emit('download-track', row.track)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v13M5 14l7 7 7-7"/>
+                <line x1="3" y1="21" x2="21" y2="21"/>
+              </svg>
+            </button>
+            <button
+              class="track-btn"
+              title="Перейти к источнику"
+              @click.stop="emit('open-track-source', row.track)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Albums -->
+    <div v-show="likesTab === 'albums'" class="likes-content likes-albums-grid">
+      <p v-if="albums.length === 0" class="empty-msg">Нет понравившихся альбомов.</p>
+      <div v-else class="results-grid">
+        <div
+          v-for="a in albums"
+          :key="a.id"
+          class="album-card"
+          @click="emit('open-liked-album', a)"
+        >
+          <div class="album-art">
+            <TrackCover :entity="a" fill />
+            <button
+              type="button"
+              class="album-art-play"
+              title="Открыть"
+              @click.stop="emit('open-liked-album', a)"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            </button>
+          </div>
+          <div class="album-name">{{ a.title }}</div>
+          <div v-if="a.artist" class="album-meta likes-album-artist">
+            <button
+              type="button"
+              class="likes-track-sub"
+              @click.stop="emit('open-liked-album', a)"
+            >{{ a.artist }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      :actions="likesCtxActions"
+      @action="onCtxAction"
+    />
+  </div>

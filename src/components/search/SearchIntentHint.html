@@ -1,0 +1,41 @@
+  <div v-if="resolving" class="sih sih--resolving">
+    <span class="sih-spin" aria-hidden="true" />
+    Распознаю…
+  </div>
+
+  <div v-else-if="hasCanonical" class="sih">
+    <svg class="sih-icon" width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+      <path d="M6 0 7 5 12 6 7 7 6 12 5 7 0 6 5 5Z"/>
+    </svg>
+    <span v-if="intentLabel" class="sih-chip">{{ intentLabel }}</span>
+    <span class="sih-canonical">
+      <span class="sih-artist">{{ canonicalArtist }}</span>
+      <template v-if="canonicalTitle">
+        <span class="sih-sep"> — </span>
+        <span class="sih-title">{{ canonicalTitle }}</span>
+      </template>
+    </span>
+    <button
+      type="button"
+      class="sih-revert"
+      :title="`Искать именно «${rawQuery}»`"
+      @click="emit('revert-to-raw')"
+    >← оригинал</button>
+    <div v-if="topCandidates.length" class="sih-alts">
+      <span class="sih-dot" aria-hidden="true">·</span>
+      <button
+        v-for="c in topCandidates"
+        :key="`${c.artist}|${c.title}`"
+        type="button"
+        class="sih-alt-btn"
+        @click="emit('search-candidate', c)"
+      >{{ c.artist }}{{ c.title ? ` — ${c.title}` : '' }}</button>
+    </div>
+  </div>
+
+  <div v-else-if="resolved && resolved.intent === 'raw'" class="sih sih--raw">
+    <svg class="sih-icon" width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+      <path d="M6 0 7 5 12 6 7 7 6 12 5 7 0 6 5 5Z"/>
+    </svg>
+    точный поиск
+  </div>

@@ -1,0 +1,119 @@
+.sih {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 3px 0 12px;
+  padding: 0 0 0 10px;
+  border-left: 2px solid rgba(var(--accent-rgb), 0.35);
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.sih--resolving {
+  color: var(--muted);
+  border-left-color: rgba(var(--accent-rgb), 0.2);
+}
+
+.sih--raw {
+  color: var(--muted2);
+  border-left-color: rgba(255, 255, 255, 0.1);
+}
+[data-theme="light"] .sih--raw {
+  border-left-color: rgba(0, 0, 0, 0.1);
+}
+
+.sih-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0.6;
+}
+
+.sih-chip {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.sih-canonical {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sih-artist {
+  color: var(--muted);
+}
+
+.sih-sep {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.sih-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sih-revert {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted2);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.1s;
+}
+.sih-revert:hover {
+  color: var(--accent);
+}
+
+.sih-alts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.sih-dot {
+  color: var(--muted2);
+}
+
+.sih-alt-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted2);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.1s;
+}
+.sih-alt-btn:hover {
+  color: var(--text);
+}
+
+.sih-spin {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid rgba(var(--accent-rgb), 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sih-spin 0.8s linear infinite;
+}
+@keyframes sih-spin {
+  to { transform: rotate(360deg); }
+}

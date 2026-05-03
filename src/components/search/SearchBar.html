@@ -1,0 +1,112 @@
+  <div ref="rootRef" class="search-bar-root">
+    <form class="search-form" @submit="submit">
+      <div class="search-input-wrap">
+        <span class="search-icon" aria-hidden="true">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M9 18V5l12-2v13"/>
+            <circle cx="6" cy="18" r="3"/>
+            <circle cx="18" cy="16" r="3"/>
+          </svg>
+        </span>
+        <input
+          class="search-input"
+          type="text"
+          placeholder="Название группы или исполнителя…"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          :value="modelValue"
+          @input="emit('update:modelValue', $event.target.value)"
+          @focus="openPanel"
+          @click="openPanel"
+        />
+        <button
+          v-if="modelValue"
+          type="button"
+          class="search-clear-btn"
+          title="Очистить"
+          @click="clear"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+        <button class="search-btn" type="submit" :disabled="loading">
+          <span v-if="loading" class="spinner" />
+          <template v-else>Найти</template>
+        </button>
+      </div>
+      <div v-if="showCategories" class="cat-tabs">
+        <button
+          v-for="c in CATS"
+          :key="c.id"
+          type="button"
+          :class="['cat-tab', cat === c.id ? 'active' : '']"
+          @click="cat = c.id"
+        >
+          {{ c.label }}
+        </button>
+      </div>
+    </form>
+
+    <Transition name="search-dd">
+      <div
+        v-if="panelOpen && history.length"
+        class="search-history-dropdown"
+        role="listbox"
+        aria-label="Недавние запросы"
+      >
+        <div class="search-history-dropdown-label">Недавние запросы</div>
+        <ul class="search-history-list search-history-list--dropdown" role="presentation">
+          <li
+            v-for="q in history"
+            :key="q"
+            class="search-history-item"
+          >
+            <button
+              type="button"
+              class="search-history-run"
+              @mousedown.prevent="pickQuery(q)"
+            >
+              <svg
+                class="search-history-run-icon"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="12 8 12 12 14 14"/>
+                <path d="M3.05 11A9 9 0 1 0 4 6.1"/>
+                <polyline points="3 3 3 7 7 7"/>
+              </svg>
+              <span class="search-history-query-text">{{ q }}</span>
+            </button>
+            <button
+              type="button"
+              class="search-history-remove"
+              title="Удалить из истории"
+              aria-label="Удалить запрос из истории"
+              @mousedown.prevent="removeQuery(q)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M18 6L6 18M6 6l12 12"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </li>
+        </ul>
+      </div>
+    </Transition>
+  </div>

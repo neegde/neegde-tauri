@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive } from "../../rutracker/search.js";
+import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, rutrackerCoverFetchEpoch } from "../../rutracker/search.js";
 import { getTorrentImageDataUrl, peekTorrentImage } from "../../torrent/torrentImageCache.js";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
 import { appDebugLog } from "../../appDebugLog.js";
@@ -25,7 +25,9 @@ const props = defineProps({
 
 const rootRef = ref(null);
 const coverErr = ref(false);
+const fetching = ref(false);
 let observer = null;
+let activeFetchId = 0;
 
 /**
  * Reactive computed — auto-updates whenever either cover cache is populated,
@@ -67,6 +69,7 @@ function disconnectObserver() {
 function setupCover() {
   disconnectObserver();
   coverErr.value = false;
+  fetching.value = false;
 
   const override = (props.overrideCoverUrl && String(props.overrideCoverUrl).trim()) || "";
   if (override) return;
@@ -98,15 +101,27 @@ function setupCover() {
     ([entry]) => {
       if (!entry?.isIntersecting) return;
       disconnectObserver();
+      const myId = ++activeFetchId;
+      fetching.value = true;
+      const promises = [];
       if (needTorrentFetch && magnet && idx != null) {
         void appDebugLog("cover", `CoverThumb visible — starting torrent cover fetch fileIdx=${idx} torrentId=${props.torrentId}`);
-        torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
-          .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
-          .catch((e) => void appDebugLog("cover", `CoverThumb torrent fetch failed — fileIdx=${idx} err=${String(e)}`));
+        promises.push(
+          torrentFileB64ForTrack({ source: props.source, torrentId: props.torrentId })
+            .then((b64) => getTorrentImageDataUrl(magnet, idx, b64))
+            .catch((e) => void appDebugLog("cover", `CoverThumb torrent fetch failed — fileIdx=${idx} err=${String(e)}`))
+        );
       }
       if (needRutrackerFetch && topicId) {
         void appDebugLog("cover", `CoverThumb visible — starting rutracker cover fetch topicId=${topicId}`);
-        getRutrackerCoverDataUrl(topicId).catch((e) => void appDebugLog("cover", `CoverThumb rutracker fetch failed — topicId=${topicId} err=${String(e)}`));
+        promises.push(
+          getRutrackerCoverDataUrl(topicId).catch((e) => void appDebugLog("cover", `CoverThumb rutracker fetch failed — topicId=${topicId} err=${String(e)}`))
+        );
+      }
+      if (promises.length) {
+        Promise.all(promises).finally(() => {
+          if (activeFetchId === myId) fetching.value = false;
+        });
       }
     },
     { rootMargin: "400px" }
@@ -118,34 +133,19 @@ function setupCover() {
 
 onMounted(setupCover);
 watch(
-  () => [props.torrentId, props.source, props.magnet, props.coverFileIdx, props.overrideCoverUrl],
+  () => [
+    props.torrentId,
+    props.source,
+    props.magnet,
+    props.coverFileIdx,
+    props.overrideCoverUrl,
+    // Re-run setupCover when Rutracker auth becomes available after a startup
+    // race — otherwise the observer stays disconnected and the cover never loads.
+    rutrackerCoverFetchEpoch.value,
+  ],
   () => setupCover()
 );
 onUnmounted(disconnectObserver);
 </script>
 
-<template>
-  <div
-    ref="rootRef"
-    :class="['cover-thumb', fill ? 'cover-thumb--fill' : '']"
-    :style="
-      fill
-        ? undefined
-        : { width: size + 'px', height: size + 'px', borderRadius: radius + 'px' }
-    "
-  >
-    <img
-      v-if="coverUrl && !coverErr"
-      :src="coverUrl"
-      :class="fill ? 'album-art-img' : 'cover-thumb-img'"
-      alt=""
-      draggable="false"
-      @error="coverErr = true; appDebugLog('cover', `CoverThumb <img> onerror — cover rendered but browser rejected it torrentId=${props.torrentId} coverFileIdx=${props.coverFileIdx}`)"
-    />
-    <svg v-else class="cover-thumb-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M9 18V5l12-2v13"/>
-      <circle cx="6" cy="18" r="3"/>
-      <circle cx="18" cy="16" r="3"/>
-    </svg>
-  </div>
-</template>
+<template src="./CoverThumb.html"></template>

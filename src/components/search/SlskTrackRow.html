@@ -1,0 +1,64 @@
+  <div
+    ref="rowRef"
+    :class="['slsk-track-row', nowPlaying ? (playerPlaying ? 'playing playing--active' : 'playing playing--paused') : '']"
+    @click="emit('play', track)"
+    @contextmenu.prevent="onContextMenu"
+  >
+    <div class="slsk-track-thumb-wrap" aria-hidden="true">
+      <img
+        v-if="coverUrl && !coverErr"
+        class="slsk-track-thumb"
+        :src="coverUrl"
+        alt=""
+        @error="coverErr = true"
+      >
+      <div v-else class="slsk-track-thumb slsk-track-thumb--placeholder">
+        <div v-if="coverFetching" class="cover-loading-spinner" />
+      </div>
+    </div>
+
+    <button class="slsk-track-play" title="Слушать" @click.stop="emit('play', track)">
+      <PlayingIndicator v-if="nowPlaying" :live="playerPlaying" />
+      <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <polygon points="5,3 19,12 5,21"/>
+      </svg>
+    </button>
+
+    <div class="slsk-track-name-area">
+      <div class="slsk-track-name-block slsk-track-name-block--enriched">
+        <span
+          class="slsk-track-enriched-artist"
+          :class="{ 'slsk-track-enriched-artist--show': artistVisible }"
+          aria-hidden="!artistVisible"
+        >{{ displayArtist }}</span>
+        <span class="slsk-track-enriched-title">
+          {{ displayText }}<span
+            v-if="animPhase !== 'done'"
+            class="slsk-cursor"
+            :class="`slsk-cursor--${animPhase}`"
+            aria-hidden="true"
+          ></span>
+        </span>
+      </div>
+    </div>
+
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      :actions="SLSK_CTX_ACTIONS"
+      @action="onCtxAction"
+    />
+
+    <span class="slsk-track-meta">
+      <span
+        v-if="peers > 1"
+        class="slsk-track-chip"
+        title="Число пиров в выдаче с тем же релизом или файлом"
+      >{{ peers }}×</span>
+      <span v-if="track.bitrate" class="slsk-track-chip">{{ track.bitrate }} kbps</span>
+      <span v-else-if="trackExt" class="slsk-track-chip">{{ trackExt }}</span>
+      <span v-if="track.duration" class="slsk-track-dur">{{ fmtDuration(track.duration) }}</span>
+      <span v-else-if="track.size" class="slsk-track-dur">{{ fmtSize(track.size) }}</span>
+    </span>
+  </div>

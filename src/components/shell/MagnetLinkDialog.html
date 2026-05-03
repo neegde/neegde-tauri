@@ -1,0 +1,74 @@
+  <Teleport to="body">
+    <Transition name="magnet-link">
+      <div
+        v-if="open"
+        class="magnet-link-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="magnet-link-title"
+        @click.self="onOverlayClick"
+      >
+        <div class="magnet-link-panel" @click.stop>
+          <div class="magnet-link-head">
+            <span v-if="resolving" class="magnet-link-spinner" aria-hidden="true" />
+            <h2 id="magnet-link-title" class="magnet-link-phase">
+              {{ resolving ? "Получение метаданных" : "Открыть по magnet-ссылке" }}
+            </h2>
+          </div>
+
+          <p class="magnet-link-msg">
+            {{
+              resolving
+                ? "Подключаемся к торрент-сети (DHT и трекеры). Первый раз это может занять время."
+                : "Вставьте ссылку из буфера — список треков появится, как у раздачи с RuTracker."
+            }}
+          </p>
+
+          <div
+            v-if="resolving"
+            class="magnet-link-bar-wrap magnet-link-bar-wrap--pulse"
+          >
+            <div class="magnet-link-bar magnet-link-bar--indet" />
+          </div>
+
+          <textarea
+            v-model="draft"
+            class="magnet-link-input"
+            :class="{ 'magnet-link-input--dim': resolving }"
+            placeholder="magnet:?xt=urn:btih:…"
+            rows="4"
+            autocomplete="off"
+            spellcheck="false"
+            :disabled="resolving"
+            @keydown="onKeydown"
+          />
+
+          <p v-if="error" class="magnet-link-error">{{ error }}</p>
+
+          <p class="magnet-link-hint">
+            BitTorrent зависит от сидов и сети — как при скачивании альбома на диск.
+          </p>
+
+          <div class="magnet-link-actions">
+            <button
+              type="button"
+              class="magnet-link-btn magnet-link-btn--ghost"
+              :disabled="resolving"
+              @click="onOverlayClick"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              class="magnet-link-btn magnet-link-btn--primary"
+              :disabled="resolving"
+              @click="onSubmit"
+            >
+              <span v-if="resolving" class="magnet-link-btn-spinner" aria-hidden="true" />
+              <template v-else>Открыть</template>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>

@@ -1,0 +1,253 @@
+/* ── Layer / panel / chat column ─────────────────────────────────────────── */
+.ob-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147482000;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  background-color: var(--bg);
+  overflow: hidden;
+  padding: clamp(8px, 1.5vmin, 18px) clamp(16px, 4.5vw, 56px);
+  box-sizing: border-box;
+}
+
+.ob-panel {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ob-chat {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(8px, 2vmin, 24px) 0;
+  overflow-y: auto;
+}
+
+.ob-inner {
+  width: min(100%, 440px);
+  flex-shrink: 0;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: clamp(12px, 2.2vmin, 26px);
+}
+
+/* ── Text bubble ─────────────────────────────────────────────────────────── */
+.ob-msg {
+  display: flex;
+  align-items: flex-end;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.ob-bubble {
+  max-width: 100%;
+  padding: clamp(14px, 2vmin, 24px) clamp(18px, 2.6vmin, 34px);
+  border-radius: clamp(16px, 2.5vmin, 22px);
+  border-bottom-left-radius: clamp(4px, 0.8vmin, 8px);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: clamp(17px, 3.1vmin, 32px);
+  line-height: 1.46;
+  color: var(--text);
+}
+
+.ob-bubble p {
+  margin: 0;
+  text-align: left;
+}
+
+/* ── Login card ──────────────────────────────────────────────────────────── */
+.ob-card {
+  border: 1px solid var(--border);
+  border-radius: clamp(12px, 1.8vmin, 16px);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.ob-card-success {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: clamp(14px, 2vmin, 20px) clamp(16px, 2.2vmin, 22px);
+  font-size: clamp(13px, 2vmin, 15px);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ob-success-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ob-card-probing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: clamp(14px, 2vmin, 20px) clamp(16px, 2.2vmin, 22px);
+  font-size: clamp(13px, 2vmin, 15px);
+  color: var(--muted);
+}
+
+.ob-card-unreachable {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: clamp(14px, 2vmin, 20px) clamp(16px, 2.2vmin, 22px);
+}
+.ob-unreach-title {
+  margin: 0;
+  font-size: clamp(13px, 2vmin, 15px);
+  font-weight: 700;
+  color: var(--text);
+}
+.ob-unreach-desc {
+  margin: 0;
+  font-size: clamp(12px, 1.8vmin, 13px);
+  color: var(--muted);
+  line-height: 1.4;
+}
+.ob-proxy-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ob-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: clamp(14px, 2vmin, 20px) clamp(16px, 2.2vmin, 22px);
+}
+
+.ob-form-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: clamp(13px, 1.9vmin, 14px);
+}
+
+.ob-form-error {
+  margin: 0;
+  font-size: clamp(11px, 1.6vmin, 12px);
+  color: var(--red, #e05252);
+}
+
+.ob-form-hint {
+  margin: 0;
+  font-size: clamp(11px, 1.6vmin, 12px);
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.ob-form-submit {
+  width: 100%;
+  font-size: clamp(12px, 1.8vmin, 13px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+}
+
+/* ── Action buttons ──────────────────────────────────────────────────────── */
+.ob-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ob-btn {
+  font-size: clamp(13px, 1.9vmin, 15px);
+  font-weight: 600;
+  padding: clamp(9px, 1.4vmin, 13px) clamp(20px, 3vmin, 30px);
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.ob-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.ob-btn--primary { background: var(--accent); color: #000; }
+.ob-btn--primary:not(:disabled):hover  { opacity: 0.85; }
+.ob-btn--primary:not(:disabled):active { opacity: 0.70; }
+
+.ob-btn--ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.ob-btn--ghost:not(:disabled):hover  { color: var(--text); border-color: var(--muted); }
+.ob-btn--ghost:not(:disabled):active { opacity: 0.7; }
+
+.ob-btn--small {
+  font-size: clamp(12px, 1.6vmin, 13px);
+  padding: clamp(6px, 1vmin, 9px) clamp(14px, 2vmin, 18px);
+  font-weight: 500;
+}
+.ob-btn--active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Staggered entrance animation ────────────────────────────────────────── */
+.ob-item {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 0.34s ease,
+    transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ob-item--visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── Layer entrance / exit ───────────────────────────────────────────────── */
+.ob-fade-layer-enter-active .ob-panel,
+.ob-fade-layer-leave-active .ob-panel {
+  transition: opacity 0.34s ease, transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ob-fade-layer-enter-from .ob-panel,
+.ob-fade-layer-leave-to   .ob-panel {
+  opacity: 0;
+  transform: translateY(10px) scale(0.99);
+}
+
+/* Step cross-fade */
+.ob-step-enter-active { transition: opacity 0.2s ease; }
+.ob-step-leave-active { transition: opacity 0.15s ease; }
+.ob-step-enter-from,
+.ob-step-leave-to     { opacity: 0; }
+
+/* Buttons entrance */
+.ob-btns-enter-active {
+  transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ob-btns-enter-from { opacity: 0; transform: translateY(6px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-item,
+  .ob-fade-layer-enter-active .ob-panel,
+  .ob-fade-layer-leave-active .ob-panel,
+  .ob-step-enter-active,
+  .ob-step-leave-active,
+  .ob-btns-enter-active {
+    transition: none;
+  }
+}

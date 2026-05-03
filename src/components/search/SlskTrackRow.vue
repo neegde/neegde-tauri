@@ -1,23 +1,51 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
-import {
-  getSlskCoverDataUrl,
-  peekSlskCover,
-  getSlskCoverReactive,
-} from "../../soulseek/coverCache.js";
+import { ref, computed, watch, onMounted, onUnmounted, toRef } from "vue";
+import { getAlbum, entitiesVersion } from "../../stores/entities.js";
+import { useEntityCover } from "../../composables/useEntityCover.js";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
+import PlayingIndicator from "../shared/PlayingIndicator.vue";
 
+/**
+ * Row for a SoulSeek Track entity. Reads Track directly; cover info is
+ * resolved via the parent Album (through the entities registry) when the
+ * Track is an album child, otherwise via `track.getCoverRef()` (stamped
+ * by the provider for orphan singles).
+ */
 const props = defineProps({
-  track:    { type: Object, required: true },
-  enriched: { type: Object, default: null }, // { artist, title, coverUrl? }
+  /** @type {import("vue").PropType<import("../../types/entities.js").Track>} */
+  track: { type: Object, required: true },
+  /** Metadata enrichment from iTunes / filename parser: { artist, title, coverUrl? } */
+  enriched: { type: Object, default: null },
+  /** This row's track is the currently-playing track in the queue. */
+  nowPlaying: { type: Boolean, default: false },
+  /** Audio element is actively playing (vs paused). */
+  playerPlaying: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["play", "download", "like", "open-source", "add-to-playlist"]);
 
+// ── Derived fields ───────────────────────────────────────────────────────────
+
+/** Peers count — from parent Album when track has albumId, else from orphan's raw. */
+const peers = computed(() => {
+  entitiesVersion.value; // react when parent registers/updates
+  if (props.track.albumId) {
+    const parent = getAlbum(props.track.albumId);
+    if (parent?.peers) return parent.peers;
+  }
+  return props.track.getPeers?.() ?? 0;
+});
+
+const trackExt = computed(() => {
+  const fn = props.track.fileName ?? "";
+  const dot = fn.lastIndexOf(".");
+  return dot >= 0 ? fn.slice(dot + 1).toUpperCase() : "";
+});
+
 // ── Context menu ─────────────────────────────────────────────────────────────
 const ctxOpen = ref(false);
-const ctxX    = ref(0);
-const ctxY    = ref(0);
+const ctxX = ref(0);
+const ctxY = ref(0);
 
 const SLSK_CTX_ACTIONS = [
   { id: "source",   label: "Источник (SoulSeek)", icon: "source" },
@@ -57,78 +85,35 @@ function fmtSize(bytes) {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-function trackExt(track) {
-  const fp = track.slsk_filepath ?? track.name ?? "";
-  const dot = fp.lastIndexOf(".");
-  return dot >= 0 ? fp.slice(dot + 1).toUpperCase() : "";
-}
-
 // ── Cover art ────────────────────────────────────────────────────────────────
-const rowRef   = ref(null);
-const coverErr = ref(false);
+const rowRef = ref(null);
+const entityCover = useEntityCover(toRef(props, "track"), rowRef);
+// Fall back to iTunes/filename-parser enriched cover when the SoulSeek folder
+// has none.
+const coverUrl = computed(() => entityCover.coverUrl.value ?? props.enriched?.coverUrl ?? null);
+const coverErr = entityCover.coverErr;
+const coverFetching = entityCover.fetching;
 
-const folderCoverUrl = computed(() => {
-  const u = props.track?.slsk_cover_username;
-  const p = props.track?.slsk_cover_filepath;
-  if (!u || !p) return null;
-  return getSlskCoverReactive(u, p);
-});
-
-const coverUrl = computed(() => folderCoverUrl.value ?? props.enriched?.coverUrl ?? null);
-
-watch(
-  () => [props.track?.id, props.track?.slsk_cover_filepath, props.enriched?.coverUrl],
-  () => { coverErr.value = false; },
-);
-
-let coverObserver = null;
-
-function disconnectObserver() {
-  if (coverObserver) { coverObserver.disconnect(); coverObserver = null; }
-}
-
-function setupCoverObserver() {
-  disconnectObserver();
-  coverErr.value = false;
-  const u  = props.track?.slsk_cover_username;
-  const p  = props.track?.slsk_cover_filepath;
-  const sz = props.track?.slsk_cover_size ?? 0;
-  if (!u || !p) return;
-  if (peekSlskCover(u, p) !== undefined) return;
-  coverObserver = new IntersectionObserver(
-    ([entry]) => {
-      if (!entry?.isIntersecting) return;
-      disconnectObserver();
-      void getSlskCoverDataUrl(u, p, sz).catch(() => {});
-    },
-    { rootMargin: "400px" },
-  );
-  const el = rowRef.value;
-  if (el) coverObserver.observe(el);
-}
-
-watch(
-  () => [props.track?.slsk_cover_filepath, props.track?.slsk_cover_username],
-  () => nextTick(setupCoverObserver),
-);
-
-// ── Terminal cursor animation ─────────────────────────────────────────────────
-// States: 'waiting' → 'erasing' → 'typing' → 'fading' → 'done'
-//
-// Two-line layout is always used once animation starts (or enriched is set).
-// The artist row starts collapsed (max-height:0, opacity:0) and expands when
-// animPhase becomes 'fading', so the row height never jumps at 'done'.
-
-const animPhase   = ref("waiting");
-const displayText = ref("");         // title slot text during animation
+// ── Title animation (preserved from previous impl) ───────────────────────────
+const animPhase = ref("waiting");
+const displayText = ref("");
 let animTimer = null;
 
 const BASE_MS = 18;
-const MAX_MS  = 650;
+const MAX_MS = 650;
 
-// Artist row is visible in fading+done phases (if artist exists)
-const artistVisible = computed(
+// Track fields are already stamped by the resolver inside `buildTrack`, so
+// `track.artist` / `track.title` are clean baseline names without a network
+// call. Enrichment (iTunes/MB) can still override via the erase/type animation.
+const waitingArtist = computed(
+  () => animPhase.value === "waiting" && !!props.track.artist,
+);
+const enrichedArtist = computed(
   () => (animPhase.value === "fading" || animPhase.value === "done") && !!props.enriched?.artist,
+);
+const artistVisible = computed(() => waitingArtist.value || enrichedArtist.value);
+const displayArtist = computed(() =>
+  props.enriched?.artist ?? props.track.artist ?? "",
 );
 
 function clearAnim() { clearTimeout(animTimer); animTimer = null; }
@@ -136,20 +121,28 @@ function clearAnim() { clearTimeout(animTimer); animTimer = null; }
 function initAnim() {
   clearAnim();
   if (props.enriched) {
-    displayText.value = props.enriched.title ?? props.track?.name ?? "";
-    animPhase.value   = "done";
+    displayText.value = props.enriched.title ?? props.track.title ?? "";
+    animPhase.value = "done";
   } else {
-    displayText.value = props.track?.name ?? "";
-    animPhase.value   = "waiting";
+    displayText.value = props.track.title ?? "";
+    animPhase.value = "waiting";
   }
 }
 
-onMounted(() => {
-  initAnim();
-  nextTick(setupCoverObserver);
-});
+onMounted(initAnim);
 
 watch(() => props.track?.id, initAnim);
+
+// Deezer/other late enrichment may rewrite `track.title` / `track.artist`
+// in-place and bump `entitiesVersion`. Refresh the baseline while we're
+// still in the "waiting" phase so the row reflects the canonical name
+// without going through the erase/type animation (that's reserved for
+// the iTunes enrichment flow).
+watch([() => props.track?.title, () => props.track?.artist, entitiesVersion], () => {
+  if (animPhase.value === "waiting") {
+    displayText.value = props.track.title ?? "";
+  }
+});
 
 watch(() => props.enriched, (val) => {
   if (!val || animPhase.value === "done") return;
@@ -158,11 +151,10 @@ watch(() => props.enriched, (val) => {
 
 function startEraseType(enriched) {
   clearAnim();
-  // Only animate the title; artist will fade in separately at 'fading' phase
-  const target  = enriched.title ?? "";
-  const source  = displayText.value;
-  const total   = source.length + target.length;
-  const msChar  = Math.min(BASE_MS, MAX_MS / Math.max(total, 1));
+  const target = enriched.title ?? "";
+  const source = displayText.value;
+  const total = source.length + target.length;
+  const msChar = Math.min(BASE_MS, MAX_MS / Math.max(total, 1));
 
   animPhase.value = "erasing";
   let pos = source.length;
@@ -179,7 +171,6 @@ function startEraseType(enriched) {
           displayText.value = target.slice(0, ++pos);
           animTimer = setTimeout(typeStep, msChar);
         } else {
-          // Start fading cursor + reveal artist row simultaneously
           animPhase.value = "fading";
           animTimer = setTimeout(() => { animPhase.value = "done"; }, 380);
         }
@@ -188,82 +179,7 @@ function startEraseType(enriched) {
   })();
 }
 
-onUnmounted(() => {
-  clearAnim();
-  disconnectObserver();
-});
+onUnmounted(clearAnim);
 </script>
 
-<template>
-  <div
-    ref="rowRef"
-    class="slsk-track-row"
-    @click="emit('play', track)"
-    @contextmenu.prevent="onContextMenu"
-  >
-    <div class="slsk-track-thumb-wrap" aria-hidden="true">
-      <img
-        v-if="coverUrl && !coverErr"
-        class="slsk-track-thumb"
-        :src="coverUrl"
-        alt=""
-        @error="coverErr = true"
-      >
-      <div v-else class="slsk-track-thumb slsk-track-thumb--placeholder" />
-    </div>
-
-    <button class="slsk-track-play" title="Слушать" @click.stop="emit('play', track)">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <polygon points="5,3 19,12 5,21"/>
-      </svg>
-    </button>
-
-    <!-- Name area:
-         - During 'waiting' (no enriched yet): single-line span
-         - Once animating or enriched: two-line div with artist row starting collapsed.
-           The artist row expands smoothly when animPhase hits 'fading',
-           so row height never jumps at the 'done' transition. -->
-    <div class="slsk-track-name-area">
-      <!-- Plain single line while waiting for first enrichment -->
-      <span v-if="animPhase === 'waiting'" class="slsk-track-name-block">
-        {{ displayText }}<span class="slsk-cursor slsk-cursor--waiting" aria-hidden="true"></span>
-      </span>
-      <!-- Two-line layout: used from erasing phase onward -->
-      <div v-else class="slsk-track-name-block slsk-track-name-block--enriched">
-        <span
-          class="slsk-track-enriched-artist"
-          :class="{ 'slsk-track-enriched-artist--show': artistVisible }"
-          aria-hidden="!artistVisible"
-        >{{ enriched?.artist ?? '' }}</span>
-        <span class="slsk-track-enriched-title">
-          {{ displayText }}<span
-            v-if="animPhase !== 'done'"
-            class="slsk-cursor"
-            :class="`slsk-cursor--${animPhase}`"
-            aria-hidden="true"
-          ></span>
-        </span>
-      </div>
-    </div>
-
-    <TrackContextMenu
-      v-model:open="ctxOpen"
-      :x="ctxX"
-      :y="ctxY"
-      :actions="SLSK_CTX_ACTIONS"
-      @action="onCtxAction"
-    />
-
-    <span class="slsk-track-meta">
-      <span
-        v-if="Number(track.seeders) > 1"
-        class="slsk-track-chip"
-        title="Число пиров в выдаче с тем же релизом или файлом (чем больше, тем выше строка в списке)"
-      >{{ track.seeders }}×</span>
-      <span v-if="track.bitrate" class="slsk-track-chip">{{ track.bitrate }} kbps</span>
-      <span v-else-if="trackExt(track)" class="slsk-track-chip">{{ trackExt(track) }}</span>
-      <span v-if="track.duration" class="slsk-track-dur">{{ fmtDuration(track.duration) }}</span>
-      <span v-else-if="track.size" class="slsk-track-dur">{{ fmtSize(track.size) }}</span>
-    </span>
-  </div>
-</template>
+<template src="./SlskTrackRow.html"></template>

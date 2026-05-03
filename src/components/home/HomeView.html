@@ -1,0 +1,237 @@
+  <div class="home-view">
+
+    <!-- Empty state -->
+    <div v-if="isEmpty" class="home-empty">
+      <div class="home-empty-hero" aria-hidden="true">
+        <div class="home-empty-disc">
+          <span class="home-empty-disc-groove" />
+          <span class="home-empty-disc-label" />
+        </div>
+        <div class="home-empty-waves">
+          <span /><span /><span /><span /><span />
+        </div>
+      </div>
+      <p class="home-empty-title">Добро пожаловать</p>
+      <p class="home-empty-desc">
+        Начните с поиска: выберите раздачу и нажмите воспроизведение.
+      </p>
+      <button class="home-empty-btn" @click="emit('go-to-search')">Найти музыку</button>
+    </div>
+
+    <template v-else>
+
+      <section class="home-section" aria-labelledby="home-recent-heading">
+        <h2 id="home-recent-heading" class="home-section-title">Недавно слушали</h2>
+        <div class="home-grid">
+          <article
+            v-for="item in recentSlice"
+            :key="item.id"
+            class="home-card"
+          >
+            <div class="home-card-cover-wrap">
+              <button
+                type="button"
+                class="home-card-open home-card-open--cover"
+                @click="emit('open-recent', item)"
+              >
+                <div class="home-card-cover">
+                  <CoverThumb
+                    :torrent-id="item.id"
+                    :source="item.source"
+                    :size="120"
+                    :radius="6"
+                    :fill="true"
+                  />
+                  <div class="home-card-play-overlay">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <polygon points="7,4 21,12 7,20"/>
+                    </svg>
+                  </div>
+                </div>
+              </button>
+              <!-- Зона только в правом верхнем углу: крестик не перекрывает выпадающий поиск и виден по hover -->
+              <div class="home-card-remove-corner">
+                <button
+                  type="button"
+                  class="home-card-remove"
+                  title="Убрать из недавних"
+                  aria-label="Убрать из недавних"
+                  @click.stop="emit('remove-recent', item)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M18 6L6 18M6 6l12 12"
+                      stroke="currentColor"
+                      stroke-width="2.25"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="home-card-open home-card-open--text"
+              @click="emit('open-recent', item)"
+            >
+              <div class="home-card-name">{{ torrentDisplayName(item.name) }}</div>
+              <div v-if="item.artist" class="home-card-sub">{{ item.artist }}</div>
+            </button>
+          </article>
+        </div>
+      </section>
+
+      <!-- ── Ваши исполнители ───────────────────────────────────────── -->
+      <section v-if="topArtists.length" class="home-section">
+        <h2 class="home-section-title">Ваши исполнители</h2>
+        <div class="artist-pills">
+          <button
+            v-for="artist in topArtists"
+            :key="artist"
+            class="artist-pill"
+            @click="emit('search-query', artist)"
+          >
+            {{ artist }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── Stats row ──────────────────────────────────────────────── -->
+      <div class="stats-row">
+        <section class="stat-card stat-month">
+          <div class="stat-card-label">Активность</div>
+          <div class="stat-month-sentence">
+            В {{ currentMonthName }} вы открыли
+            <strong>{{ thisMonthCount }}
+            {{ thisMonthCount === 1 ? "раздачу" : thisMonthCount < 5 ? "раздачи" : "раздач" }}</strong>
+            — {{ thisMonthCount === 0 ? "пора послушать что-нибудь" : thisMonthCount < 5 ? "неплохое начало" : thisMonthCount < 15 ? "так держать" : "настоящий меломан" }}
+          </div>
+          <div class="stat-month-hint">Раздача = альбом или сборник на Rutracker</div>
+        </section>
+      </div>
+
+    </template>
+
+    <section class="home-intro" aria-labelledby="home-intro-heading">
+      <div class="home-intro-head">
+        <h2 id="home-intro-heading" class="home-intro-title">Как это работает</h2>
+        <p class="home-intro-lead">
+          Простой рассказ по шагам: от поиска раздачи до звука в наушниках.
+        </p>
+      </div>
+
+      <div class="home-unified">
+        <div
+          class="home-story-track"
+          role="progressbar"
+          :aria-valuenow="storyStep + 1"
+          :aria-valuemin="1"
+          :aria-valuemax="storySteps.length"
+          aria-label="Прогресс подсказки"
+        >
+          <span
+            class="home-story-track-fill"
+            :style="{ width: ((100 * (storyStep + 1)) / storySteps.length) + '%' }"
+          />
+        </div>
+
+        <div class="home-story-stage">
+          <Transition name="home-story" mode="out-in">
+            <div :key="storyStep" class="home-story-slide">
+              <div class="home-story-fig" :class="'home-story-fig--' + storyStep" aria-hidden="true">
+                <!-- 0: поиск + карточка -->
+                <template v-if="storyStep === 0">
+                  <div class="home-fig-search">
+                    <span class="home-fig-lens" />
+                    <span class="home-fig-handle" />
+                  </div>
+                  <div class="home-fig-album">
+                    <span class="home-fig-album-dot" />
+                    <span class="home-fig-album-lines" />
+                  </div>
+                </template>
+                <!-- 1: список треков -->
+                <template v-else-if="storyStep === 1">
+                  <div class="home-fig-tracks">
+                    <span class="home-fig-track" />
+                    <span class="home-fig-track home-fig-track--on" />
+                    <span class="home-fig-track" />
+                  </div>
+                </template>
+                <!-- 2: пиры -->
+                <template v-else-if="storyStep === 2">
+                  <div class="home-fig-swarm">
+                    <span class="home-fig-peer" />
+                    <span class="home-fig-peer" />
+                    <span class="home-fig-peer" />
+                    <span class="home-fig-you">Вы</span>
+                  </div>
+                </template>
+                <!-- 3: буфер -->
+                <template v-else-if="storyStep === 3">
+                  <div class="home-fig-buf">
+                    <span class="home-fig-buf-label">буфер</span>
+                    <div class="home-fig-buf-track">
+                      <span class="home-fig-buf-fill" />
+                    </div>
+                  </div>
+                </template>
+                <!-- 4: звук -->
+                <template v-else>
+                  <div class="home-fig-sound">
+                    <svg viewBox="0 0 64 56" fill="none" class="home-fig-speaker-svg">
+                      <path
+                        d="M12 18 H20 L28 12 V44 L20 38 H12 V18 Z"
+                        fill="rgba(var(--accent-rgb), 0.12)"
+                        stroke="var(--accent)"
+                        stroke-width="2"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        class="home-fig-snd-w1"
+                        d="M34 22 C38 26 38 30 34 34"
+                        stroke="var(--accent)"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                      />
+                      <path
+                        class="home-fig-snd-w2"
+                        d="M40 18 C46 24 46 32 40 38"
+                        stroke="var(--accent-h)"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        opacity="0.9"
+                      />
+                    </svg>
+                    <div class="home-fig-bars">
+                      <span /><span /><span /><span />
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <h3 class="home-story-title">{{ storySteps[storyStep].title }}</h3>
+              <p class="home-story-caption">{{ storySteps[storyStep].caption }}</p>
+            </div>
+          </Transition>
+        </div>
+
+        <div class="home-story-dots" role="tablist" aria-label="Шаги">
+          <button
+            v-for="(s, i) in storySteps"
+            :key="i"
+            type="button"
+            role="tab"
+            class="home-story-dot"
+            :class="{ 'home-story-dot--active': i === storyStep }"
+            :aria-selected="i === storyStep"
+            :aria-label="`Шаг ${i + 1}: ${s.title}`"
+            @click="storyStep = i"
+          />
+        </div>
+
+        <p class="home-unified-foot">
+          Очередь и эквалайзер хранятся только у вас на компьютере.
+        </p>
+      </div>
+    </section>
+  </div>

@@ -1,33 +1,49 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { getRutrackerCoverDataUrl, peekRutrackerCover, getCoverReactive, prefetchTorrentDetails } from "../../rutracker/search.js";
+import { ref, computed, onUnmounted, toRef } from "vue";
 import {
   getSlskCoverDataUrl,
   peekSlskCover,
-  getSlskCoverReactive,
 } from "../../soulseek/coverCache.js";
-import { dominantFormatFromName } from "../../lib/utils.js";
+import { prefetchTorrentDetails } from "../../rutracker/search.js";
+import { useEntityCover } from "../../composables/useEntityCover.js";
 
+/**
+ * Album card — the single display component for both RuTracker and
+ * SoulSeek releases. Reads directly from an `Album` entity.
+ */
 const props = defineProps({
-  torrent: Object,
-  selected: Boolean,
+  /** @type {import("vue").PropType<import("../../types/entities.js").Album>} */
+  album: { type: Object, required: true },
+  selected: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["select"]);
 
-const seeds = Number(props.torrent.seeders) || 0;
+const source = computed(() => props.album.sources?.[0]?.kind ?? null);
+const isSoulseek = computed(() => source.value === "soulseek");
+const isRutracker = computed(() => source.value === "rutracker");
+
+const topicId = computed(() =>
+  isRutracker.value ? props.album.sources[0]?.refs?.topicId ?? null : null,
+);
+
+const slskCover = computed(() =>
+  isSoulseek.value ? props.album.sources[0]?.raw?.cover ?? null : null,
+);
+
+const seeders = computed(() => props.album.seeders ?? 0);
+const peers = computed(() => props.album.peers ?? 0);
+const trackCount = computed(() => props.album.trackIds?.length ?? 0);
+const title = computed(() =>
+  props.album.artist ? `${props.album.artist} — ${props.album.title}` : props.album.title,
+);
+
 const formatLabel = computed(() => {
-  if (props.torrent?.source === "soulseek") {
-    // Extract format from category like "MP3 320 kbps" → "MP3 320"
-    const cat = props.torrent?.category ?? "";
-    const m = cat.match(/^(\w+)\s+(\d+)/);
-    if (m) return `${m[1]} ${m[2]}`;
-    return cat || null;
-  }
-  return dominantFormatFromName(props.torrent?.name);
+  const fmt = props.album.format;
+  const br = props.album.bitrate;
+  if (fmt && br) return `${fmt} ${br}`;
+  return fmt ?? null;
 });
-const isSoulseek = computed(() => props.torrent?.source === "soulseek");
-const slskTrackCount = computed(() => props.torrent?.slsk_tracks?.length ?? 0);
 
 function seedsLabel(n) {
   return `${n} сид${n === 1 ? "" : n < 5 ? "а" : "ов"}`;
@@ -38,102 +54,20 @@ function tracksLabel(n) {
 }
 
 const cardRef = ref(null);
-const coverErr = ref(false);
-let observer = null;
+const { coverUrl, coverErr } = useEntityCover(toRef(props, "album"), cardRef);
 
-/**
- * Reactive computed — auto-updates whenever coverCache is populated,
- * regardless of which code path stored the cover.
- */
-const coverUrl = computed(() => {
-  if (props.torrent?.source === "soulseek") {
-    const u = props.torrent?.slsk_cover_username;
-    const p = props.torrent?.slsk_cover_filepath;
-    if (!u || !p) return null;
-    return getSlskCoverReactive(u, p);
-  }
-  if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return null;
-  return getCoverReactive(String(props.torrent.id));
-});
-
-// Reset error state when torrent changes
-watch(
-  () => [props.torrent?.id, props.torrent?.source, props.torrent?.slsk_cover_filepath],
-  () => {
-    coverErr.value = false;
-  },
-);
-
-function disconnectObserver() {
-  if (observer) {
-    observer.disconnect();
-    observer = null;
-  }
-}
-
-function setupCoverObserver() {
-  disconnectObserver();
-  coverErr.value = false;
-  if (props.torrent?.source === "soulseek") {
-    if (!props.torrent?.slsk_cover_filepath || !props.torrent?.slsk_cover_username) return;
-    const u = props.torrent.slsk_cover_username;
-    const p = props.torrent.slsk_cover_filepath;
-    const sz = props.torrent.slsk_cover_size ?? 0;
-    if (peekSlskCover(u, p) !== undefined) return;
-    observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry?.isIntersecting) return;
-        disconnectObserver();
-        void getSlskCoverDataUrl(u, p, sz).catch(() => {});
-      },
-      { rootMargin: "400px" },
-    );
-    const el = cardRef.value;
-    if (el) observer.observe(el);
-    return;
-  }
-
-  if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
-
-  const topicId = String(props.torrent.id);
-
-  // Skip observer if cover already fetched (hit) or confirmed absent (null in LRU)
-  const cached = peekRutrackerCover(topicId);
-  if (cached !== undefined) return;
-
-  observer = new IntersectionObserver(
-    ([entry]) => {
-      if (!entry?.isIntersecting) return;
-      disconnectObserver();
-      // Fire-and-forget: result stored in reactive coverCache → computed auto-updates
-      getRutrackerCoverDataUrl(topicId).catch(() => {});
-    },
-    { rootMargin: "400px" }
-  );
-
-  const el = cardRef.value;
-  if (el) observer.observe(el);
-}
-
-onMounted(setupCoverObserver);
-onUnmounted(() => {
-  disconnectObserver();
-  clearTimeout(hoverTimer);
-});
-
-// ── Hover-prefetch ────────────────────────────────────────────────────────────
+// ── Hover prefetch (RT details warm-up / SLSK cover eager fetch) ─────────────
 let hoverTimer = null;
 
 function onMouseenter() {
-  if (props.torrent?.source !== "rutracker" || !props.torrent?.id) return;
-  hoverTimer = setTimeout(() => prefetchTorrentDetails(String(props.torrent?.id)), 300);
+  if (!isRutracker.value || !topicId.value) return;
+  hoverTimer = setTimeout(() => prefetchTorrentDetails(String(topicId.value)), 300);
 }
 
 function onMouseenterSlsk() {
-  if (props.torrent?.source !== "soulseek" || !props.torrent?.slsk_cover_filepath) return;
-  const u = props.torrent?.slsk_cover_username;
-  const p = props.torrent?.slsk_cover_filepath;
-  const sz = props.torrent?.slsk_cover_size ?? 0;
+  const u = slskCover.value?.slsk_username;
+  const p = slskCover.value?.slsk_filepath;
+  const sz = slskCover.value?.size ?? 0;
   if (!u || !p) return;
   if (peekSlskCover(u, p) !== undefined) return;
   void getSlskCoverDataUrl(u, p, sz).catch(() => {});
@@ -144,54 +78,7 @@ function onMouseleave() {
   hoverTimer = null;
 }
 
-watch(
-  () => [props.torrent?.id, props.torrent?.source, props.torrent?.slsk_cover_filepath],
-  () => setupCoverObserver()
-);
-
+onUnmounted(() => clearTimeout(hoverTimer));
 </script>
 
-<template>
-  <div
-    ref="cardRef"
-    :class="['album-card', selected ? 'selected' : '']"
-    :title="torrent.name"
-    @click="emit('select', torrent)"
-    @mouseenter="isSoulseek ? onMouseenterSlsk() : onMouseenter()"
-    @mouseleave="onMouseleave"
-  >
-    <div class="album-art">
-      <img
-        v-if="coverUrl && !coverErr"
-        :src="coverUrl"
-        class="album-art-img"
-        alt=""
-        @error="coverErr = true"
-      />
-      <svg v-else class="album-art-fallback" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M9 18V5l12-2v13"/>
-        <circle cx="6" cy="18" r="3"/>
-        <circle cx="18" cy="16" r="3"/>
-      </svg>
-      <button
-        class="album-art-play"
-        title="Открыть"
-        @click.stop="emit('select', torrent)"
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <polygon points="5,3 19,12 5,21"/>
-        </svg>
-      </button>
-      <span v-if="formatLabel" class="album-format-badge">{{ formatLabel }}</span>
-    </div>
-    <div class="album-name">{{ torrent.name }}</div>
-    <div class="album-meta">
-      <span v-if="isSoulseek" class="album-seeds seeds-ok slsk-track-count">
-        {{ slskTrackCount > 1 ? tracksLabel(slskTrackCount) : torrent.category }}
-      </span>
-      <span v-else :class="['album-seeds', seeds > 0 ? 'seeds-ok' : 'seeds-dead']">
-        {{ seedsLabel(seeds) }}
-      </span>
-    </div>
-  </div>
-</template>
+<template src="./AlbumCard.html"></template>

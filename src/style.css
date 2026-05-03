@@ -3,6 +3,8 @@
   --sidebar-bg:  #0c0b0a;
   --surface:     #1c1a18;
   --surface-h:   #262320;
+  --cover-spinner-fg:    var(--accent);
+  --cover-spinner-track: color-mix(in srgb, var(--accent) 28%, transparent);
   --border:      rgba(255, 255, 255, 0.07);
   --accent:      #fc741d;
   --accent-h:    #ff9350;
@@ -34,6 +36,11 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
+
+#app {
+  min-height: 100%;
+  height: 100%;
+}
 
 body {
   background: var(--bg);
@@ -209,6 +216,17 @@ body {
 }
 .login-btn:disabled            { opacity: 0.5; cursor: not-allowed; }
 .login-btn:not(:disabled):hover { background: var(--accent-h); transform: scale(1.02); }
+.login-btn--ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border, rgba(255,255,255,.14));
+  font-weight: 600;
+}
+.login-btn--ghost:not(:disabled):hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--muted);
+  transform: none;
+}
 
 /* ── Main ─────────────────────────────────────────────────────────────── */
 .main-wrap {
@@ -228,7 +246,11 @@ body {
 .main-content {
   padding: var(--main-pad-top) var(--main-pad-inline) 60px;
 }
-.main-content:has(.likes-view) { padding-top: 0; }
+/* Likes bleeds into the top padding so the hero stays flush; main-content keeps
+   constant padding — avoids a vertical jump when switching likes ↔ home. */
+.main-view-surface:has(.likes-view) {
+  margin-top: calc(-1 * var(--main-pad-top));
+}
 
 /* Переключение экранов в основной колонке (главная / лайки / настройки / плейлист) */
 .main-view-surface {
@@ -243,7 +265,7 @@ body {
 .main-view-enter-from,
 .main-view-leave-to {
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateY(3px);
 }
 .main-view-enter-to,
 .main-view-leave-from {
@@ -522,6 +544,14 @@ body {
   overflow: visible;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
   background: linear-gradient(135deg, #3d2e28, #161210);
+}
+/* TrackCover in the hero placeholder must blend with the container gradient, not show its own surface-h tile. */
+.torrent-page--album-hero .album-hero-cover .track-cover {
+  background: transparent;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  overflow: hidden;
 }
 /* overflow:hidden на обложке обрезает тень; картинку режем на корне AlbumFolderCover. */
 .torrent-page--album-hero .album-hero-cover .album-folder-cover-root {
@@ -1611,7 +1641,7 @@ body {
   display: flex;
   align-items: flex-end;
   gap: clamp(18px, 3vw, 28px);
-  margin: calc(-1 * var(--main-pad-top)) calc(-1 * var(--main-pad-inline)) 0;
+  margin: 0 calc(-1 * var(--main-pad-inline)) 0;
   padding: clamp(36px, 5vw, 48px) clamp(20px, 3vw, 32px) clamp(24px, 3.5vw, 32px);
   background: linear-gradient(
     180deg,
@@ -1739,6 +1769,22 @@ body {
   width: 40%;
   height: 40%;
   opacity: 0.4;
+}
+
+/* ── Cover loading spinner ─────────────────────────────────────────────── */
+@keyframes cover-spin {
+  to { transform: rotate(360deg); }
+}
+.cover-loading-spinner {
+  width: 38%;
+  height: 38%;
+  max-width: 18px;
+  max-height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--cover-spinner-track);
+  border-top-color: var(--cover-spinner-fg);
+  animation: cover-spin 0.75s linear infinite;
+  flex-shrink: 0;
 }
 
 /* Likes: 3 колонки — # (узко, вправо) | обложка + название | действия */
@@ -2461,6 +2507,8 @@ body {
   --bg:         #f0ebe6;
   --sidebar-bg: #e8e2dc;
   --surface:    #ffffff;
+  --cover-spinner-fg:    var(--accent);
+  --cover-spinner-track: color-mix(in srgb, var(--accent) 24%, transparent);
   --surface-h:  #ebe6e1;
   --border:     rgba(0, 0, 0, 0.09);
   --text:       #1a1816;
@@ -2671,6 +2719,9 @@ body {
 }
 .slsk-track-thumb--placeholder {
   background: linear-gradient(135deg, var(--surface-h), var(--surface));
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .slsk-track-row {
   display: flex;

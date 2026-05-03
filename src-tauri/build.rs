@@ -20,6 +20,9 @@ fn build_vozduxan() {
     // <dst>/lib/vozduxan.lib (Windows).
     let mut cmake_cfg = cmake::Config::new(&vozduxan_dir);
     cmake_cfg
+        // MSVC + multi-config generators (Visual Studio) ignore CMAKE_BUILD_TYPE.
+        // Force Release profile explicitly to avoid Debug CRT symbols (_dbg).
+        .profile("Release")
         .define("CMAKE_BUILD_TYPE", "Release")
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON")
         // Suppress noisy status output in CI; remove if you want verbose builds.

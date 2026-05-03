@@ -1,6 +1,6 @@
 {
   "name": "neegde",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/neegde/neegde-tauri.git"
@@ -11,21 +11,38 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "kill-dev-port": "node scripts/kill-dev-port.cjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "node scripts/run-tauri.cjs",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:ui": "vitest --coverage --ui"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-deep-link": "^2.4.7",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "vue": "^3.5"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-vue": "^5",
-    "vite": "^6"
+    "@vitest/coverage-v8": "^4.1.5",
+    "@vitest/ui": "^4.1.5",
+    "@vue/test-utils": "^2.4.6",
+    "@vue/tsconfig": "^0.9.1",
+    "fast-check": "^4.7.0",
+    "jsdom": "^29.0.2",
+    "typescript": "^6.0.3",
+    "vite": "^6",
+    "vitest": "^4.1.5",
+    "vue-tsc": "^3.2.7"
   }
 }

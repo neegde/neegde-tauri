@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::net::Ipv4Addr;
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex as StdMutex,
 };
 use std::time::Duration;
@@ -66,9 +66,24 @@ pub struct SlskFileResult {
     pub duration: Option<u32>,
     /// True when this row is an image file from search (cover art), not audio.
     pub is_image: bool,
+    /// Peer has at least one free upload slot (value of `slotsFree` from the
+    /// search response, applied to every row the peer returned in this batch).
+    pub slots_free: bool,
+    /// Peer's advertised average upload speed in bytes/second (0 if unknown).
+    pub avg_speed: u32,
+    /// Current length of the peer's upload queue (0 = empty).
+    pub queue_length: u64,
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
+
+/// Payload of the `soulseek-disconnected` Tauri event, emitted exactly once when
+/// the server connection or peer listener of a live session terminates.
+#[derive(Serialize, Clone)]
+struct SlskDisconnectedEvent {
+    username: String,
+    reason: String,
+}
 
 pub struct Session {
     pub username: String,
@@ -83,6 +98,12 @@ pub struct Session {
     /// Lowercase SoulSeek username → FIFO of xfer tokens waiting for `ConnectToPeer` type F.
     pending_f_peer_order: Arc<DashMap<String, VecDeque<u32>>>,
     pub debug_log: Arc<AppDebugLog>,
+    /// Set when the underlying server connection or peer listener has terminated.
+    /// Read by `is_dead()` / `soulseek_status` / `SoulSeekState::get_session` so the UI
+    /// surfaces the broken socket immediately instead of after a 12 s search timeout.
+    dead: AtomicBool,
+    /// Used to emit `soulseek-disconnected` exactly once when the session goes stale.
+    app_handle: AppHandle,
 }
 
 impl Session {
@@ -90,11 +111,50 @@ impl Session {
     pub fn slog(&self, msg: impl Into<String>) {
         self.debug_log.push("soulseek", msg, None);
     }
+
+    /// Returns true if this session's network plumbing has terminated.
+    pub fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::Acquire)
+    }
+
+    /// Marks the session as dead and notifies the frontend exactly once. Subsequent
+    /// calls are no-ops thanks to the atomic swap, so it is safe to invoke from any
+    /// failure path (server reader exit, peer listener exit, write error in
+    /// `send_raw`).
+    ///
+    /// Args:
+    ///     reason: Short human-readable explanation routed to the debug log and
+    ///         the `soulseek-disconnected` event payload.
+    pub fn mark_dead_and_notify(&self, reason: impl Into<String>) {
+        if self.dead.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let reason = reason.into();
+        self.slog(format!("session marked dead: {reason}"));
+        let _ = self.app_handle.emit(
+            "soulseek-disconnected",
+            SlskDisconnectedEvent {
+                username: self.username.clone(),
+                reason,
+            },
+        );
+    }
 }
 
 impl Session {
     /// Connect to the SoulSeek server and authenticate. Returns `Arc<Session>` on success.
-    pub async fn connect(username: String, password: String, debug_log: Arc<AppDebugLog>) -> Result<Arc<Self>, String> {
+    ///
+    /// Args:
+    ///     app_handle: Tauri handle used to emit `soulseek-disconnected` if the session
+    ///         later goes stale (server idle-kick, NAT timeout, sleep/wake).
+    ///     username: SoulSeek account name.
+    ///     password: SoulSeek password.
+    ///     debug_log: Shared debug log sink so server/peer protocol traces appear in
+    ///         the in-app console alongside C++ and torrent logs.
+    ///
+    /// Returns:
+    ///     Live session on success or a human-readable error string on login failure.
+    pub async fn connect(app_handle: AppHandle, username: String, password: String, debug_log: Arc<AppDebugLog>) -> Result<Arc<Self>, String> {
         let stream = TcpStream::connect((SERVER_HOST, SERVER_PORT))
             .await
             .map_err(|e| format!("Cannot connect to SoulSeek server: {e}"))?;
@@ -157,6 +217,8 @@ impl Session {
             pending_f_conns: Arc::clone(&pending_f_conns),
             pending_f_peer_order: Arc::clone(&pending_f_peer_order),
             debug_log,
+            dead: AtomicBool::new(false),
+            app_handle,
         });
 
         // Post-login housekeeping messages expected by the server
@@ -192,11 +254,21 @@ impl Session {
         Ok(session)
     }
 
-    /// Send a pre-built message to the server.
+    /// Send a pre-built message to the server. On any I/O failure the session is
+    /// flagged dead immediately so subsequent searches fail fast with a useful
+    /// error instead of silently waiting out the 12 s search timeout.
     pub async fn send_raw(&self, data: Vec<u8>) -> std::io::Result<()> {
-        let mut w = self.writer.lock().await;
-        w.write_all(&data).await?;
-        w.flush().await
+        let res = {
+            let mut w = self.writer.lock().await;
+            match w.write_all(&data).await {
+                Ok(()) => w.flush().await,
+                Err(e) => Err(e),
+            }
+        };
+        if let Err(ref e) = res {
+            self.mark_dead_and_notify(format!("server write failed: {e}"));
+        }
+        res
     }
 
     /// Network-wide file search. Blocks up to SEARCH_TIMEOUT_SECS collecting results.
@@ -422,7 +494,12 @@ async fn server_reader_loop(mut rh: OwnedReadHalf, sess: std::sync::Weak<Session
         let payload = match recv_msg(&mut rh).await {
             Ok(p) => p,
             Err(e) => {
-                if let Some(s) = sess.upgrade() { s.slog(format!("server disconnected: {e}")); }
+                // Skip notification if the only remaining strong refs are gone — the
+                // session was already replaced by `soulseek_login`/`soulseek_logout`,
+                // so a stale "disconnected" event would just flicker the UI.
+                if let Some(s) = sess.upgrade() {
+                    s.mark_dead_and_notify(format!("server read error: {e}"));
+                }
                 break;
             }
         };
@@ -649,7 +726,12 @@ async fn peer_listener_loop(listener: TcpListener, sess: std::sync::Weak<Session
         let (stream, _) = match listener.accept().await {
             Ok(s) => s,
             Err(e) => {
-                if let Some(s) = sess.upgrade() { s.slog(format!("peer listener error: {e}")); }
+                // Listener death means firewalled peers can no longer reach us, which
+                // is enough to make `search` return zero hits — treat it as a fatal
+                // session failure so the frontend reconnects from scratch.
+                if let Some(s) = sess.upgrade() {
+                    s.mark_dead_and_notify(format!("peer listener error: {e}"));
+                }
                 break;
             }
         };
@@ -778,7 +860,15 @@ pub fn parse_file_search_response(data: &[u8]) -> Option<(u32, Vec<SlskFileResul
     let token = b.u32()?;
     let num = b.u32()?;
 
-    let mut results = Vec::with_capacity(num.min(200) as usize);
+    // First pass: collect raw (filepath, size, bitrate, duration, is_audio, is_image).
+    struct RawRow {
+        filepath: String,
+        size: u64,
+        bitrate: Option<u32>,
+        duration: Option<u32>,
+        is_image: bool,
+    }
+    let mut raw_rows: Vec<RawRow> = Vec::with_capacity(num.min(200) as usize);
     for _ in 0..num {
         let _attr = b.u8()?;      // always 1
         let filepath = b.str()?;
@@ -815,24 +905,37 @@ pub fn parse_file_search_response(data: &[u8]) -> Option<(u32, Vec<SlskFileResul
             continue;
         }
         if is_audio {
-            results.push(SlskFileResult {
-                username: username.clone(),
-                filepath,
-                size,
-                bitrate,
-                duration,
-                is_image: false,
-            });
+            raw_rows.push(RawRow { filepath, size, bitrate, duration, is_image: false });
         } else if is_image && size >= 256 {
-            results.push(SlskFileResult {
-                username: username.clone(),
-                filepath,
-                size,
-                bitrate: None,
-                duration: None,
-                is_image: true,
-            });
+            raw_rows.push(RawRow { filepath, size, bitrate: None, duration: None, is_image: true });
         }
+    }
+
+    // After the results list, the peer sends its own availability stats once:
+    //   u8   slotsFree     (0 = all slots busy)
+    //   u32  avgSpeed      (bytes/s, peer-declared)
+    //   u64  queueLength   (pending uploads)
+    // These are *per peer*, not per file — we stamp the same values on every
+    // row from this batch so later ranking can treat "which peer to try first".
+    // Older clients or zlib truncation may cut the tail, so treat all three as
+    // best-effort: missing → slots=true (assume OK), speed=0, queue=0.
+    let slots_free = b.u8().map(|v| v != 0).unwrap_or(true);
+    let avg_speed = b.u32().unwrap_or(0);
+    let queue_length = b.u64().unwrap_or(0);
+
+    let mut results = Vec::with_capacity(raw_rows.len());
+    for r in raw_rows {
+        results.push(SlskFileResult {
+            username: username.clone(),
+            filepath: r.filepath,
+            size: r.size,
+            bitrate: r.bitrate,
+            duration: r.duration,
+            is_image: r.is_image,
+            slots_free,
+            avg_speed,
+            queue_length,
+        });
     }
 
     Some((token, results))

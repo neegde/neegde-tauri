@@ -1,0 +1,158 @@
+  <div class="torrent-page torrent-page--album-hero album-view">
+    <div class="album-hero-bg" aria-hidden="true" />
+
+    <section class="album-hero" aria-label="Альбом">
+      <div class="album-hero-cover">
+        <TrackCover :entity="album" :size="220" />
+      </div>
+      <div class="album-hero-text">
+        <span class="album-hero-kicker">Альбом</span>
+        <h1 class="album-hero-title">{{ album.title || "Альбом" }}</h1>
+        <p class="album-hero-artist">{{ artistLabel }}</p>
+        <p class="album-hero-meta">
+          <span>{{ countLabel }}</span>
+          <template v-if="totalSize > 0">
+            <span class="dot">·</span>
+            <span>{{ fmtSize(totalSize) }}</span>
+          </template>
+          <template v-if="seedsLabel">
+            <span class="dot">·</span>
+            <span class="seeds-ok">{{ seedsLabel }}</span>
+          </template>
+        </p>
+      </div>
+    </section>
+
+    <div class="album-hero-toolbar">
+      <button
+        type="button"
+        class="album-play-fab"
+        title="Слушать"
+        :disabled="tracks.length === 0"
+        @click="emit('play-all')"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <polygon points="5,3 19,12 5,21"/>
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        :class="['album-tool-btn', albumLiked ? 'liked' : '']"
+        :title="albumLiked ? 'Убрать из любимых' : 'В любимые'"
+        @click="emit('toggle-like-album', album)"
+      >
+        <svg v-if="albumLiked" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+        <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        class="album-tool-btn"
+        title="Скачать альбом"
+        :disabled="tracks.length === 0"
+        @click="emit('download-album')"
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v13M5 14l7 7 7-7"/>
+          <line x1="3" y1="21" x2="21" y2="21"/>
+        </svg>
+      </button>
+    </div>
+
+    <div v-if="tracks.length === 0" class="empty-msg">Треки ещё не загружены.</div>
+
+    <div v-else class="album-tracklist">
+      <div class="album-tracklist-head">
+        <span class="album-col-n">#</span>
+        <span class="album-col-title">Название</span>
+        <span class="album-col-time" />
+      </div>
+
+      <div
+        v-for="(t, i) in tracks"
+        :key="t.id"
+        :class="['album-track-row', ...rowClass(t)]"
+        @click="emit('play-track', t)"
+        @contextmenu.prevent="openTrackCtx($event, t)"
+      >
+        <div class="album-col-n">
+          <PlayingIndicator v-if="isNowPlaying(t)" :live="playerPlaying" />
+          <template v-else>
+            <span class="album-num">{{ i + 1 }}</span>
+            <span class="album-play-hint">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            </span>
+          </template>
+        </div>
+
+        <div class="album-col-title">
+          <div class="track-name-wrap">
+            <span class="album-track-title" :title="trackDisplayBasename(t.fileName)">{{ displayTitle(t) }}</span>
+            <span class="track-format-chip" :title="`Формат: ${audioFormatLabel(t.fileName)}`">{{ audioFormatLabel(t.fileName) }}</span>
+          </div>
+        </div>
+
+        <div class="album-col-time">
+          <div v-if="(t.size ?? 0) > 0" class="file-size-stack album-file-size-stack">
+            <template v-for="p in [fmtSizeParts(t.size ?? 0)]" :key="'sp-sz-' + t.id">
+              <span class="file-size-stack__value">{{ p.value }}</span>
+              <span class="file-size-stack__unit">{{ p.unit }}</span>
+            </template>
+          </div>
+          <span v-else class="album-dur album-dur--empty">—</span>
+
+          <div class="album-track-actions">
+            <button
+              :class="['track-btn', 'like-btn', likedTrackIds.has(t.id) ? 'liked' : '']"
+              :title="likedTrackIds.has(t.id) ? 'Убрать из любимых' : 'В избранное'"
+              @click.stop="emit('toggle-like-track', t)"
+            >
+              <svg v-if="likedTrackIds.has(t.id)" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+            </button>
+
+            <button
+              class="track-btn dl"
+              title="Скачать"
+              :disabled="!t.hasPlaybackIdentity()"
+              @click.stop="emit('download-track', t)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v13M5 14l7 7 7-7"/>
+                <line x1="3" y1="21" x2="21" y2="21"/>
+              </svg>
+            </button>
+
+            <button
+              class="track-btn add-to-pl"
+              title="В плейлист"
+              @click.stop="emit('add-to-playlist', t)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <TrackContextMenu
+      v-model:open="ctxOpen"
+      :x="ctxX"
+      :y="ctxY"
+      :actions="ctxActions"
+      @action="onCtxAction"
+    />
+  </div>
