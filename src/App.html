@@ -286,6 +286,10 @@
               :slsk-logging-in="slskLoggingIn"
               :slsk-login-error="slskLoginError"
               :close-tray="closeTray"
+              :discord-presence-enabled="discordPresenceEnabled"
+              :discord-presence-preview-title="discordPresencePreviewTitle"
+              :discord-presence-preview-subtitle="discordPresencePreviewSubtitle"
+              :discord-presence-preview-playing="discordPresencePreviewPlaying"
               @login="handleLogin"
               @logout="handleLogout"
               @theme-change="handleThemeChange"
@@ -295,6 +299,7 @@
               @slsk-logout="handleSoulseekLogout"
               @show-update="showUpdateDialog"
               @close-tray-change="setCloseTray"
+              @discord-presence-enabled-change="handleDiscordPresenceEnabledChange"
             />
           </KeepAlive>
         </div>
@@ -327,6 +332,7 @@
 
     <!-- ── Player ──────────────────────────────────────────────────── -->
     <Player
+      :discord-presence-enabled="discordPresenceEnabled"
       @prev="handlePrev"
       @next="handlePlayerNext"
       @ended="handleTrackEnded"

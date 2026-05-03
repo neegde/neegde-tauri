@@ -15,6 +15,12 @@ export interface DiscordPresencePayload {
   durationSec?: number | null;
 }
 
+export interface DiscordPresenceStatus {
+  supported: boolean;
+  connected: boolean;
+  lastError: string | null;
+}
+
 /** Pushes the current playback state to Discord (debounced unless `immediate`). */
 export function syncDiscordPresence(
   payload: DiscordPresencePayload,
@@ -42,4 +48,20 @@ export function clearDiscordPresence(): Promise<void> {
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = null;
   return invoke<void>("discord_presence_clear").catch(() => {});
+}
+
+/** Returns runtime status of Discord IPC integration (for Settings diagnostics). */
+export function getDiscordPresenceStatus(): Promise<DiscordPresenceStatus> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve({
+      supported: false,
+      connected: false,
+      lastError: "Tauri runtime is not available",
+    });
+  }
+  return invoke<DiscordPresenceStatus>("discord_presence_status").catch(() => ({
+    supported: false,
+    connected: false,
+    lastError: "Не удалось получить статус Discord Presence",
+  }));
 }

@@ -375,6 +375,7 @@ pub fn run() {
             torrent_stream::debug_api::app_debug_push,
             discord_presence::discord_presence_sync,
             discord_presence::discord_presence_clear,
+            discord_presence::discord_presence_status,
             // ── Query intent resolver ──────────────────────────────────────
             resolver::resolve_query,
             deezer::deezer_search,

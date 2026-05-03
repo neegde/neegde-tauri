@@ -375,6 +375,54 @@
           </label>
         </div>
       </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">
+            <SystemIcon name="sparkle" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Discord Rich Presence</div>
+            <div class="settings-card-status">
+              {{ props.discordPresenceEnabled ? "Показывает трек в профиле Discord" : "Отключено" }}
+            </div>
+          </div>
+          <label class="ach-opt-toggle">
+            <input
+              type="checkbox"
+              :checked="props.discordPresenceEnabled"
+              class="ach-opt-toggle-input"
+              @change="onDiscordPresenceToggle($event.target.checked)"
+            />
+            <span class="ach-opt-toggle-ui" aria-hidden="true" />
+          </label>
+        </div>
+        <div class="settings-card-body settings-card-body--discord">
+          <div class="discord-preview-card" aria-hidden="true">
+            <div class="discord-preview-app-row">
+              <div class="discord-preview-app-logo">
+                <img :src="appIconSrc" alt="" />
+              </div>
+              <div class="discord-preview-app-meta">
+                <div class="discord-preview-line discord-preview-line--muted">Listening to neegde</div>
+                <div class="discord-preview-line discord-preview-line--main">
+                  {{ props.discordPresencePreviewTitle }}
+                </div>
+                <div class="discord-preview-line">
+                  {{ props.discordPresencePreviewSubtitle }}
+                </div>
+                <div class="discord-preview-line discord-preview-line--time">
+                  {{
+                    props.discordPresenceEnabled
+                      ? (props.discordPresencePreviewPlaying ? "Сейчас играет" : "Пауза / без статуса")
+                      : "Отключено"
+                  }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ── Звук ─────────────────────────────────────────────────────── -->

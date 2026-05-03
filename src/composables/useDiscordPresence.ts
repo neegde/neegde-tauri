@@ -12,6 +12,7 @@ interface PresenceTrack {
 }
 
 export interface UseDiscordPresenceOptions {
+  enabled: Ref<boolean> | ComputedRef<boolean>;
   track: Ref<PresenceTrack | null> | ComputedRef<PresenceTrack | null>;
   playing: Ref<boolean>;
   streamPhase: Ref<string>;
@@ -40,8 +41,12 @@ export function useDiscordPresence(ctx: UseDiscordPresenceOptions): void {
   }
 
   watch(
-    () => [ctx.track.value, ctx.playing.value, ctx.streamPhase.value],
+    () => [ctx.enabled.value, ctx.track.value, ctx.playing.value, ctx.streamPhase.value],
     () => {
+      if (!ctx.enabled.value) {
+        void clearDiscordPresence();
+        return;
+      }
       const t = ctx.track.value;
       if (!ctx.hasIdentity(t) || ctx.streamPhase.value === "error" || !ctx.playing.value) {
         void clearDiscordPresence();
@@ -57,6 +62,7 @@ export function useDiscordPresence(ctx: UseDiscordPresenceOptions): void {
 
   watch(
     () => [
+      ctx.enabled.value,
       ctx.current.value,
       ctx.duration.value,
       ctx.playing.value,
@@ -64,6 +70,7 @@ export function useDiscordPresence(ctx: UseDiscordPresenceOptions): void {
       ctx.streamPhase.value,
     ],
     () => {
+      if (!ctx.enabled.value) return;
       const t = ctx.track.value;
       if (!ctx.hasIdentity(t) || ctx.streamPhase.value === "error" || !ctx.playing.value) return;
       const now = Date.now();

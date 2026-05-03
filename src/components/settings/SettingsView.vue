@@ -30,6 +30,7 @@ import {
 import { clearRutrackerCoverCache } from "../../rutracker/search.js";
 import { hadRutrackerAccount } from "../../rutracker/accountHint.js";
 import { clearSlskCoverCache } from "../../soulseek/api.js";
+import { clearDiscordPresence } from "../../discordPresence.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import AchievementsModal from "./AchievementsModal.vue";
 import SystemIcon from "../shared/SystemIcon.vue";
@@ -57,6 +58,10 @@ const props = defineProps({
   slskLoggingIn:    { type: Boolean, default: false },
   slskLoginError:   { type: String, default: null },
   closeTray:        { type: Boolean, default: true },
+  discordPresenceEnabled: { type: Boolean, default: true },
+  discordPresencePreviewTitle: { type: String, default: "Трек" },
+  discordPresencePreviewSubtitle: { type: String, default: "Исполнитель" },
+  discordPresencePreviewPlaying: { type: Boolean, default: false },
 });
 
 // avatar image error fallback
@@ -159,7 +164,14 @@ const emit = defineEmits([
   "slsk-logout",
   "show-update",
   "close-tray-change",
+  "discord-presence-enabled-change",
 ]);
+
+function onDiscordPresenceToggle(checked) {
+  const enabled = Boolean(checked);
+  emit("discord-presence-enabled-change", enabled);
+  if (!enabled) void clearDiscordPresence();
+}
 
 const achievementRows = computed(() => {
   const u = new Set(props.achievementsUnlocked ?? []);

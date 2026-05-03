@@ -97,6 +97,10 @@ const emit = defineEmits([
   "toggle-shuffle",
 ]);
 
+const props = defineProps({
+  discordPresenceEnabled: { type: Boolean, default: true },
+});
+
 const {
   queueCtxOpen,
   queueCtxX,
@@ -497,6 +501,7 @@ watch(
 );
 
 useDiscordPresence({
+  enabled: computed(() => props.discordPresenceEnabled),
   track: track,
   playing,
   streamPhase,

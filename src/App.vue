@@ -118,6 +118,7 @@ import { getTrack } from "./stores/entities.js";
 import { torrentFileB64ForTrack, streamUrl, magnetListFiles } from "./torrent/api.js";
 import { releaseTorrentStreamUrl, torrentPrepareCancel } from "./torrent/torrentSession.js";
 import { onOpenUrl, getCurrent } from "@tauri-apps/plugin-deep-link";
+import { clearDiscordPresence } from "./discordPresence.js";
 
 import SearchBar    from "./components/search/SearchBar.vue";
 import Results      from "./components/search/Results.vue";
@@ -176,6 +177,15 @@ const { theme, setTheme } = useTheme();
 
 // ── Tray preference ───────────────────────────────────────────────────────────
 const { closeTray, setCloseTray } = useTrayPreference();
+const DISCORD_PRESENCE_ENABLED_KEY = "neegde.discordPresence.enabled";
+const discordPresenceEnabled = ref(localStorage.getItem(DISCORD_PRESENCE_ENABLED_KEY) !== "0");
+
+function handleDiscordPresenceEnabledChange(enabled) {
+  const next = Boolean(enabled);
+  discordPresenceEnabled.value = next;
+  localStorage.setItem(DISCORD_PRESENCE_ENABLED_KEY, next ? "1" : "0");
+  if (!next) void clearDiscordPresence();
+}
 
 // ── Auto-update ───────────────────────────────────────────────────────────────
 const {
@@ -662,6 +672,26 @@ const likes = computed(() => {
 
 /** Состояние воспроизведения из плеера — подсветка и анимация в списках. */
 const playerPlaying = ref(true);
+
+const discordPresencePreviewTitle = computed(() => {
+  const t = nowPlaying.value;
+  if (!t) return "Трек";
+  const ttl = typeof t.title === "string" ? t.title.trim() : "";
+  if (ttl) return ttl;
+  return trackDisplayBasename(t.fileName ?? "Трек");
+});
+
+const discordPresencePreviewSubtitle = computed(() => {
+  const t = nowPlaying.value;
+  if (!t) return "Исполнитель";
+  const artist = typeof t.artist === "string" ? t.artist.trim() : "";
+  if (artist) return artist;
+  return extractTrackArtist(t.albumTitle, null, null, null) || "Неизвестный исполнитель";
+});
+
+const discordPresencePreviewPlaying = computed(
+  () => Boolean(discordPresenceEnabled.value && nowPlaying.value && playerPlaying.value),
+);
 
 // ── Achievements (opt-in; localStorage) ─────────────────────────────────────
 const {

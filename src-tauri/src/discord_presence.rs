@@ -2,14 +2,14 @@
 // Optional: DISCORD_PRESENCE_BUTTON_URL=https://… (empty = no button; unset = https://neegde.ru).
 
 use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
 
 /// Application ID from the Discord Developer Portal. Empty disables Rich Presence.
 const CLIENT_ID: &str = match option_env!("DISCORD_CLIENT_ID") {
     Some(s) if !s.is_empty() => s,
-    _ => "",
+    _ => "1487763274501193819",
 };
 
 const LISTEN_BUTTON_LABEL: &str = "Слушать нигде";
@@ -23,12 +23,20 @@ fn listen_on_neegde_button_url() -> Option<&'static str> {
 }
 
 /// Shared mutex around an optional [`DiscordIpcClient`].
-pub struct DiscordPresenceState(pub Mutex<Option<DiscordIpcClient>>);
+pub struct DiscordPresenceState(pub Mutex<DiscordPresenceInner>);
+
+pub struct DiscordPresenceInner {
+    pub client: Option<DiscordIpcClient>,
+    pub last_error: Option<String>,
+}
 
 impl DiscordPresenceState {
     /// Creates a new `DiscordPresenceState` with no IPC connection yet.
     pub fn new() -> Self {
-        Self(Mutex::new(None))
+        Self(Mutex::new(DiscordPresenceInner {
+            client: None,
+            last_error: None,
+        }))
     }
 }
 
@@ -95,18 +103,23 @@ fn build_activity(input: &DiscordPresencePayload) -> activity::Activity<'static>
     a
 }
 
-fn ensure_client(guard: &mut Option<DiscordIpcClient>) -> Option<&mut DiscordIpcClient> {
+fn ensure_client(inner: &mut DiscordPresenceInner) -> Option<&mut DiscordIpcClient> {
     if CLIENT_ID.is_empty() {
         return None;
     }
-    if guard.is_none() {
+    if inner.client.is_none() {
         let mut c = DiscordIpcClient::new(CLIENT_ID);
         if c.connect().is_err() {
+            inner.last_error = Some(
+                "Не удалось подключиться к Discord IPC. Убедитесь, что Discord Desktop запущен."
+                    .to_string(),
+            );
             return None;
         }
-        *guard = Some(c);
+        inner.client = Some(c);
+        inner.last_error = None;
     }
-    guard.as_mut()
+    inner.client.as_mut()
 }
 
 /// Updates Rich Presence from the current track.
@@ -139,9 +152,14 @@ pub fn discord_presence_sync(
     };
 
     let activity = build_activity(&payload);
-    if client.set_activity(activity).is_err() {
-        let _ = client.close();
-        *guard = None;
+    let set_failed = client.set_activity(activity).is_err();
+    if set_failed {
+        if let Some(mut c) = guard.client.take() {
+            let _ = c.close();
+        }
+        guard.last_error = Some("Discord отклонил set_activity".to_string());
+    } else {
+        guard.last_error = None;
     }
     Ok(())
 }
@@ -163,14 +181,49 @@ pub fn discord_presence_clear(state: State<'_, DiscordPresenceState>) -> Result<
         .0
         .lock()
         .map_err(|_| "discord presence lock poisoned".to_string())?;
-    let Some(client) = guard.as_mut() else {
+    let Some(client) = guard.client.as_mut() else {
         return Ok(());
     };
-    if client.clear_activity().is_err() {
-        let _ = client.close();
-        *guard = None;
+    let clear_failed = client.clear_activity().is_err();
+    if clear_failed {
+        if let Some(mut c) = guard.client.take() {
+            let _ = c.close();
+        }
+        guard.last_error = Some("Discord отклонил clear_activity".to_string());
+    } else {
+        guard.last_error = None;
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscordPresenceStatus {
+    pub supported: bool,
+    pub connected: bool,
+    pub last_error: Option<String>,
+}
+
+#[tauri::command]
+pub fn discord_presence_status(
+    state: State<'_, DiscordPresenceState>,
+) -> Result<DiscordPresenceStatus, String> {
+    if CLIENT_ID.is_empty() {
+        return Ok(DiscordPresenceStatus {
+            supported: false,
+            connected: false,
+            last_error: Some("DISCORD_CLIENT_ID не задан в этой сборке".to_string()),
+        });
+    }
+    let guard = state
+        .0
+        .lock()
+        .map_err(|_| "discord presence lock poisoned".to_string())?;
+    Ok(DiscordPresenceStatus {
+        supported: true,
+        connected: guard.client.is_some(),
+        last_error: guard.last_error.clone(),
+    })
 }
 
 /// Clears activity and closes the IPC connection (intended for application exit).
@@ -184,7 +237,7 @@ pub fn discord_presence_shutdown(state: &DiscordPresenceState) {
     let Ok(mut guard) = state.0.lock() else {
         return;
     };
-    let Some(mut client) = guard.take() else {
+    let Some(mut client) = guard.client.take() else {
         return;
     };
     let _ = client.clear_activity();
