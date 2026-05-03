@@ -90,6 +90,23 @@ export class TrackCache {
     try { localStorage.removeItem(this._storageKey); } catch { /* ignore */ }
   }
 
+  /**
+   * Synchronously write current cache to localStorage, cancelling any pending
+   * debounce timer. Call this when the queue changes so the track data is
+   * guaranteed to be on disk before the WebView can be destroyed.
+   */
+  flush(): void {
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = null;
+    }
+    try {
+      const obj: Record<string, TrackData> = {};
+      for (const [k, v] of this._data) obj[k] = v;
+      localStorage.setItem(this._storageKey, JSON.stringify(obj));
+    } catch { /* quota / disabled storage — ignore */ }
+  }
+
   /** Hydrate a `Track` instance from cache, or `null` when id unknown / malformed. */
   hydrate(id: string): Track | null {
     const data = this._data.get(id);
@@ -170,5 +187,6 @@ export function hasTrack(id: string): boolean { return trackCache.has(id); }
 export function removeTrack(id: string): boolean { return trackCache.remove(id); }
 export function allTrackIds(): string[] { return trackCache.ids(); }
 export function clearTrackCache(): void { trackCache.clear(); }
+export function flushTrackCache(): void { trackCache.flush(); }
 export function hydrateTrack(id: string): Track | null { return trackCache.hydrate(id); }
 export function loadTrackCache(): void { trackCache.load(); }

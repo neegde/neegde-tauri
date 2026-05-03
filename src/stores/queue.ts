@@ -16,7 +16,7 @@
 import { ref, computed, type Ref, type ComputedRef } from "vue";
 import type { Track } from "../track/Track.js";
 import { getTrack, registerEntity, entitiesVersion } from "./entities.js";
-import { putTrack, hydrateTrack } from "../persistence/trackCache.js";
+import { putTrack, flushTrackCache, hydrateTrack } from "../persistence/trackCache.js";
 import { saveQueueSnapshot, type QueueSnapshot } from "../persistence/queue.js";
 
 export type RepeatMode = "off" | "all" | "one";
@@ -138,6 +138,7 @@ export class PlaybackQueue {
   replace(tracks: Track[], startIndex = 0): void {
     this.ids.value = this.registerAll(tracks);
     this.pos.value = Math.max(0, Math.min(startIndex, this.ids.value.length - 1));
+    flushTrackCache();
     this.persist();
   }
 
