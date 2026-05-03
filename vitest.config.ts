@@ -69,6 +69,9 @@ export default defineConfig({
         "src/torrent/torrentSession.ts",
         // HTML template partials — compiled into .vue SFCs, already covered.
         "src/**/*.html",
+        // Type-only files (interfaces / ambient declarations), no runtime JS.
+        "src/**/*.d.ts",
+        "src/**/types.ts",
         // CSS, assets.
         "src/**/*.css",
         "src/assets/**",

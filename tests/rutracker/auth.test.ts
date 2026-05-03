@@ -5,7 +5,14 @@ import {
   markRutrackerHadAccount, clearRutrackerHadAccount, hadRutrackerAccount,
 } from "../../src/rutracker/accountHint.js";
 import { normalizeLoginStatus } from "../../src/rutracker/sessionStatus.js";
-import { login, logout, restoreSession, getStatus } from "../../src/rutracker/auth.js";
+import {
+  login,
+  loginViaWebview,
+  checkConnectivity,
+  logout,
+  restoreSession,
+  getStatus,
+} from "../../src/rutracker/auth.js";
 
 beforeEach(() => {
   fakeLocalStorage.clear();
@@ -60,6 +67,20 @@ describe("rutracker/auth — Tauri invoke passthrough", () => {
     mockInvoke.mockResolvedValueOnce(undefined);
     await logout();
     expect(mockInvoke).toHaveBeenCalledWith("rutracker_logout");
+  });
+  it("loginViaWebview forwards current mirror", async () => {
+    mockInvoke.mockResolvedValueOnce({ success: true, username: "neo" });
+    await loginViaWebview();
+    expect(mockInvoke).toHaveBeenCalledWith("rutracker_login_via_webview", {
+      mirror: "https://rutracker.test",
+    });
+  });
+  it("checkConnectivity forwards current mirror", async () => {
+    mockInvoke.mockResolvedValueOnce({ reachable: true, status: 200 });
+    await checkConnectivity();
+    expect(mockInvoke).toHaveBeenCalledWith("rutracker_check_connectivity", {
+      mirror: "https://rutracker.test",
+    });
   });
   it("restoreSession forwards mirror", async () => {
     mockInvoke.mockResolvedValueOnce({ logged_in: true });
