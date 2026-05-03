@@ -12,6 +12,8 @@ import {
 } from "../../soulseek/slskMetaStore.js";
 import { resolveTrackNames } from "../../track/nameResolver.js";
 import { enrichTrackNames } from "../../track/deezerCanonical.js";
+import { getEntity, bumpEntitiesVersion } from "../../stores/entities.js";
+import { putTrack } from "../../persistence/trackCache.js";
 
 /**
  * Search results panel. Takes the engine's Entity stream directly — no
@@ -367,12 +369,26 @@ function runCoverFetches() {
     const album = albumFromFolder(folder) || meta.title;
     fetchAlbumCover(meta.artist, album).then((result) => {
       if (gen !== coverGeneration || !result?.coverUrl) return;
+      let entitiesChanged = false;
       for (const id of ids) {
         const cur = slskMeta.get(id);
         if (!cur || cur.coverUrl) continue;
         const artist = result.artist || cur.artist;
         slskMeta.set(id, { ...cur, artist, coverUrl: result.coverUrl, albumUrl: result.albumUrl });
+        // Persist the cover URL into TrackData so it survives app restarts.
+        // Spread creates a new object so _shallowEqual detects the change even
+        // when _data holds the same reference as entity.data.
+        const entity = getEntity(id);
+        if (entity?.type === "track") {
+          const d = entity.toJSON();
+          if ((d.coverUrl ?? null) !== result.coverUrl) {
+            putTrack({ ...d, coverUrl: result.coverUrl });
+            d.coverUrl = result.coverUrl; // update live entity for immediate use
+            entitiesChanged = true;
+          }
+        }
       }
+      if (entitiesChanged) bumpEntitiesVersion();
     });
   }
 }

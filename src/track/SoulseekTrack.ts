@@ -139,8 +139,13 @@ export class SoulseekTrack extends Track {
     // album (e.g. its `raw.cover` getting stamped later) refreshes us.
     entitiesVersion.value;
     const ref = this.getCoverRef();
-    if (!ref?.slsk_username || !ref?.slsk_filepath) return null;
-    return getSlskCoverReactive(ref.slsk_username, ref.slsk_filepath);
+    let peerUrl: string | null = null;
+    if (ref?.slsk_username && ref?.slsk_filepath) {
+      peerUrl = getSlskCoverReactive(ref.slsk_username, ref.slsk_filepath);
+    }
+    // Fall back to the iTunes/Deezer URL persisted in TrackData — available
+    // immediately on session restore before any peer fetch completes.
+    return peerUrl ?? this.data.coverUrl ?? null;
   }
 
   override startCoverFetch(signal?: AbortSignal): void {
