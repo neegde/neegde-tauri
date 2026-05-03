@@ -531,6 +531,12 @@ const {
 });
 const searchResultsTab = ref("tracks");
 
+watch(searchResolved, (resolved) => {
+  if (!resolved) return;
+  const intent = (resolved as { intent?: string }).intent;
+  searchResultsTab.value = (intent === "album" || intent === "artist") ? "albums" : "tracks";
+});
+
 // ── Torrent / Album detail (state + handlers) ──────────────────────────────
 // Two composables share a few refs: `useTorrentDetail` owns the selected
 // torrent / current Album state, `useNavStack` owns back/forward history.

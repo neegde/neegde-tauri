@@ -243,21 +243,7 @@ function normalizeTab(tab) {
   return tab === "albums" ? "albums" : "tracks";
 }
 
-/** Tracks are the priority surface; parent stores current tab for nav restore. */
 const activeTab = ref(normalizeTab(props.activeTab));
-
-function pickDefaultSearchTab() {
-  const na = albumEntities.value.length;
-  const nt = trackEntitiesFiltered.value.length;
-  if (nt > 0) return "tracks";
-  if (na > 0) return "albums";
-  return "tracks";
-}
-
-watch(
-  () => props.searchEpoch,
-  () => nextTick(() => { activeTab.value = pickDefaultSearchTab(); }),
-);
 
 watch(
   () => props.activeTab,
