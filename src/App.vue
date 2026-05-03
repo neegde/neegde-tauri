@@ -178,7 +178,7 @@ const { theme, setTheme } = useTheme();
 // ── Tray preference ───────────────────────────────────────────────────────────
 const { closeTray, setCloseTray } = useTrayPreference();
 const DISCORD_PRESENCE_ENABLED_KEY = "neegde.discordPresence.enabled";
-const discordPresenceEnabled = ref(localStorage.getItem(DISCORD_PRESENCE_ENABLED_KEY) !== "0");
+const discordPresenceEnabled = ref(localStorage.getItem(DISCORD_PRESENCE_ENABLED_KEY) === "1");
 
 function handleDiscordPresenceEnabledChange(enabled) {
   const next = Boolean(enabled);
