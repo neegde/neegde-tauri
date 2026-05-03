@@ -152,11 +152,11 @@ describe("SoulseekTrack.coverUrl + startCoverFetch", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("startCoverFetch noop when track has no cover source", () => {
+  it("startCoverFetch guesses folder cover when track has no cover source", () => {
     const d = slsk();
     (d.sources[0] as { raw: { cover: null } }).raw = { cover: null };
     buildTrack(d).startCoverFetch();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith("alice", "music/folder.jpg", 0);
   });
 });
 

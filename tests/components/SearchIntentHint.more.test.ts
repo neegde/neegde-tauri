@@ -5,12 +5,12 @@ import { mount } from "@vue/test-utils";
 import SearchIntentHint from "../../src/components/search/SearchIntentHint.vue";
 
 describe("SearchIntentHint — canonical + revert + raw fallback", () => {
-  it("resolving=true shows spinner + 'Распознаём запрос…'", () => {
+  it("resolving=true shows spinner + 'Распознаю…'", () => {
     const w = mount(SearchIntentHint, {
       props: { resolving: true, resolved: null, rawQuery: "" },
     });
     expect(w.find(".sih--resolving").exists()).toBe(true);
-    expect(w.text()).toContain("Распознаём запрос");
+    expect(w.text()).toContain("Распознаю");
   });
 
   it("canonical artist+title renders artist and title on separate elements", () => {
@@ -61,7 +61,7 @@ describe("SearchIntentHint — canonical + revert + raw fallback", () => {
     expect(w.find(".sih-title").text()).toBe("Title");
   });
 
-  it("revert button shows raw query and emits revert-to-raw on click", async () => {
+  it("revert button keeps raw query in title and emits revert-to-raw on click", async () => {
     const w = mount(SearchIntentHint, {
       props: {
         resolving: false,
@@ -74,20 +74,21 @@ describe("SearchIntentHint — canonical + revert + raw fallback", () => {
       },
     });
     const btn = w.find(".sih-revert");
-    expect(btn.text()).toContain("literal search");
+    expect(btn.text()).toContain("оригинал");
+    expect(btn.attributes("title")).toContain("literal search");
     await btn.trigger("click");
     expect(w.emitted("revert-to-raw")).toBeTruthy();
   });
 
-  it("raw intent without canonical shows the muted fallback message", () => {
+  it("raw intent without canonical shows 'точный поиск' state", () => {
     const w = mount(SearchIntentHint, {
       props: {
         resolving: false,
         resolved: { intent: "raw", canonical: null, candidates: [] },
       },
     });
-    expect(w.find(".sih--muted").exists()).toBe(true);
-    expect(w.text()).toContain("Каталоги ничего не распознали");
+    expect(w.find(".sih--raw").exists()).toBe(true);
+    expect(w.text()).toContain("точный поиск");
   });
 
   it("no rendering when idle + no resolved data", () => {
