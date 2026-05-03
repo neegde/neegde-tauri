@@ -519,6 +519,7 @@ const {
   }),
   searchHistory,
 });
+const searchResultsTab = ref("tracks");
 
 // ── Torrent / Album detail (state + handlers) ──────────────────────────────
 // Two composables share a few refs: `useTorrentDetail` owns the selected
@@ -589,7 +590,7 @@ const {
   torrentFilesBeforeAlbumPreview, torrentSelectedBeforeAlbumPreview,
   currentAlbum,
   view, returnView, currentPlaylistId,
-  searchQuery, searchEntities, slskPeerBrowseUser, error,
+  searchQuery, searchEntities, slskPeerBrowseUser, searchResultsTab, error,
   mainRef,
   backStack: navBackStack,
   forwardStack: navForwardStack,

@@ -36,6 +36,8 @@ const props = defineProps({
   resolved: { type: Object, default: null },
   /** True while the resolver is running — suppresses the empty state flash. */
   resolving: { type: Boolean, default: false },
+  /** Parent-owned selected tab for back/forward restore. */
+  activeTab: { type: String, default: "tracks" },
   /** Id of the currently-playing Track, or null. */
   nowPlayingId: { type: String, default: null },
   playerPlaying: { type: Boolean, default: false },
@@ -49,6 +51,7 @@ const emit = defineEmits([
   "open-slsk-source",
   "clear-slsk-peer-filter",
   "add-to-playlist-slsk",
+  "update:active-tab",
 ]);
 
 const INITIAL_BATCH = 40;
@@ -236,21 +239,39 @@ watch(
 );
 
 // ── Active tab ───────────────────────────────────────────────────────────────
-/** Tracks are the priority surface — default tab. */
-const activeTab = ref("tracks");
+function normalizeTab(tab) {
+  return tab === "albums" ? "albums" : "tracks";
+}
 
-function syncDefaultSearchTab() {
+/** Tracks are the priority surface; parent stores current tab for nav restore. */
+const activeTab = ref(normalizeTab(props.activeTab));
+
+function pickDefaultSearchTab() {
   const na = albumEntities.value.length;
   const nt = trackEntitiesFiltered.value.length;
-  if (nt > 0) activeTab.value = "tracks";
-  else if (na > 0) activeTab.value = "albums";
-  else activeTab.value = "tracks";
+  if (nt > 0) return "tracks";
+  if (na > 0) return "albums";
+  return "tracks";
 }
 
 watch(
-  () => [props.searchEpoch, albumEntities.value.length, trackEntitiesFiltered.value.length],
-  () => nextTick(syncDefaultSearchTab),
-  { immediate: true },
+  () => props.searchEpoch,
+  () => nextTick(() => { activeTab.value = pickDefaultSearchTab(); }),
+);
+
+watch(
+  () => props.activeTab,
+  (tab) => {
+    const normalized = normalizeTab(tab);
+    if (normalized !== activeTab.value) activeTab.value = normalized;
+  },
+);
+
+watch(
+  activeTab,
+  (tab) => {
+    emit("update:active-tab", normalizeTab(tab));
+  },
 );
 
 watch(

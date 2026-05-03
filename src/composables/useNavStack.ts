@@ -25,7 +25,14 @@ interface TorrentLike {
 }
 
 type NavEntry =
-  | { type: "search"; searchQuery: string; resultsEntities: unknown[]; error: string | null; slskPeerBrowseUser: string | null }
+  | {
+      type: "search";
+      searchQuery: string;
+      resultsEntities: unknown[];
+      error: string | null;
+      slskPeerBrowseUser: string | null;
+      searchResultsTab: "tracks" | "albums";
+    }
   | {
       type: "torrent"; selected: TorrentLike; files: FileRow[];
       magnet: string; cover: string | null;
@@ -56,6 +63,7 @@ export interface UseNavStackCtx {
   searchQuery: Ref<string>;
   searchEntities: Ref<unknown[]>;
   slskPeerBrowseUser: Ref<string | null>;
+  searchResultsTab: Ref<"tracks" | "albums">;
   error: Ref<string | null>;
   mainRef: Ref<HTMLElement | null>;
   /**
@@ -82,6 +90,7 @@ export function useNavStack(ctx: UseNavStackCtx) {
       resultsEntities: [...ctx.searchEntities.value],
       error: ctx.error.value,
       slskPeerBrowseUser: ctx.slskPeerBrowseUser.value,
+      searchResultsTab: ctx.searchResultsTab.value,
     };
   }
 
@@ -167,6 +176,7 @@ export function useNavStack(ctx: UseNavStackCtx) {
       ctx.searchQuery.value = entry.searchQuery;
       ctx.searchEntities.value = [...(entry.resultsEntities ?? [])];
       ctx.slskPeerBrowseUser.value = entry.slskPeerBrowseUser ?? null;
+      ctx.searchResultsTab.value = entry.searchResultsTab === "albums" ? "albums" : "tracks";
       ctx.error.value = entry.error;
       ctx.view.value = "home";
       clearTorrentContext();
@@ -231,7 +241,14 @@ export function useNavStack(ctx: UseNavStackCtx) {
       target === "playlist" ? { type: "playlist", playlistId }
       : target === "likes"    ? { type: "likes" }
       : target === "settings" ? { type: "settings" }
-      : { type: "search", searchQuery: ctx.searchQuery.value, resultsEntities: [...ctx.searchEntities.value], error: ctx.error.value, slskPeerBrowseUser: ctx.slskPeerBrowseUser.value };
+      : {
+          type: "search",
+          searchQuery: ctx.searchQuery.value,
+          resultsEntities: [...ctx.searchEntities.value],
+          error: ctx.error.value,
+          slskPeerBrowseUser: ctx.slskPeerBrowseUser.value,
+          searchResultsTab: ctx.searchResultsTab.value,
+        };
 
     const cur = snapshotCurrentScreen();
     if (_sameScreen(cur, next)) return;

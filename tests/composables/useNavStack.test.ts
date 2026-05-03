@@ -18,6 +18,7 @@ function setup() {
     searchQuery: ref(""),
     searchEntities: ref<unknown[]>([]),
     slskPeerBrowseUser: ref<string | null>(null),
+    searchResultsTab: ref<"tracks" | "albums">("tracks"),
     error: ref<string | null>(null),
     mainRef: ref<HTMLElement | null>(null),
   };
@@ -32,12 +33,14 @@ describe("useNavStack snapshots", () => {
     ctx.searchEntities.value = [{ id: "x" }];
     ctx.error.value = "boom";
     ctx.slskPeerBrowseUser.value = "u";
+    ctx.searchResultsTab.value = "albums";
     const snap = nav.snapshotSearchForBack();
     expect(snap.type).toBe("search");
     expect(snap.searchQuery).toBe("hello");
     expect(snap.resultsEntities).toEqual([{ id: "x" }]);
     expect(snap.error).toBe("boom");
     expect(snap.slskPeerBrowseUser).toBe("u");
+    expect(snap.searchResultsTab).toBe("albums");
   });
 
   it("snapshotTorrentForBack captures torrent state + preview", () => {
@@ -77,12 +80,14 @@ describe("useNavStack — back/forward, search ↔ torrent", () => {
       resultsEntities: [{ id: "y" }],
       error: null,
       slskPeerBrowseUser: null,
+      searchResultsTab: "albums",
     });
     // Place something on current so forward gets a push.
     ctx.selected.value = { id: "now" };
     nav.handleBack();
     expect(ctx.searchQuery.value).toBe("old");
     expect(ctx.searchEntities.value).toEqual([{ id: "y" }]);
+    expect(ctx.searchResultsTab.value).toBe("albums");
     expect(ctx.selected.value).toBeNull();
   });
 
@@ -209,12 +214,13 @@ describe("useNavStack — handleForwardNav", () => {
     nav.forwardStack.value.push({
       type: "search", searchQuery: "q1",
       resultsEntities: [{ id: "r" }],
-      error: null, slskPeerBrowseUser: null,
+      error: null, slskPeerBrowseUser: null, searchResultsTab: "albums",
     });
     nav.handleForwardNav();
     expect(ctx.view.value).toBe("home");
     expect(ctx.searchQuery.value).toBe("q1");
     expect(ctx.searchEntities.value).toEqual([{ id: "r" }]);
+    expect(ctx.searchResultsTab.value).toBe("albums");
   });
   it("pushes current screen onto backStack symmetrically", () => {
     const { ctx, nav } = setup();

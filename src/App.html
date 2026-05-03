@@ -190,6 +190,7 @@
             :query="searchProviderQuery"
             :resolved="searchResolved"
             :resolving="searchResolving"
+            :active-tab="searchResultsTab"
             :slsk-peer-filter="slskPeerBrowseUser"
             :loading-albums="searchLoadingRt"
             :loading-tracks="searchLoadingSlsk"
@@ -207,6 +208,7 @@
             @open-slsk-source="handleOpenSoulseekSourceFromResults"
             @clear-slsk-peer-filter="clearSlskPeerBrowseUser"
             @add-to-playlist-slsk="handleShowAddToPlaylist"
+            @update:active-tab="searchResultsTab = $event"
           />
 
           <AlbumView
