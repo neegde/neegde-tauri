@@ -55,7 +55,7 @@ const coverUrl = computed<string | null>(() => {
   justify-content: center;
   border-radius: 4px;
   overflow: hidden;
-  background: var(--surface-2, #2a2a2a);
+  background: var(--surface-h, #2a2a2a);
   flex-shrink: 0;
 }
 .track-cover--fill { width: 100%; height: 100%; }
