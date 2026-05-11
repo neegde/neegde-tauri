@@ -1,0 +1,72 @@
+<Teleport to="body">
+  <Transition name="import-overlay">
+    <div v-if="visible" class="import-overlay">
+      <div class="import-overlay-card">
+
+        <div class="import-overlay-header">
+          <div class="import-overlay-title">Импорт музыки</div>
+          <div class="import-overlay-status">{{ statusLabel }}</div>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="import-progress-track">
+          <div
+            class="import-progress-fill"
+            :class="{ 'import-progress-fill--done': isDone }"
+            :style="{ width: pct + '%' }"
+          />
+        </div>
+        <div class="import-progress-label">
+          <span>{{ pct }}%</span>
+          <span>{{ state?.matched ?? 0 }} добавлено &nbsp;·&nbsp; {{ state?.unmatched ?? 0 }} не найдено</span>
+        </div>
+
+        <!-- Recent entries feed -->
+        <div class="import-feed" aria-live="polite" aria-atomic="false">
+          <TransitionGroup name="feed-item" tag="div">
+            <div
+              v-for="entry in recentEntries"
+              :key="entry.raw + entry.status"
+              class="import-feed-entry"
+              :class="statusClass(entry.status)"
+            >
+              <span class="import-feed-icon">{{ statusIcon(entry.status) }}</span>
+              <span class="import-feed-text">
+                <span class="import-feed-target">{{ entry.artist }} — {{ entry.title }}</span>
+                <template v-if="entry.status === 'matched' && entry.matchTitle">
+                  <span class="import-feed-arrow"> → </span>
+                  <span class="import-feed-match">{{ entry.matchArtist }} — {{ entry.matchTitle }}</span>
+                  <span class="import-feed-source"> ({{ entry.matchSource === 'rutracker' ? 'RT' : 'SLSK' }})</span>
+                </template>
+                <template v-else-if="entry.status === 'error'">
+                  <span class="import-feed-err"> {{ entry.error }}</span>
+                </template>
+              </span>
+            </div>
+          </TransitionGroup>
+        </div>
+
+        <!-- Actions -->
+        <div class="import-overlay-actions">
+          <button
+            v-if="isRunning"
+            type="button"
+            class="import-action-btn import-action-btn--stop"
+            @click="emit('cancel')"
+          >
+            Остановить
+          </button>
+          <button
+            v-if="isDone"
+            type="button"
+            class="import-action-btn import-action-btn--done"
+            @click="emit('dismiss')"
+          >
+            Готово
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </Transition>
+</Teleport>

@@ -19,30 +19,25 @@ pub async fn get_torrent_details(
     let dl_url = format!("{}/forum/dl.php?t={}", base, topic_id);
 
     // ── 1+2. Topic page and .torrent file in parallel ─────────────────────────
-    let (topic_result, torrent_result) = tokio::join!(
-        async {
-            client
-                .get(&topic_url)
-                .send()
-                .await
-                .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?
-                .bytes()
-                .await
-                .map_err(|e| format!("Ошибка чтения страницы: {}", e))
-        },
-        async {
-            client
-                .get(&dl_url)
-                .send()
-                .await
-                .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?
-                .bytes()
-                .await
-                .map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))
-        }
+    // Use two-phase join: fire both sends concurrently, then check responses.
+    // This preserves full concurrency while allowing per-response session checks.
+    let (topic_send, torrent_send) = tokio::join!(
+        client.get(&topic_url).send(),
+        client.get(&dl_url).send(),
     );
-    let topic_bytes = topic_result?;
-    let torrent_bytes = torrent_result?;
+    let topic_resp = topic_send.map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?;
+    let torrent_resp = torrent_send.map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?;
+
+    if topic_resp.url().path().contains("login") || torrent_resp.url().path().contains("login") {
+        return Err("Сессия устарела — войдите снова.".into());
+    }
+
+    let (topic_bytes_r, torrent_bytes_r) = tokio::join!(
+        topic_resp.bytes(),
+        torrent_resp.bytes(),
+    );
+    let topic_bytes = topic_bytes_r.map_err(|e| format!("Ошибка чтения страницы: {}", e))?;
+    let torrent_bytes = torrent_bytes_r.map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))?;
     let (topic_html, _, _) = WINDOWS_1251.decode(&topic_bytes);
 
     // ── 3. Parse ──────────────────────────────────────────────────────────────
@@ -74,11 +69,15 @@ pub async fn download_torrent_file_bytes(
     topic_id: &str,
 ) -> Result<Vec<u8>, String> {
     let dl_url = format!("{}/forum/dl.php?t={}", base, topic_id);
-    let torrent_bytes = client
+    let resp = client
         .get(&dl_url)
         .send()
         .await
-        .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?
+        .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?;
+    if resp.url().path().contains("login") {
+        return Err("Сессия устарела — войдите снова.".into());
+    }
+    let torrent_bytes = resp
         .bytes()
         .await
         .map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))?;
@@ -92,11 +91,15 @@ pub async fn get_cover_data_url(
     topic_id: &str,
 ) -> Result<Option<String>, String> {
     let topic_url = format!("{}/forum/viewtopic.php?t={}", base, topic_id);
-    let topic_bytes = client
+    let resp = client
         .get(&topic_url)
         .send()
         .await
-        .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?
+        .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?;
+    if resp.url().path().contains("login") {
+        return Err("Сессия устарела — войдите снова.".into());
+    }
+    let topic_bytes = resp
         .bytes()
         .await
         .map_err(|e| format!("Ошибка чтения страницы: {}", e))?;
