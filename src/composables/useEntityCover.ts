@@ -16,6 +16,7 @@ import type { Album } from "../album/Album.js";
 import { entitiesVersion } from "../stores/entities.js";
 import { slskConnected } from "../stores/auth.js";
 import { appDebugLog } from "../appDebugLog.js";
+import { preferHighResDeezerCoverUrl } from "../lib/deezerCoverUrl.js";
 
 const FETCH_TIMEOUT_MS = 20_000;
 /** Spinner only after this delay so fast cache hits / iTunes covers avoid flicker. */
@@ -36,7 +37,7 @@ function coverOfEntity(entity: Entity): string | null {
   if (!hasCoverApi(entity)) return null;
   // Touch the version ref so album-registry updates refresh consumers.
   entitiesVersion.value;
-  return entity.coverUrl();
+  return preferHighResDeezerCoverUrl(entity.coverUrl());
 }
 
 export type UseEntityCoverOptions = {

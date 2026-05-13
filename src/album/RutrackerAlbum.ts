@@ -86,8 +86,11 @@ export class RutrackerAlbum extends Album {
    * @param signal - Abort signal from `useEntityCover`.
    */
   private fetchMultiAlbumCover(topicId: string, signal?: AbortSignal): void {
-    const artist = (this.data.artist ?? "").trim();
-    const albumTitle = (this.data.title ?? "").trim();
+    const raw = this.rutrackerRaw;
+    const hintArtist = (raw?.coverArtist ?? "").trim();
+    const hintTitle = (raw?.coverAlbumTitle ?? "").trim();
+    const artist = hintArtist || (this.data.artist ?? "").trim();
+    const albumTitle = hintTitle || (this.data.title ?? "").trim();
     const id = this.id;
     const aborted = () => signal?.aborted === true;
 

@@ -4,6 +4,11 @@ import { getMirror } from "./config.js";
 import { appDebugLog } from "../appDebugLog.js";
 import { makeCoverCache } from "../lib/coverCacheCore.js";
 import { rtLoggedIn } from "../stores/auth.js";
+import {
+  clearPersistedRutrackerCovers,
+  hydrateRutrackerCoversFromDisk,
+  persistRutrackerCoverPositive,
+} from "../persistence/coverArtLocal.js";
 
 /**
  * RuTracker cover cache — keyed by `${mirror}\n${topicId}` so a mirror switch
@@ -36,6 +41,11 @@ const cache = makeCoverCache({
   maxEntries: 1024,
   maxBytes: 64 * 1024 * 1024,
   negativeTtlMs: 90_000,
+  onPositivePersist: (key, dataUrl) => persistRutrackerCoverPositive(key, dataUrl),
+});
+
+hydrateRutrackerCoversFromDisk((logicalKey, dataUrl) => {
+  cache.remember(logicalKey, dataUrl);
 });
 
 watch(rtLoggedIn, (next, prev) => {
@@ -63,6 +73,7 @@ export function getRutrackerCoverDataUrl(topicId: unknown): Promise<string | nul
 
 export function clearRutrackerCoverCache(): void {
   cache.clear();
+  clearPersistedRutrackerCovers();
 }
 
 /** Clears negative-TTL rows so thumbnails retry (e.g. after RuTracker login). */

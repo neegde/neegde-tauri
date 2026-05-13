@@ -66,10 +66,15 @@ async function flushTasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   vi.resetModules();
   getTrackMock.mockReturnValue(undefined);
+  const { clearPersistedDeezerAlbumArt, clearPersistedDeezerTrackCanonical } = await import(
+    "../../src/persistence/coverArtLocal.js"
+  );
+  clearPersistedDeezerAlbumArt();
+  clearPersistedDeezerTrackCanonical();
 });
 
 describe("enrichTrackNames", () => {
@@ -143,12 +148,18 @@ describe("enrichTrackNames", () => {
     const { nameConfidence } = await import("../../src/track/factory.js");
     const track = makeTrack("t-hit", "Artist", "Song");
     nameConfidence.set(track.id, "medium");
+    const dzMedium =
+      "https://e-cdns-images.dzcdn.net/images/cover/abc/250x250-000000-80-0-0.jpg";
     invokeMock.mockResolvedValueOnce(JSON.stringify({
       data: [
         {
           title: "Song (Live)",
           artist: { name: "Artist" },
-          album: { title: "Album", cover_medium: "https://img/cover.jpg" },
+          album: {
+            title: "Album",
+            cover_medium: dzMedium,
+            cover_xl: "https://e-cdns-images.dzcdn.net/images/cover/abc/xl.jpg",
+          },
         },
       ],
     }));
@@ -163,16 +174,43 @@ describe("enrichTrackNames", () => {
     expect(track.toJSON().title).toBe("Song (Live)");
     expect(track.toJSON().artist).toBe("Artist");
     expect(track.toJSON().albumTitle).toBe("Album");
-    expect(track.toJSON().coverUrl).toBe("https://img/cover.jpg");
+    expect(track.toJSON().coverUrl).toBe(
+      "https://e-cdns-images.dzcdn.net/images/cover/abc/xl.jpg",
+    );
     expect(nameConfidence.get(track.id)).toBe("high");
     expect(putTrackMock).toHaveBeenCalledWith(expect.objectContaining({
       id: "t-hit",
       artist: "Artist",
       title: "Song (Live)",
       albumTitle: "Album",
-      coverUrl: "https://img/cover.jpg",
+      coverUrl: "https://e-cdns-images.dzcdn.net/images/cover/abc/xl.jpg",
     }));
     expect(bumpEntitiesVersionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("upgrades Deezer CDN medium-only URLs to 1000px path", async () => {
+    const { enrichTrackNames } = await import("../../src/track/deezerCanonical.js");
+    const { nameConfidence } = await import("../../src/track/factory.js");
+    const track = makeTrack("t-dz-up", "Artist", "Song");
+    nameConfidence.set(track.id, "medium");
+    const dzMedium =
+      "https://e-cdns-images.dzcdn.net/images/cover/abc/250x250-000000-80-0-0.jpg";
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      data: [
+        {
+          title: "Song (Live)",
+          artist: { name: "Artist" },
+          album: { title: "Album", cover_medium: dzMedium },
+        },
+      ],
+    }));
+
+    enrichTrackNames(track as never);
+    await flushTasks();
+
+    expect(track.toJSON().coverUrl).toBe(
+      "https://e-cdns-images.dzcdn.net/images/cover/abc/1000x1000-000000-80-0-0.jpg",
+    );
   });
 
   it("applies Deezer hit to registry track when the same id was re-registered", async () => {

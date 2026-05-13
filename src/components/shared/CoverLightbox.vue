@@ -1,5 +1,5 @@
 <script setup>
-import { watch, onMounted, onUnmounted } from "vue";
+import { ref, watch, onMounted, onUnmounted } from "vue";
 import SystemIcon from "./SystemIcon.vue";
 
 const props = defineProps({
@@ -11,6 +11,27 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["update:open"]);
+
+/**
+ * Last non-empty `src` while the dialog is open. Parent `src` can briefly go empty
+ * (e.g. torrent image cache eviction) after `open` is true; without this the overlay
+ * unmounts and the enlarged view disappears.
+ */
+const lockedSrc = ref("");
+
+watch(
+  () => [props.open, props.src],
+  ([open, src]) => {
+    if (!open) {
+      lockedSrc.value = "";
+      return;
+    }
+    if (src) {
+      lockedSrc.value = src;
+    }
+  },
+  { immediate: true },
+);
 
 function close() {
   emit("update:open", false);

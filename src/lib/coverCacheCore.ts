@@ -42,6 +42,8 @@ export interface CoverCacheOptions {
   negativeTtlMs?: number;
   /** 0 = unlimited. */
   maxConcurrent?: number;
+  /** Called after a positive data URL is stored (for localStorage / disk LRU). */
+  onPositivePersist?: (key: string, dataUrl: string) => void;
 }
 
 export interface CoverCache {
@@ -69,6 +71,7 @@ export function makeCoverCache(opts: CoverCacheOptions): CoverCache {
     maxBytes = 64 * 1024 * 1024,
     negativeTtlMs = 90_000,
     maxConcurrent = 0,
+    onPositivePersist,
   } = opts;
 
   const positives = reactive(new Map<string, string>());
@@ -127,6 +130,7 @@ export function makeCoverCache(opts: CoverCacheOptions): CoverCache {
       totalBytes += bytesOf(dataUrl);
       negatives.delete(key);
       evictIfNeeded();
+      onPositivePersist?.(key, dataUrl);
     } else if (!positives.has(key)) {
       negatives.set(key, Date.now() + negativeTtlMs);
     }

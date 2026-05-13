@@ -38,6 +38,10 @@ export type RutrackerAlbumSource = AlbumSourceBase<"rutracker", RutrackerAlbumRe
     albumDir?: unknown;
     /** One forum topic yielded several folder-albums — topic cover is not per-folder. */
     multiAlbumTopic?: boolean;
+    /** Artist guess for catalog lookups; falls back to topic dir tree when post-meta is empty. */
+    coverArtist?: string | null;
+    /** Album title cleaned for catalog lookups (year prefix / EP / CD-disc suffixes stripped). */
+    coverAlbumTitle?: string | null;
     [k: string]: unknown;
   };
 };

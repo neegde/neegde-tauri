@@ -16,7 +16,8 @@
  *      `bumpEntitiesVersion()` so Vue re-renders every row pointing at
  *      the track.
  *   3. Results are cached by `artist|title` so a repeated query skips
- *      the network.
+ *      the network. Successful rows (including misses) are persisted in
+ *      localStorage LRU so a cold app start reuses them.
  *
  * Deezer quotes 50 req/s as the public-API ceiling. The rate-limited
  * queue is configured well below that so bursts from a 60-track search
@@ -30,12 +31,24 @@ import { putTrack } from "../persistence/trackCache.js";
 import type { Track } from "./Track.js";
 import { nameConfidence } from "./factory.js";
 import { appDebugLog } from "../appDebugLog.js";
+import {
+  clearPersistedDeezerAlbumArt,
+  loadPersistedDeezerAlbumArt,
+  loadPersistedDeezerTrackCanonicals,
+  persistDeezerAlbumArt,
+  persistDeezerTrackCanonical,
+} from "../persistence/coverArtLocal.js";
+import {
+  pickBestDeezerAlbumCoverUrl,
+  preferHighResDeezerCoverUrl,
+  type DeezerAlbumCoverFields,
+} from "../lib/deezerCoverUrl.js";
 
 interface DeezerTrack {
   title?: string;
   title_short?: string;
   artist?: { name?: string };
-  album?: { title?: string; cover_medium?: string | null; cover_big?: string | null };
+  album?: ({ title?: string } & DeezerAlbumCoverFields) | undefined;
 }
 
 interface DeezerResponse {
@@ -47,6 +60,10 @@ const cache = new Map<string, { artist: string; title: string; album: string; co
 
 /** In-flight lookups — dedupes concurrent requests for the same query. */
 const pending = new Map<string, Promise<unknown>>();
+
+for (const [k, v] of loadPersistedDeezerTrackCanonicals()) {
+  if (!cache.has(k)) cache.set(k, v);
+}
 
 /**
  * Rate-limited queue over the `deezer_search` Tauri command. We proxy
@@ -132,7 +149,7 @@ async function fetchCanonical(artist: string, title: string): Promise<{ artist: 
     artist: hitArtist,
     title: hitTitle,
     album: hit.album?.title ?? "",
-    coverUrl: hit.album?.cover_medium ?? hit.album?.cover_big ?? null,
+    coverUrl: preferHighResDeezerCoverUrl(pickBestDeezerAlbumCoverUrl(hit.album)),
   };
 }
 
@@ -141,6 +158,10 @@ const albumArtPending = new Map<string, Promise<string | null>>();
 
 function cacheKeyAlbumArt(artist: string, album: string): string {
   return `deezer-album-art|${normalize(artist)}|${normalize(album)}`;
+}
+
+for (const [k, v] of loadPersistedDeezerAlbumArt()) {
+  if (!albumArtCache.has(k)) albumArtCache.set(k, v);
 }
 
 /**
@@ -161,8 +182,9 @@ export async function fetchDeezerAlbumCoverArt(artist: string, album: string): P
   const inflight = albumArtPending.get(key);
   if (inflight) return inflight;
 
-  const p = fetchDeezerAlbumCoverArtInner(a || alb, alb).then((r) => {
+  const p = fetchDeezerAlbumCoverArtInner(a, alb).then((r) => {
     albumArtCache.set(key, r);
+    persistDeezerAlbumArt(key, r);
     albumArtPending.delete(key);
     return r;
   });
@@ -171,7 +193,7 @@ export async function fetchDeezerAlbumCoverArt(artist: string, album: string): P
 }
 
 async function fetchDeezerAlbumCoverArtInner(artist: string, album: string): Promise<string | null> {
-  const query = `${artist} ${album}`.trim();
+  const query = artist ? `${artist} ${album}` : album;
   void appDebugLog("deezer", `album art query="${query}"`).catch(() => {});
   let bodyText: string;
   try {
@@ -204,7 +226,7 @@ async function fetchDeezerAlbumCoverArtInner(artist: string, album: string): Pro
       const y = normalize(hitArtist);
       if (x.length >= 2 && y.length >= 2 && !x.includes(y) && !y.includes(x)) continue;
     }
-    const u = hit.album?.cover_medium ?? hit.album?.cover_big ?? null;
+    const u = preferHighResDeezerCoverUrl(pickBestDeezerAlbumCoverUrl(hit.album));
     if (u) {
       void appDebugLog("deezer", `album art hit: "${album}" → "${hitAlbumTitle}"`).catch(() => {});
       return u;
@@ -218,6 +240,7 @@ async function fetchDeezerAlbumCoverArtInner(artist: string, album: string): Pro
 export function resetDeezerAlbumArtCache(): void {
   albumArtCache.clear();
   albumArtPending.clear();
+  clearPersistedDeezerAlbumArt();
 }
 
 /**
@@ -272,6 +295,7 @@ export function enrichTrackNames(track: Track): void {
 
   const p = fetchCanonical(artist || title, title).then((result) => {
     cache.set(key, result);
+    persistDeezerTrackCanonical(key, result);
     pending.delete(key);
     if (result) applyCanonical(track, result, coverOnly);
   });

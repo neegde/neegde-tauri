@@ -35,6 +35,18 @@ describe("makeCoverCache basics", () => {
     expect(c.peek("k")).toBe(null);         // null = negative cache still active
   });
 
+  it("onPositivePersist fires when a positive URL is stored", () => {
+    const seen: Array<[string, string]> = [];
+    const c = makeCoverCache({
+      fetch: async () => null,
+      onPositivePersist: (key, dataUrl) => {
+        seen.push([key, dataUrl]);
+      },
+    });
+    c.remember("a", "data:Z");
+    expect(seen).toEqual([["a", "data:Z"]]);
+  });
+
   it("negative TTL expires and next peek is a miss", () => {
     vi.useFakeTimers();
     const c = makeCoverCache({ fetch: async () => null, negativeTtlMs: 1000 });
