@@ -65,3 +65,15 @@ export function clearSlskCoverCache(): void {
   cache.clear();
   filesizeByKey.clear();
 }
+
+/** Clears negative-TTL misses only (successful data URLs kept). */
+export function clearSlskCoverNegatives(): void {
+  cache.clearNegatives();
+}
+
+/** Clears one peer filepath's cover so the next read hits the network again. */
+export function invalidateSlskCover(username: unknown, filepath: unknown): void {
+  const key = slskCoverKey(username, filepath);
+  cache.invalidate(key);
+  filesizeByKey.delete(key);
+}

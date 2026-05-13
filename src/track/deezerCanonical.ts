@@ -11,7 +11,8 @@
  * Flow:
  *   1. `enrichTrackNames(track)` queries Deezer with the resolver's guess.
  *   2. If we get a hit whose normalized title matches ours, stamp the
- *      canonical `{artist, title, albumTitle}` onto `track.data` and call
+ *      canonical `{artist, title, albumTitle, coverUrl}` onto `track.data`
+ *      (Deezer album art HTTPS URL when present) and call
  *      `bumpEntitiesVersion()` so Vue re-renders every row pointing at
  *      the track.
  *   3. Results are cached by `artist|title` so a repeated query skips
@@ -24,7 +25,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { RateLimitedFetchQueue } from "../lib/RateLimitedFetchQueue.js";
-import { bumpEntitiesVersion } from "../stores/entities.js";
+import { bumpEntitiesVersion, getTrack } from "../stores/entities.js";
 import { putTrack } from "../persistence/trackCache.js";
 import type { Track } from "./Track.js";
 import { nameConfidence } from "./factory.js";
@@ -131,7 +132,7 @@ async function fetchCanonical(artist: string, title: string): Promise<{ artist: 
  * file system over the catalog there) and for tracks where we don't
  * have enough to query with (empty artist + empty title).
  *
- * On a hit, mutates `track.data.{artist, title, albumTitle}` in place
+ * On a hit, mutates `track.data.{artist, title, albumTitle, coverUrl?}` in place
  * and bumps the entities version so every Vue consumer re-renders.
  */
 export function enrichTrackNames(track: Track): void {
@@ -170,17 +171,24 @@ export function enrichTrackNames(track: Track): void {
 }
 
 function applyCanonical(track: Track, c: { artist: string; title: string; album: string; coverUrl: string | null }): void {
-  // `track.data` is marked `protected readonly` in TypeScript, but the
+  // Streaming search calls `registerEntities` on every batch; the same id
+  // may refer to a newer `Track` instance than the one captured when
+  // `enrichTrackNames` ran. Always stamp the registry copy so coverUrl /
+  // canonical names land on what the UI actually renders.
+  const live = getTrack(track.id);
+  const target = live ?? track;
+  // `target.data` is marked `protected readonly` in TypeScript, but the
   // runtime object is a plain POJO reachable through `toJSON()`. We write
-  // through that reference so the class getters (`track.artist`, etc) pick
+  // through that reference so the class getters (`target.artist`, etc) pick
   // up the new values immediately without any wrapper re-instantiation.
-  const data = track.toJSON();
+  const data = target.toJSON();
   data.artist = c.artist;
   data.title = c.title;
   if (c.album) data.albumTitle = c.album;
+  if (c.coverUrl) data.coverUrl = c.coverUrl;
   // Canonical names are authoritative — bump the tier so a repeat call
   // (e.g. if the track lands back in a search result set) doesn't re-query.
-  nameConfidence.set(track.id, "high");
+  nameConfidence.set(target.id, "high");
   // Push the mutated TrackData back through the persistence cache so
   // likes / playlists / queue pick up the canonical names after a restart.
   // We pass a shallow clone — the cache's `put` bails out when prev ===

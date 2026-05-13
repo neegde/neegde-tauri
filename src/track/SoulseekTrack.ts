@@ -15,12 +15,17 @@ import {
   getSlskCoverDataUrl,
   peekSlskCover,
 } from "../soulseek/coverCache.js";
+import { guessSlskFolderCoverPath } from "../soulseek/slskFolderCoverGuess.js";
 import { isPeerDead, markPeerDead } from "../soulseek/peerBlacklist.js";
 import { getAlbum, entitiesVersion, bumpEntitiesVersion } from "../stores/entities.js";
 import { putTrack } from "../persistence/trackCache.js";
 import { appDebugLog } from "../appDebugLog.js";
 
-const COVER_CANDIDATES = ["folder.jpg", "cover.jpg", "front.jpg", "album.jpg", "cover.png", "folder.png"];
+/** Optional second argument to {@link SoulseekTrack.startCoverFetch}. */
+export type SoulseekTrackCoverFetchOpts = {
+  /** `auto` — two common basenames; `exhaustive` — full folder scan; `off` — no peer guessing. */
+  peerGuess?: "auto" | "exhaustive" | "off";
+};
 
 export class SoulseekTrack extends Track {
   private get slskSource(): SoulseekTrackSource {
@@ -95,6 +100,20 @@ export class SoulseekTrack extends Track {
     return out;
   }
 
+  /**
+   * First live peer + size used for full-file downloads (export / embedded cover).
+   *
+   * @returns Coordinates and byte size, or `null` when every known peer is blacklisted.
+   */
+  embedFullFileTarget(): { username: string; filepath: string; filesize: number } | null {
+    const peers = this.peerAttempts();
+    const p = peers[0];
+    if (!p) return null;
+    const filesize = Number(p.size);
+    if (!Number.isFinite(filesize) || filesize <= 0) return null;
+    return { username: p.username, filepath: p.filepath, filesize };
+  }
+
   override async prepareStream(): Promise<string> {
     const peers = this.peerAttempts();
     if (peers.length === 0) return "";
@@ -148,11 +167,15 @@ export class SoulseekTrack extends Track {
     return peerUrl ?? this.data.coverUrl ?? null;
   }
 
-  override startCoverFetch(signal?: AbortSignal): void {
+  override startCoverFetch(signal?: AbortSignal, opts?: unknown): void {
+    const peerGuess = (opts as SoulseekTrackCoverFetchOpts | undefined)?.peerGuess ?? "auto";
     const ref = this.getCoverRef();
     if (!ref?.slsk_username || !ref?.slsk_filepath) {
       void appDebugLog("cover", `slsk track: no cover ref — id=${this.id}`);
-      if (this.refs.slskUsername && this.refs.slskFilepath) void this._guessCoverFromDir(signal);
+      if (peerGuess === "off") return;
+      if (this.refs.slskUsername && this.refs.slskFilepath) {
+        void this._guessCoverFromDir(signal, peerGuess === "exhaustive");
+      }
       return;
     }
     const peek = peekSlskCover(ref.slsk_username, ref.slsk_filepath);
@@ -164,38 +187,20 @@ export class SoulseekTrack extends Track {
     void getSlskCoverDataUrl(ref.slsk_username, ref.slsk_filepath, ref.size ?? 0).catch(() => {});
   }
 
-  private _coverGuessInProgress = false;
-
-  private async _guessCoverFromDir(signal?: AbortSignal): Promise<void> {
-    if (this._coverGuessInProgress) return;
-    this._coverGuessInProgress = true;
-    try {
-      const username = this.refs.slskUsername;
-      const filepath = this.refs.slskFilepath;
-      const lastSep = Math.max(filepath.lastIndexOf("\\"), filepath.lastIndexOf("/"));
-      if (lastSep === -1) return;
-      const dir = filepath.slice(0, lastSep + 1);
-      void appDebugLog("cover", `slsk track: guessing cover — user=${username} dir=${dir.slice(-60)}`);
-      for (const name of COVER_CANDIDATES) {
-        if (signal?.aborted) return;
-        const guessPath = dir + name;
-        if (peekSlskCover(username, guessPath) === null) continue; // neg-cached
-        const result = await getSlskCoverDataUrl(username, guessPath, 0).catch(() => null);
-        if (signal?.aborted) return;
-        if (result) {
-          const src = this.slskSource;
-          if (!src.raw) src.raw = {} as SoulseekTrackRaw;
-          src.raw.cover = { slsk_username: username, slsk_filepath: guessPath, size: 0 };
-          putTrack(this);
-          bumpEntitiesVersion();
-          void appDebugLog("cover", `slsk track: guess hit — user=${username} file=${name}`);
-          return;
-        }
-      }
-      void appDebugLog("cover", `slsk track: guess exhausted — user=${username} dir=${dir.slice(-60)}`);
-    } finally {
-      this._coverGuessInProgress = false;
-    }
+  private async _guessCoverFromDir(signal?: AbortSignal, exhaustive = false): Promise<void> {
+    const username = this.refs.slskUsername;
+    const filepath = this.refs.slskFilepath;
+    const lastSep = Math.max(filepath.lastIndexOf("\\"), filepath.lastIndexOf("/"));
+    if (lastSep === -1) return;
+    const dir = filepath.slice(0, lastSep + 1);
+    const guessPath = await guessSlskFolderCoverPath(username, dir, signal, exhaustive);
+    if (signal?.aborted) return;
+    if (!guessPath) return;
+    const src = this.slskSource;
+    if (!src.raw) src.raw = {} as SoulseekTrackRaw;
+    src.raw.cover = { slsk_username: username, slsk_filepath: guessPath, size: 0 };
+    putTrack(this);
+    bumpEntitiesVersion();
   }
 
   override async exportToDisk(onProgress?: (p: unknown) => void): Promise<void> {

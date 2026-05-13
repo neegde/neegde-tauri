@@ -271,7 +271,7 @@ describe("Results — albumFromFolder (via runCoverFetches)", () => {
       folder: "Pearl Jam - Ten/2020/CD1",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(fetchAlbumCoverMock).toHaveBeenCalled();
     const [, album] = fetchAlbumCoverMock.mock.calls[0]!;
@@ -287,7 +287,7 @@ describe("Results — albumFromFolder (via runCoverFetches)", () => {
       folder: "Artist/2020 - Live In Berlin",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(fetchAlbumCoverMock).toHaveBeenCalled();
     const [, album] = fetchAlbumCoverMock.mock.calls[0]!;
@@ -304,7 +304,7 @@ describe("Results — albumFromFolder (via runCoverFetches)", () => {
       folder: "Artist/Great Album (2020)",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(fetchAlbumCoverMock).toHaveBeenCalled();
     const [, album] = fetchAlbumCoverMock.mock.calls[0]!;
@@ -321,7 +321,7 @@ describe("Results — albumFromFolder (via runCoverFetches)", () => {
       folder: "Artist/Big Album/Disc 2",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(fetchAlbumCoverMock).toHaveBeenCalled();
     const [, album] = fetchAlbumCoverMock.mock.calls[0]!;
@@ -352,11 +352,11 @@ describe("Results — cover-fetch debounce & generation gating", () => {
     await nextTick();
 
     // Before the debounce elapses, no fetch should have fired yet.
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(300);
     await flushPromises();
     expect(fetchAlbumCoverMock).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1200);
+    await vi.advanceTimersByTimeAsync(200);
     await flushPromises();
     // Exactly one track remains after the last setProps → one call.
     expect(fetchAlbumCoverMock).toHaveBeenCalled();
@@ -377,7 +377,7 @@ describe("Results — cover-fetch debounce & generation gating", () => {
       folder: "X/Y",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(slskMeta.get("slsk:wurl")?.coverUrl).toBe("https://img/x.jpg");
     expect(slskMeta.get("slsk:wurl")?.albumUrl).toBe("https://music/y");
@@ -393,7 +393,7 @@ describe("Results — cover-fetch debounce & generation gating", () => {
       cover: { slsk_username: "u", slsk_filepath: "X/Y/cover.jpg" },
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(fetchAlbumCoverMock).not.toHaveBeenCalled();
     w.unmount();
@@ -411,7 +411,7 @@ describe("Results — cover-fetch debounce & generation gating", () => {
       folder: "Cancelable/Album",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(fetchAlbumCoverMock).toHaveBeenCalled();
 
@@ -498,7 +498,7 @@ describe("Results — runCoverFetches grouping & null responses", () => {
       folder: "Beta/Second",
     });
     const w = await mountWithTracks([a1, a2, b1]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(fetchAlbumCoverMock).toHaveBeenCalledTimes(2);
     w.unmount();
@@ -513,7 +513,7 @@ describe("Results — runCoverFetches grouping & null responses", () => {
       folder: "A/B",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(slskMeta.get("slsk:null")?.coverUrl).toBeUndefined();
     w.unmount();
@@ -530,7 +530,7 @@ describe("Results — runCoverFetches grouping & null responses", () => {
       folder: "A/B",
     });
     const w = await mountWithTracks([t]);
-    await vi.advanceTimersByTimeAsync(1600);
+    await vi.advanceTimersByTimeAsync(600);
     await flushPromises();
     expect(slskMeta.get("slsk:empty")?.coverUrl).toBeUndefined();
     w.unmount();

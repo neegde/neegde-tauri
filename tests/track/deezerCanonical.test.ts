@@ -3,6 +3,7 @@ import "../_setup.js";
 
 const invokeMock = vi.fn();
 const bumpEntitiesVersionMock = vi.fn();
+const getTrackMock = vi.fn();
 const putTrackMock = vi.fn();
 const appDebugLogMock = vi.fn(() => Promise.resolve());
 
@@ -12,6 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("../../src/stores/entities.js", () => ({
   bumpEntitiesVersion: (...args: unknown[]) => bumpEntitiesVersionMock(...args),
+  getTrack: (...args: unknown[]) => getTrackMock(...args),
 }));
 
 vi.mock("../../src/persistence/trackCache.js", () => ({
@@ -43,6 +45,7 @@ function makeTrack(id: string, artist: string, title: string) {
     title,
     artist,
     albumTitle: null as string | null,
+    coverUrl: null as string | null,
   };
   return {
     id,
@@ -66,6 +69,7 @@ async function flushTasks(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.resetModules();
+  getTrackMock.mockReturnValue(undefined);
 });
 
 describe("enrichTrackNames", () => {
@@ -107,14 +111,43 @@ describe("enrichTrackNames", () => {
     expect(track.toJSON().title).toBe("Song (Live)");
     expect(track.toJSON().artist).toBe("Artist");
     expect(track.toJSON().albumTitle).toBe("Album");
+    expect(track.toJSON().coverUrl).toBe("https://img/cover.jpg");
     expect(nameConfidence.get(track.id)).toBe("high");
     expect(putTrackMock).toHaveBeenCalledWith(expect.objectContaining({
       id: "t-hit",
       artist: "Artist",
       title: "Song (Live)",
       albumTitle: "Album",
+      coverUrl: "https://img/cover.jpg",
     }));
     expect(bumpEntitiesVersionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies Deezer hit to registry track when the same id was re-registered", async () => {
+    const { enrichTrackNames } = await import("../../src/track/deezerCanonical.js");
+    const { nameConfidence } = await import("../../src/track/factory.js");
+    const stale = makeTrack("t-replace", "Artist", "Song");
+    const live = makeTrack("t-replace", "Artist", "Song");
+    nameConfidence.set(stale.id, "medium");
+    getTrackMock.mockImplementation((id: string) => (id === "t-replace" ? live : undefined));
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      data: [
+        {
+          title: "Song (Live)",
+          artist: { name: "Artist" },
+          album: { title: "Album", cover_medium: "https://img/cover.jpg" },
+        },
+      ],
+    }));
+
+    enrichTrackNames(stale as never);
+    await flushTasks();
+
+    expect(live.toJSON().title).toBe("Song (Live)");
+    expect(live.toJSON().coverUrl).toBe("https://img/cover.jpg");
+    expect(stale.toJSON().title).toBe("Song");
+    expect(stale.toJSON().coverUrl).toBeNull();
+    expect(nameConfidence.get("t-replace")).toBe("high");
   });
 
   it("rejects mismatched hits and leaves track untouched", async () => {

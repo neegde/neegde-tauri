@@ -4,6 +4,8 @@ import { getAlbum, entitiesVersion } from "../../stores/entities.js";
 import { useEntityCover } from "../../composables/useEntityCover.js";
 import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
+import { SoulseekTrack } from "../../track/SoulseekTrack.js";
+import { forceReloadTrackCover, forceReloadTrackCoverFromFullFile } from "../../track/forceReloadTrackCover.js";
 
 /**
  * Row for a SoulSeek Track entity. Reads Track directly; cover info is
@@ -20,6 +22,11 @@ const props = defineProps({
   nowPlaying: { type: Boolean, default: false },
   /** Audio element is actively playing (vs paused). */
   playerPlaying: { type: Boolean, default: false },
+  /**
+   * When false, skips SoulSeek peer folder guessing for this row (enriched URL
+   * and stamped refs still work).
+   */
+  autoPeerCover: { type: Boolean, default: true },
 });
 
 const emit = defineEmits(["play", "download", "like", "open-source", "add-to-playlist"]);
@@ -47,15 +54,27 @@ const ctxOpen = ref(false);
 const ctxX = ref(0);
 const ctxY = ref(0);
 
-const SLSK_CTX_ACTIONS = [
-  { id: "source",   label: "Источник (SoulSeek)", icon: "source" },
-  { id: "divider" },
-  { id: "play",     label: "Слушать",     icon: "play"     },
-  { id: "download", label: "Скачать",     icon: "download" },
-  { id: "divider" },
-  { id: "like",     label: "В избранное", icon: "heart"    },
-  { id: "playlist", label: "В плейлист",  icon: "playlist" },
-];
+const SLSK_CTX_ACTIONS = computed(() => {
+  const canFullEmbed =
+    props.track instanceof SoulseekTrack && props.track.embedFullFileTarget() != null;
+  return [
+    { id: "reload-cover", label: "Загрузить обложку", icon: "cover" },
+    {
+      id: "reload-cover-full-file",
+      label: "Обложка из полного файла",
+      icon: "cover",
+      disabled: !canFullEmbed,
+    },
+    { id: "divider" },
+    { id: "source",   label: "Источник (SoulSeek)", icon: "source" },
+    { id: "divider" },
+    { id: "play",     label: "Слушать",     icon: "play"     },
+    { id: "download", label: "Скачать",     icon: "download" },
+    { id: "divider" },
+    { id: "like",     label: "В избранное", icon: "heart"    },
+    { id: "playlist", label: "В плейлист",  icon: "playlist" },
+  ];
+});
 
 function onContextMenu(e) {
   ctxX.value = e.clientX;
@@ -64,6 +83,14 @@ function onContextMenu(e) {
 }
 
 function onCtxAction(id) {
+  if (id === "reload-cover") {
+    forceReloadTrackCover(props.track);
+    return;
+  }
+  if (id === "reload-cover-full-file") {
+    forceReloadTrackCoverFromFullFile(props.track);
+    return;
+  }
   if (id === "source")   emit("open-source", props.track);
   if (id === "play")     emit("play",     props.track);
   if (id === "download") emit("download", props.track);
@@ -87,7 +114,9 @@ function fmtSize(bytes) {
 
 // ── Cover art ────────────────────────────────────────────────────────────────
 const rowRef = ref(null);
-const entityCover = useEntityCover(toRef(props, "track"), rowRef);
+const entityCover = useEntityCover(toRef(props, "track"), rowRef, {
+  autoPeerCover: toRef(props, "autoPeerCover"),
+});
 // Fall back to iTunes/filename-parser enriched cover when the SoulSeek folder
 // has none.
 const coverUrl = computed(() => entityCover.coverUrl.value ?? props.enriched?.coverUrl ?? null);

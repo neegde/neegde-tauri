@@ -61,3 +61,8 @@ export function getRutrackerCoverDataUrl(topicId: unknown): Promise<string | nul
 export function clearRutrackerCoverCache(): void {
   cache.clear();
 }
+
+/** Clears one topic's cover so the next read hits the network again. */
+export function invalidateRutrackerCover(topicId: unknown): void {
+  cache.invalidate(cacheKey(topicId));
+}

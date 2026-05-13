@@ -361,6 +361,8 @@ pub fn run() {
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,
+            torrent_image::torrent_embedded_cover,
+            torrent_image::torrent_embedded_cover_full_file,
             fetch_album_cover,
             dev_dump_raw_search,
             nerd_stats::get_nerd_diagnostics,
@@ -394,6 +396,7 @@ pub fn run() {
             soulseek::soulseek_clear_saved_credentials,
             soulseek::soulseek_export_file,
             soulseek::soulseek_export_cancel,
+            soulseek::soulseek_embedded_cover_full_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -12,7 +12,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // ── Public types (serialised to frontend) ────────────────────────────────────
 
@@ -512,6 +512,97 @@ pub async fn soulseek_export_file(
 pub fn soulseek_export_cancel(state: tauri::State<'_, SoulSeekState>) -> Result<(), String> {
     state.export_cancel.store(true, Ordering::Release);
     Ok(())
+}
+
+const MAX_SLSK_FULL_EMBED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const SLSK_EMBED_FULL_DOWNLOAD_MAX_WAIT: Duration = Duration::from_secs(600);
+
+/**
+ * Downloads a SoulSeek audio file to a temp path, scans the whole file for embedded
+ * artwork (ID3 / FLAC picture / MP4 metadata), then deletes the temp file.
+ *
+ * Args:
+ *     username: Peer username.
+ *     filepath: Full share path on the peer.
+ *     filesize: Declared size in bytes (handshake).
+ *
+ * Returns:
+ *     `data:` URL when a picture is found, `None` when tags contain no artwork,
+ *     or an error when download or parsing fails.
+ */
+#[tauri::command]
+pub async fn soulseek_embedded_cover_full_file(
+    state: tauri::State<'_, SoulSeekState>,
+    username: String,
+    filepath: String,
+    filesize: u64,
+) -> Result<Option<String>, String> {
+    if filesize == 0 {
+        return Err("Файл имеет размер 0".to_string());
+    }
+    if filesize > MAX_SLSK_FULL_EMBED_BYTES {
+        return Err(format!(
+            "Файл слишком большой для чтения метатегов (>{MAX_SLSK_FULL_EMBED_BYTES} B)"
+        ));
+    }
+
+    let session = state.get_session()?;
+    let token = next_token();
+    let handle = transfer::download_and_stream(
+        Arc::clone(&session),
+        username,
+        filepath,
+        filesize,
+        token,
+    )
+    .await?;
+
+    let total = handle.total_size;
+    let downloaded = Arc::clone(&handle.downloaded);
+    let complete = Arc::clone(&handle.complete);
+
+    let wait_start = Instant::now();
+    loop {
+        if wait_start.elapsed() > SLSK_EMBED_FULL_DOWNLOAD_MAX_WAIT {
+            handle.http_abort.abort();
+            handle.download_abort.abort();
+            let _ = std::fs::remove_file(&handle.temp_path);
+            return Err(
+                "Таймаут загрузки файла с SoulSeek для чтения обложки (пир не отвечает).".to_string(),
+            );
+        }
+        let dl = downloaded.load(Ordering::Acquire);
+        let done = complete.load(Ordering::Acquire);
+        if done || (total > 0 && dl >= total) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    handle.http_abort.abort();
+
+    let dl_final = downloaded.load(Ordering::Acquire);
+    if total > 0 && dl_final < total * 90 / 100 {
+        handle.download_abort.abort();
+        let _ = std::fs::remove_file(&handle.temp_path);
+        return Err(format!(
+            "Загрузка прервана пиром: получено {} из {}",
+            slsk_fmt_bytes(dl_final),
+            slsk_fmt_bytes(total)
+        ));
+    }
+
+    let temp_path = handle.temp_path.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        crate::torrent_image::extract_embedded_cover_data_url_from_audio_path(&temp_path)
+    })
+    .await
+    .map_err(|e| format!("parse task: {e}"))?;
+
+    handle.download_abort.abort();
+    let _ = std::fs::remove_file(&handle.temp_path);
+
+    Ok(out)
 }
 
 // ── Credential persistence ────────────────────────────────────────────────────

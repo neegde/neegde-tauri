@@ -77,3 +77,8 @@ export function clearTorrentImageCache(): void {
   cache.clear();
   b64Hints.clear();
 }
+
+/** Clears one in-torrent image so the next read fetches that file again. */
+export function invalidateTorrentImage(magnet: string, fileIdx: number): void {
+  cache.invalidate(cacheKey(magnet, fileIdx));
+}

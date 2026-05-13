@@ -22,7 +22,7 @@ export class RutrackerAlbum extends Album {
     return getCoverReactive(topicId);
   }
 
-  override startCoverFetch(_signal?: AbortSignal): void {
+  override startCoverFetch(_signal?: AbortSignal, _opts?: unknown): void {
     if (this.data.coverUrl) return;
     const topicId = this.refs?.topicId;
     if (!topicId) return;

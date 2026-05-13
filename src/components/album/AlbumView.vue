@@ -19,6 +19,7 @@ import {
   type CtxActionDef,
 } from "../../composables/useTrackContextMenu.js";
 import { sourceContextLabel, canDownload } from "../../track/labels.js";
+import { fullFileEmbeddedCoverAvailableForTrack } from "../../torrent/embeddedCover.js";
 import {
   trackDisplayBasename,
   audioFormatLabel,
@@ -84,7 +85,16 @@ const artistLabel = computed<string>(() => {
 
 function albumTrackActions(t: Track): CtxActionDef[] {
   const isLiked = props.likedTrackIds.has(t.id);
+  const canReadFullEmbeddedCover = fullFileEmbeddedCoverAvailableForTrack(t);
   return [
+    { id: "reload-cover", label: "Загрузить обложку", icon: "cover" },
+    {
+      id: "reload-cover-full-file",
+      label: "Обложка из полного файла",
+      icon: "cover",
+      disabled: !canReadFullEmbeddedCover,
+    },
+    { id: "divider" },
     { id: "play",     label: "Слушать",    icon: "play" },
     { id: "queue",    label: "В очередь",  icon: "queue" },
     { id: "divider" },

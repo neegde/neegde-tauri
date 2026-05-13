@@ -21,6 +21,10 @@
  *   4. `getOrFetch` dedupes concurrent requests per key and can apply a
  *      concurrency cap (`maxConcurrent`) so we don't fire 50 SLSK peer
  *      connections at once.
+ *
+ *   5. If `fetch` **throws**, the key is not negative-cached — only a resolved
+ *      `null` outcome is. Transient errors (SoulSeek not connected yet) must
+ *      not make `peek` return `null` and skip retries for the TTL window.
  */
 
 import { reactive } from "vue";
@@ -49,8 +53,12 @@ export interface CoverCache {
   remember: (key: string, dataUrl: string | null) => void;
   /** Cache-hit fast path + dedup + concurrency gate. */
   getOrFetch: (key: string) => Promise<string | null>;
+  /** Drop cached state for one key so the next fetch is a real network round-trip. */
+  invalidate: (key: string) => void;
   /** Wipe everything (positives, negatives, pending, waiters). */
   clear: () => void;
+  /** Drop only negative-TTL rows so misses can be re-fetched (e.g. after SoulSeek login). */
+  clearNegatives: () => void;
 }
 
 export function makeCoverCache(opts: CoverCacheOptions): CoverCache {
@@ -66,6 +74,8 @@ export function makeCoverCache(opts: CoverCacheOptions): CoverCache {
   const positives = reactive(new Map<string, string>());
   const negatives = new Map<string, number>();
   const pending = new Map<string, Promise<string | null>>();
+  /** Bumped on {@link invalidate} so in-flight fetches from before the bump skip `remember`. */
+  const invalidateGen = new Map<string, number>();
   let totalBytes = 0;
 
   let running = 0;
@@ -122,6 +132,15 @@ export function makeCoverCache(opts: CoverCacheOptions): CoverCache {
     }
   }
 
+  function invalidate(key: string): void {
+    invalidateGen.set(key, (invalidateGen.get(key) ?? 0) + 1);
+    const prev = positives.get(key);
+    if (prev != null) totalBytes -= bytesOf(prev);
+    positives.delete(key);
+    negatives.delete(key);
+    pending.delete(key);
+  }
+
   async function getOrFetch(key: string): Promise<string | null> {
     const hit = peek(key);
     if (hit !== undefined) return hit;
@@ -129,15 +148,26 @@ export function makeCoverCache(opts: CoverCacheOptions): CoverCache {
     const existing = pending.get(key);
     if (existing) return existing;
 
+    const startGen = invalidateGen.get(key) ?? 0;
+
     const p = (async () => {
       await gateAcquire();
       try {
         const v = await networkFetch(key);
+        if ((invalidateGen.get(key) ?? 0) !== startGen) {
+          log("cover", "invalidate discard — stale fetch");
+          return null;
+        }
         remember(key, v);
         log("cover", v ? `OK — len=${v.length}` : `null (negative TTL ${negativeTtlMs}ms)`);
         return v;
       } catch (e) {
-        remember(key, null);
+        if ((invalidateGen.get(key) ?? 0) !== startGen) {
+          log("cover", "invalidate discard — stale error");
+          return null;
+        }
+        // Do not negative-cache throws — e.g. SoulSeek "not connected" would
+        // block folder.jpg for the TTL and skip retries via peek===null.
         log("cover", `error — ${String(e)}`);
         return null;
       } finally {
@@ -153,10 +183,15 @@ export function makeCoverCache(opts: CoverCacheOptions): CoverCache {
     positives.clear();
     negatives.clear();
     pending.clear();
+    invalidateGen.clear();
     waiters.length = 0;
     running = 0;
     totalBytes = 0;
   }
 
-  return { peek, getReactive, remember, getOrFetch, clear };
+  function clearNegatives(): void {
+    negatives.clear();
+  }
+
+  return { peek, getReactive, remember, getOrFetch, invalidate, clear, clearNegatives };
 }
