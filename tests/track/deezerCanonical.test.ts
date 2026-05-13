@@ -73,17 +73,69 @@ beforeEach(() => {
 });
 
 describe("enrichTrackNames", () => {
-  it("skips tracks with high confidence", async () => {
+  it("fetches Deezer cover for high-confidence tracks without overwriting names", async () => {
     const { enrichTrackNames } = await import("../../src/track/deezerCanonical.js");
     const { nameConfidence } = await import("../../src/track/factory.js");
-    const track = makeTrack("t-high", "Artist", "Song");
+    const track = makeTrack("t-high", "Heronwater", "TOKYO WATER");
     nameConfidence.set(track.id, "high");
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      data: [
+        {
+          title: "TOKYO WATER",
+          artist: { name: "Heronwater" },
+          album: { title: "TOKYO WATER", cover_medium: "https://img/tokyo.jpg" },
+        },
+      ],
+    }));
+
+    enrichTrackNames(track as never);
+    await flushTasks();
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(track.toJSON().title).toBe("TOKYO WATER");
+    expect(track.toJSON().artist).toBe("Heronwater");
+    expect(track.toJSON().coverUrl).toBe("https://img/tokyo.jpg");
+    expect(track.toJSON().albumTitle).toBe("TOKYO WATER");
+    expect(putTrackMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips high-confidence cover-only lookup when album and cover already present", async () => {
+    const { enrichTrackNames } = await import("../../src/track/deezerCanonical.js");
+    const { nameConfidence } = await import("../../src/track/factory.js");
+    const track = makeTrack("t-high-noop", "Heronwater", "TOKYO WATER");
+    nameConfidence.set(track.id, "high");
+    const data = track.toJSON();
+    data.albumTitle = "TOKYO WATER";
+    data.coverUrl = "https://img/existing.jpg";
 
     enrichTrackNames(track as never);
     await flushTasks();
 
     expect(invokeMock).not.toHaveBeenCalled();
     expect(putTrackMock).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite an existing cover when filling album in cover-only mode", async () => {
+    const { enrichTrackNames } = await import("../../src/track/deezerCanonical.js");
+    const { nameConfidence } = await import("../../src/track/factory.js");
+    const track = makeTrack("t-high-cover-set", "Heronwater", "Симп");
+    nameConfidence.set(track.id, "high");
+    track.toJSON().coverUrl = "https://img/peer.jpg";
+    invokeMock.mockResolvedValueOnce(JSON.stringify({
+      data: [
+        {
+          title: "Симп (Prod. by Heronwater)",
+          artist: { name: "Heronwater" },
+          album: { title: "NO COMMERCIAL LYRICS", cover_medium: "https://img/deezer.jpg" },
+        },
+      ],
+    }));
+
+    enrichTrackNames(track as never);
+    await flushTasks();
+
+    expect(track.toJSON().coverUrl).toBe("https://img/peer.jpg");
+    expect(track.toJSON().albumTitle).toBe("NO COMMERCIAL LYRICS");
   });
 
   it("applies canonical names for a matching Deezer hit", async () => {

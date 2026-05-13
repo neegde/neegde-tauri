@@ -127,19 +127,33 @@ async function fetchCanonical(artist: string, title: string): Promise<{ artist: 
 }
 
 /**
- * Kick off a Deezer lookup for a track whose resolver confidence is
- * `medium` / `low`. Noop for `high`-confidence tracks (we trust the
- * file system over the catalog there) and for tracks where we don't
- * have enough to query with (empty artist + empty title).
+ * Kick off a Deezer lookup for a track.
  *
- * On a hit, mutates `track.data.{artist, title, albumTitle, coverUrl?}` in place
- * and bumps the entities version so every Vue consumer re-renders.
+ * Behaviour by resolver confidence:
+ *   - `medium` / `low` → full canonical rewrite: artist, title, album, cover.
+ *   - `high` → cover-only enrichment. Filename names are trusted, but the
+ *     SoulSeek peer often refuses to share album art (Upload denied / early
+ *     eof / cannot resolve address). When that happens the row would stay
+ *     blank — Deezer is a free fallback for the thumbnail.
+ *   - unknown → skip entirely.
+ *
+ * Noop when the track already has an `albumTitle` AND `coverUrl` in
+ * cover-only mode, or when there is nothing to query with.
+ *
+ * On a hit, mutates `track.data` in place (cover-only fills only missing
+ * fields) and bumps the entities version so every Vue consumer re-renders.
  */
 export function enrichTrackNames(track: Track): void {
   const conf = nameConfidence.get(track.id);
-  if (conf !== "medium" && conf !== "low") {
+  if (conf !== "medium" && conf !== "low" && conf !== "high") {
     void appDebugLog("deezer", `skip ${track.id} conf=${conf ?? "?"}`).catch(() => {});
     return;
+  }
+  const coverOnly = conf === "high";
+
+  if (coverOnly) {
+    const cur = track.toJSON() as { coverUrl?: string | null; albumTitle?: string | null };
+    if (cur.coverUrl && cur.albumTitle) return;
   }
 
   const artist = (track.artist ?? "").trim();
@@ -150,14 +164,14 @@ export function enrichTrackNames(track: Track): void {
   const key = cacheKey(artist, title);
   if (cache.has(key)) {
     const cached = cache.get(key);
-    if (cached) applyCanonical(track, cached);
+    if (cached) applyCanonical(track, cached, coverOnly);
     return;
   }
   const inflight = pending.get(key);
   if (inflight) {
     void inflight.then(() => {
       const c = cache.get(key);
-      if (c) applyCanonical(track, c);
+      if (c) applyCanonical(track, c, coverOnly);
     });
     return;
   }
@@ -165,12 +179,16 @@ export function enrichTrackNames(track: Track): void {
   const p = fetchCanonical(artist || title, title).then((result) => {
     cache.set(key, result);
     pending.delete(key);
-    if (result) applyCanonical(track, result);
+    if (result) applyCanonical(track, result, coverOnly);
   });
   pending.set(key, p);
 }
 
-function applyCanonical(track: Track, c: { artist: string; title: string; album: string; coverUrl: string | null }): void {
+function applyCanonical(
+  track: Track,
+  c: { artist: string; title: string; album: string; coverUrl: string | null },
+  coverOnly = false,
+): void {
   // Streaming search calls `registerEntities` on every batch; the same id
   // may refer to a newer `Track` instance than the one captured when
   // `enrichTrackNames` ran. Always stamp the registry copy so coverUrl /
@@ -182,13 +200,26 @@ function applyCanonical(track: Track, c: { artist: string; title: string; album:
   // through that reference so the class getters (`target.artist`, etc) pick
   // up the new values immediately without any wrapper re-instantiation.
   const data = target.toJSON();
-  data.artist = c.artist;
-  data.title = c.title;
-  if (c.album) data.albumTitle = c.album;
-  if (c.coverUrl) data.coverUrl = c.coverUrl;
-  // Canonical names are authoritative — bump the tier so a repeat call
-  // (e.g. if the track lands back in a search result set) doesn't re-query.
-  nameConfidence.set(target.id, "high");
+  let mutated = false;
+  if (coverOnly) {
+    if (c.coverUrl && !data.coverUrl) {
+      data.coverUrl = c.coverUrl;
+      mutated = true;
+    }
+    if (c.album && !data.albumTitle) {
+      data.albumTitle = c.album;
+      mutated = true;
+    }
+    if (!mutated) return;
+  } else {
+    data.artist = c.artist;
+    data.title = c.title;
+    if (c.album) data.albumTitle = c.album;
+    if (c.coverUrl) data.coverUrl = c.coverUrl;
+    // Canonical names are authoritative — bump the tier so a repeat call
+    // (e.g. if the track lands back in a search result set) doesn't re-query.
+    nameConfidence.set(target.id, "high");
+  }
   // Push the mutated TrackData back through the persistence cache so
   // likes / playlists / queue pick up the canonical names after a restart.
   // We pass a shallow clone — the cache's `put` bails out when prev ===
