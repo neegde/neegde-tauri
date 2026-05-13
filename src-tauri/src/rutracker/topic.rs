@@ -47,7 +47,8 @@ pub async fn get_torrent_details(
     let files = parse_torrent_bytes(&torrent_bytes)?;
 
     let cover_data_url = match cover_img_url {
-        Some(url) => fetch_image_data_url(client, &url).await,
+        // Topic details must still succeed if the cover host is flaky.
+        Some(url) => fetch_image_data_url(client, &url).await.ok(),
         None => None,
     };
 
@@ -105,10 +106,13 @@ pub async fn get_cover_data_url(
         .map_err(|e| format!("Ошибка чтения страницы: {}", e))?;
     let (topic_html, _, _) = WINDOWS_1251.decode(&topic_bytes);
     let (cover_img_url, _, _) = parse_topic_page(topic_html.as_ref(), base);
-    Ok(match cover_img_url {
-        Some(url) => fetch_image_data_url(client, &url).await,
-        None => None,
-    })
+    match cover_img_url {
+        // No `<img>` in the first post — a stable "no cover" outcome.
+        None => Ok(None),
+        // Image URL present but download failed — propagate `Err` so the
+        // frontend does not negative-cache a transient failure as `null`.
+        Some(url) => Ok(Some(fetch_image_data_url(client, &url).await?)),
+    }
 }
 
 // ── Topic page parsing ────────────────────────────────────────────────────────
@@ -307,11 +311,21 @@ fn resolve_url(raw: &str, base: &str) -> String {
 // ── Image fetch ───────────────────────────────────────────────────────────────
 
 /// Fetch `url` and return as `data:<mime>;base64,<b64>`.
-/// Returns None on failure or if the image exceeds the size cap.
-async fn fetch_image_data_url(client: &Client, url: &str) -> Option<String> {
+///
+/// Returns `Err` on transport / HTTP failure so callers can distinguish a
+/// transient outage from a topic that genuinely has no inline cover.
+async fn fetch_image_data_url(client: &Client, url: &str) -> Result<String, String> {
     const MAX_BYTES: usize = 3 * 1024 * 1024; // 3 MB
 
-    let resp = client.get(url).send().await.ok()?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Обложка: ошибка запроса: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Обложка: HTTP {}", resp.status()));
+    }
 
     let mime = resp
         .headers()
@@ -321,13 +335,20 @@ async fn fetch_image_data_url(client: &Client, url: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "image/jpeg".to_string());
 
-    let bytes = resp.bytes().await.ok()?;
-    if bytes.is_empty() || bytes.len() > MAX_BYTES {
-        return None;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Обложка: ошибка чтения тела: {}", e))?;
+
+    if bytes.is_empty() {
+        return Err("Обложка: пустой ответ".into());
+    }
+    if bytes.len() > MAX_BYTES {
+        return Err(format!("Обложка: слишком большой файл ({} байт)", bytes.len()));
     }
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Some(format!("data:{};base64,{}", mime, b64))
+    Ok(format!("data:{};base64,{}", mime, b64))
 }
 
 // ── Post-body structured fields (year / genre / codec / …) ───────────────────

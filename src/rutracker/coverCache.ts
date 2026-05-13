@@ -19,10 +19,6 @@ import { rtLoggedIn } from "../stores/auth.js";
  */
 export const rutrackerCoverFetchEpoch = ref(0);
 
-watch(rtLoggedIn, (next, prev) => {
-  if (next && !prev) rutrackerCoverFetchEpoch.value += 1;
-});
-
 function cacheKey(topicId: unknown): string {
   return `${getMirror()}\n${String(topicId)}`;
 }
@@ -40,6 +36,13 @@ const cache = makeCoverCache({
   maxEntries: 1024,
   maxBytes: 64 * 1024 * 1024,
   negativeTtlMs: 90_000,
+});
+
+watch(rtLoggedIn, (next, prev) => {
+  if (next && !prev) {
+    rutrackerCoverFetchEpoch.value += 1;
+    cache.clearNegatives();
+  }
 });
 
 export function peekRutrackerCover(topicId: unknown): string | null | undefined {
@@ -60,6 +63,11 @@ export function getRutrackerCoverDataUrl(topicId: unknown): Promise<string | nul
 
 export function clearRutrackerCoverCache(): void {
   cache.clear();
+}
+
+/** Clears negative-TTL rows so thumbnails retry (e.g. after RuTracker login). */
+export function clearRutrackerCoverNegatives(): void {
+  cache.clearNegatives();
 }
 
 /** Clears one topic's cover so the next read hits the network again. */

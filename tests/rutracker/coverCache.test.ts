@@ -7,6 +7,7 @@ import {
   rememberRutrackerCover,
   getRutrackerCoverDataUrl,
   clearRutrackerCoverCache,
+  clearRutrackerCoverNegatives,
 } from "../../src/rutracker/coverCache.js";
 
 beforeEach(() => {
@@ -38,10 +39,18 @@ describe("rutracker coverCache", () => {
     expect(url).toBe(null);
     expect(peekRutrackerCover("7")).toBe(null);
   });
-  it("invoke throw → negative", async () => {
+  it("invoke throw → no negative cache", async () => {
     mockInvoke.mockRejectedValueOnce(new Error("404"));
     const url = await getRutrackerCoverDataUrl("z");
     expect(url).toBe(null);
+    expect(peekRutrackerCover("z")).toBeUndefined();
+  });
+  it("clearRutrackerCoverNegatives drops negative TTL", async () => {
+    mockInvoke.mockResolvedValueOnce(null);
+    await getRutrackerCoverDataUrl("9");
+    expect(peekRutrackerCover("9")).toBe(null);
+    clearRutrackerCoverNegatives();
+    expect(peekRutrackerCover("9")).toBeUndefined();
   });
   it("clearRutrackerCoverCache wipes", () => {
     rememberRutrackerCover("1", "data:X");
