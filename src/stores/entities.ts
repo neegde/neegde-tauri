@@ -19,7 +19,7 @@ import { buildTrack } from "../track/factory.js";
 import type { Album } from "../album/Album.js";
 import type { AlbumData } from "../album/types.js";
 import { buildAlbum } from "../album/factory.js";
-import { putTrack } from "../persistence/trackCache.js";
+import { mergePersistedTrackFields, putTrack } from "../persistence/trackCache.js";
 
 // Re-export AlbumData so existing consumers don't have to chase a new path.
 export type { AlbumData } from "../album/types.js";
@@ -38,6 +38,23 @@ function bump(): void {
  *  stamping canonical names on an already-registered track). */
 export function bumpEntitiesVersion(): void {
   bump();
+}
+
+/**
+ * Re-applies persisted `coverUrl` / `albumTitle` before normalize so search
+ * re-ingest does not drop catalog enrichment from the previous session.
+ */
+function withMergedPersisted(
+  entity: Track | TrackData | Album | AlbumData,
+): Track | TrackData | Album | AlbumData {
+  if (!entity || (entity as TrackData).type !== "track") return entity;
+  const td =
+    typeof (entity as Track).toJSON === "function"
+      ? (entity as Track).toJSON()
+      : (entity as TrackData);
+  const merged = mergePersistedTrackFields(td);
+  if (merged === td) return entity;
+  return buildTrack(merged);
 }
 
 /** Coerce raw data to a class instance when needed. */
@@ -68,7 +85,7 @@ function normalize(entity: Track | TrackData | Album | AlbumData): Entity | null
  */
 export function registerEntity(entity: Track | TrackData | Album | AlbumData | null | undefined): void {
   if (!entity) return;
-  const norm = normalize(entity);
+  const norm = normalize(withMergedPersisted(entity));
   if (!norm?.id) return;
   _byId.value.set(norm.id, norm);
   if (norm.type === "track") putTrack(norm);
@@ -85,7 +102,7 @@ export function registerEntities(entities: Array<Track | TrackData | Album | Alb
   const out: Entity[] = [];
   const tracksForCache: Track[] = [];
   for (const e of entities) {
-    const norm = normalize(e);
+    const norm = normalize(withMergedPersisted(e));
     if (!norm?.id) continue;
     _byId.value.set(norm.id, norm);
     if (norm.type === "track") tracksForCache.push(norm);

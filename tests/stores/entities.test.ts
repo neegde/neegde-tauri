@@ -8,7 +8,7 @@ import {
   getAlbum,
   type AlbumData,
 } from "../../src/stores/entities.js";
-import { clearTrackCache, hasTrack } from "../../src/persistence/trackCache.js";
+import { clearTrackCache, hasTrack, putTrack } from "../../src/persistence/trackCache.js";
 import { buildTrack } from "../../src/track/factory.js";
 import { SoulseekTrack } from "../../src/track/SoulseekTrack.js";
 import type { TrackData } from "../../src/track/types.js";
@@ -40,9 +40,16 @@ describe("entities registry", () => {
     expect(getTrack("y")).toBe(t);
   });
 
-  it("auto-pushes registered track into trackCache", () => {
-    registerEntity(slsk("z"));
-    expect(hasTrack("z")).toBe(true);
+  it("registerEntity merges persisted coverUrl and albumTitle for repeat search rows", () => {
+    const enriched: TrackData = {
+      ...slsk("slsk:merge"),
+      coverUrl: "https://cdn.example/cover.jpg",
+      albumTitle: "Album X",
+    };
+    putTrack(enriched);
+    registerEntity(slsk("slsk:merge"));
+    expect(getTrack("slsk:merge")?.toJSON().coverUrl).toBe("https://cdn.example/cover.jpg");
+    expect(getTrack("slsk:merge")?.toJSON().albumTitle).toBe("Album X");
   });
 
   it("getAlbum returns album entity; getTrack for an album id returns null", () => {

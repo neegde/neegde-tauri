@@ -4,6 +4,7 @@ import { fakeLocalStorage } from "../_setup.js";
 import {
   putTrack, putTracks, getTrackData, hydrateTrack, removeTrack,
   hasTrack, allTrackIds, clearTrackCache, loadTrackCache,
+  mergePersistedTrackFields,
 } from "../../src/persistence/trackCache.js";
 import { buildTrack } from "../../src/track/factory.js";
 import type { TrackData } from "../../src/track/types.js";
@@ -102,5 +103,19 @@ describe("trackCache", () => {
     const bad = { ...data("bad"), sources: [{ kind: "unknown" as never, refs: {} }] } as unknown as TrackData;
     putTrack(bad);
     expect(hydrateTrack("bad")).toBeNull();
+  });
+
+  it("mergePersistedTrackFields fills missing coverUrl and albumTitle", () => {
+    putTrack({ ...data("m1"), coverUrl: "https://c", albumTitle: "Alb" });
+    const merged = mergePersistedTrackFields(data("m1"));
+    expect(merged.coverUrl).toBe("https://c");
+    expect(merged.albumTitle).toBe("Alb");
+  });
+
+  it("mergePersistedTrackFields keeps incoming coverUrl when set", () => {
+    putTrack({ ...data("m2"), coverUrl: "https://old" });
+    const incoming = { ...data("m2"), coverUrl: "https://new" };
+    const merged = mergePersistedTrackFields(incoming);
+    expect(merged.coverUrl).toBe("https://new");
   });
 });

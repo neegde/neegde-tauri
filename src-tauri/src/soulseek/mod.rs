@@ -14,6 +14,47 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+use tauri::{AppHandle, Manager};
+
+const SLSK_COVER_CACHE_DIR: &str = "slsk_cover_cache";
+
+fn slsk_cover_disk_cache_key(username: &str, filepath: &str) -> String {
+    let norm = filepath.replace('\\', "/");
+    format!("{username}\n{norm}")
+}
+
+fn slsk_cover_disk_cache_file(app: &AppHandle, cache_key: &str) -> Result<PathBuf, String> {
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(cache_key.as_bytes());
+    let hex_name = format!("{:x}", hasher.finalize());
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    Ok(base.join(SLSK_COVER_CACHE_DIR).join(format!("{hex_name}.json")))
+}
+
+fn slsk_cover_disk_try_read(app: &AppHandle, username: &str, filepath: &str) -> Option<SlskCoverPreview> {
+    let key = slsk_cover_disk_cache_key(username, filepath);
+    let path = slsk_cover_disk_cache_file(app, &key).ok()?;
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+fn slsk_cover_disk_write_best_effort(app: &AppHandle, username: &str, filepath: &str, preview: &SlskCoverPreview) {
+    let key = slsk_cover_disk_cache_key(username, filepath);
+    let Ok(path) = slsk_cover_disk_cache_file(app, &key) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(bytes) = serde_json::to_string(preview) {
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
 // ── Public types (serialised to frontend) ────────────────────────────────────
 
 #[derive(Serialize)]
@@ -67,7 +108,7 @@ pub struct SlskStreamReady {
 }
 
 /// Cover preview for UI: first bytes of an image file from a peer.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SlskCoverPreview {
     pub mime: String,
     pub base64: String,
@@ -352,22 +393,51 @@ pub fn soulseek_release_stream(
 ///
 /// Returns:
 ///     MIME type and base64 payload suitable for a `data:` URL in the webview.
+///     Serves from `app_data/slsk_cover_cache` when present so restarts skip P2P.
 #[tauri::command]
 pub async fn soulseek_cover_preview(
+    app: AppHandle,
     state: tauri::State<'_, SoulSeekState>,
     username: String,
     filepath: String,
     filesize: u64,
 ) -> Result<SlskCoverPreview, String> {
+    if let Some(hit) = slsk_cover_disk_try_read(&app, &username, &filepath) {
+        return Ok(hit);
+    }
     let session = state.get_session()?;
     const MAX: u64 = 512 * 1024;
     let mime = cover_mime_from_path(&filepath);
-    let bytes = transfer::download_cover_preview(session, username, filepath, filesize, MAX).await?;
+    let bytes =
+        transfer::download_cover_preview(session, username.clone(), filepath.clone(), filesize, MAX).await?;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    Ok(SlskCoverPreview {
+    let preview = SlskCoverPreview {
         mime,
         base64: STANDARD.encode(&bytes),
-    })
+    };
+    slsk_cover_disk_write_best_effort(&app, &username, &filepath, &preview);
+    Ok(preview)
+}
+
+/// Wipes on-disk SoulSeek cover previews (used with in-memory clear from settings).
+#[tauri::command]
+pub fn slsk_cover_disk_cache_clear(app: AppHandle) -> Result<(), String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?
+        .join(SLSK_COVER_CACHE_DIR);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Removes one cached preview so the next UI fetch hits the peer again.
+#[tauri::command]
+pub fn slsk_cover_disk_cache_remove(app: AppHandle, username: String, filepath: String) -> Result<(), String> {
+    let key = slsk_cover_disk_cache_key(&username, &filepath);
+    let path = slsk_cover_disk_cache_file(&app, &key)?;
+    let _ = std::fs::remove_file(path);
+    Ok(())
 }
 
 /// Download a SoulSeek file to disk with progress events.

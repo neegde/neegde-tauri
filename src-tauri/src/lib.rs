@@ -390,6 +390,8 @@ pub fn run() {
             soulseek::soulseek_search,
             soulseek::soulseek_prepare_stream,
             soulseek::soulseek_cover_preview,
+            soulseek::slsk_cover_disk_cache_clear,
+            soulseek::slsk_cover_disk_cache_remove,
             soulseek::soulseek_release_stream,
             soulseek::soulseek_save_credentials,
             soulseek::soulseek_load_credentials,
