@@ -47,6 +47,11 @@ async function enrichTopic(topicRow: TopicRow, ctx: SearchProviderCtx): Promise<
   const albums = detectAlbums(flatFiles);
   if (albums.length === 0) return [];
 
+  const multiAlbumTopic = albums.length > 1;
+  const topicCoverUrl = multiAlbumTopic
+    ? null
+    : ((details as { cover_data_url?: string | null }).cover_data_url ?? null);
+
   const entities: PipelineEntity[] = [];
   for (const alb of albums) {
     const albumId = `rt:album:${topicRow.id}:${encodeURIComponent(alb.dirPath)}`;
@@ -90,7 +95,7 @@ async function enrichTopic(topicRow: TopicRow, ctx: SearchProviderCtx): Promise<
       title: alb.name || "",
       artist: (details as { artist?: string | null }).artist ?? null,
       year: null,
-      coverUrl: (details as { cover_data_url?: string | null }).cover_data_url ?? null,
+      coverUrl: topicCoverUrl,
       format: aggregateFormat(albumTracks as Array<{ format?: string | null }>),
       bitrate: null,
       size: albumTracks.reduce((s, t) => s + ((t.size as number | null) ?? 0), 0) || null,
@@ -101,7 +106,7 @@ async function enrichTopic(topicRow: TopicRow, ctx: SearchProviderCtx): Promise<
       sources: [{
         kind: "rutracker",
         refs: { topicId: String(topicRow.id), rootPath: alb.dirPath },
-        raw: { topicRow, details, albumDir: alb },
+        raw: { topicRow, details, albumDir: alb, multiAlbumTopic },
       }],
       score: 0,
       mergedFrom: 1,

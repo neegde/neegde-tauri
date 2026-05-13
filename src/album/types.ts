@@ -36,7 +36,8 @@ export type RutrackerAlbumSource = AlbumSourceBase<"rutracker", RutrackerAlbumRe
     topicRow?: { id?: string | number; name?: string; seeders?: number | null; leechers?: number | null };
     details?: { artist?: string | null; magnet?: string; cover_data_url?: string | null };
     albumDir?: unknown;
-    cover?: SlskAlbumCoverRef | null;
+    /** One forum topic yielded several folder-albums — topic cover is not per-folder. */
+    multiAlbumTopic?: boolean;
     [k: string]: unknown;
   };
 };

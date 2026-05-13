@@ -126,6 +126,90 @@ async function fetchCanonical(artist: string, title: string): Promise<{ artist: 
   };
 }
 
+const albumArtCache = new Map<string, string | null>();
+const albumArtPending = new Map<string, Promise<string | null>>();
+
+function cacheKeyAlbumArt(artist: string, album: string): string {
+  return `deezer-album-art|${normalize(artist)}|${normalize(album)}`;
+}
+
+/**
+ * Resolves album artwork URL via Deezer search for virtual RuTracker folder
+ * albums (one topic split into many cards). Separate cache from per-track
+ * canonical lookups.
+ *
+ * @param artist - Performer from the topic post (may be empty).
+ * @param album - Virtual album title (usually the folder / release label).
+ * @returns HTTPS cover URL or null when no confident catalog match.
+ */
+export async function fetchDeezerAlbumCoverArt(artist: string, album: string): Promise<string | null> {
+  const a = artist.trim();
+  const alb = album.trim();
+  if (alb.length < 2) return null;
+  const key = cacheKeyAlbumArt(a || "_", alb);
+  if (albumArtCache.has(key)) return albumArtCache.get(key) ?? null;
+  const inflight = albumArtPending.get(key);
+  if (inflight) return inflight;
+
+  const p = fetchDeezerAlbumCoverArtInner(a || alb, alb).then((r) => {
+    albumArtCache.set(key, r);
+    albumArtPending.delete(key);
+    return r;
+  });
+  albumArtPending.set(key, p);
+  return p;
+}
+
+async function fetchDeezerAlbumCoverArtInner(artist: string, album: string): Promise<string | null> {
+  const query = `${artist} ${album}`.trim();
+  void appDebugLog("deezer", `album art query="${query}"`).catch(() => {});
+  let bodyText: string;
+  try {
+    bodyText = await queue.enqueue({ query, limit: 8 });
+  } catch (e) {
+    void appDebugLog("deezer", `album art fetch error: ${String(e)}`).catch(() => {});
+    return null;
+  }
+  let json: DeezerResponse;
+  try {
+    json = JSON.parse(bodyText) as DeezerResponse;
+  } catch {
+    return null;
+  }
+  const wantAlbum = normalize(album);
+  const rows = json.data ?? [];
+  if (!rows.length) {
+    void appDebugLog("deezer", `album art no rows for album="${album}"`).catch(() => {});
+    return null;
+  }
+  for (const hit of rows) {
+    const hitArtist = hit.artist?.name ?? "";
+    const hitAlbumTitle = hit.album?.title ?? "";
+    if (!hitAlbumTitle) continue;
+    const hitAlbumN = normalize(hitAlbumTitle);
+    if (!wantAlbum || !hitAlbumN) continue;
+    if (!wantAlbum.includes(hitAlbumN) && !hitAlbumN.includes(wantAlbum)) continue;
+    if (artist) {
+      const x = normalize(artist);
+      const y = normalize(hitArtist);
+      if (x.length >= 2 && y.length >= 2 && !x.includes(y) && !y.includes(x)) continue;
+    }
+    const u = hit.album?.cover_medium ?? hit.album?.cover_big ?? null;
+    if (u) {
+      void appDebugLog("deezer", `album art hit: "${album}" → "${hitAlbumTitle}"`).catch(() => {});
+      return u;
+    }
+  }
+  void appDebugLog("deezer", `album art no hit for album="${album}"`).catch(() => {});
+  return null;
+}
+
+/** Clears album-art lookup cache (unit tests). */
+export function resetDeezerAlbumArtCache(): void {
+  albumArtCache.clear();
+  albumArtPending.clear();
+}
+
 /**
  * Kick off a Deezer lookup for a track.
  *
