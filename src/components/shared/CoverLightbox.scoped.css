@@ -37,11 +37,11 @@
 .cover-lb-frame {
   max-width: min(92vw, 420px);
   max-height: min(85vh, 420px);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow:
-    0 24px 80px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(255, 255, 255, 0.1);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
 }
 
 .cover-lb-img {
@@ -51,6 +51,7 @@
   width: auto;
   height: auto;
   object-fit: contain;
+  background: transparent;
 }
 
 .cover-lb-frame--large {
@@ -70,6 +71,7 @@
   max-width: none;
   max-height: none;
   object-fit: contain;
+  background: transparent;
 }
 
 .cover-lb-enter-active,
