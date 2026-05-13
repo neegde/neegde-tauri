@@ -58,6 +58,16 @@ const queue = new RateLimitedFetchQueue<{ query: string; limit: number }, string
   executor: async ({ query, limit }) => invoke<string>("deezer_search", { query, limit }),
 });
 
+/**
+ * Separate queue for album-art lookups. A search for a popular artist enqueues
+ * hundreds of per-track canonical lookups; sharing one queue would force the
+ * handful of album cards to wait behind ~20–30 s of track requests.
+ */
+const albumArtQueue = new RateLimitedFetchQueue<{ query: string; limit: number }, string>({
+  intervalMs: 80,
+  executor: async ({ query, limit }) => invoke<string>("deezer_search", { query, limit }),
+});
+
 function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}]/gu, "");
 }
@@ -165,7 +175,7 @@ async function fetchDeezerAlbumCoverArtInner(artist: string, album: string): Pro
   void appDebugLog("deezer", `album art query="${query}"`).catch(() => {});
   let bodyText: string;
   try {
-    bodyText = await queue.enqueue({ query, limit: 8 });
+    bodyText = await albumArtQueue.enqueue({ query, limit: 8 });
   } catch (e) {
     void appDebugLog("deezer", `album art fetch error: ${String(e)}`).catch(() => {});
     return null;
