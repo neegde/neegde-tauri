@@ -103,6 +103,8 @@ function albumTrackActions(t: Track): CtxActionDef[] {
     { id: "divider" },
     { id: "download", label: "Скачать",    icon: "download", disabled: !canDownload(t) },
     { id: "source",   label: sourceContextLabel(t), icon: "source" },
+    { id: "divider" },
+    { id: "info",     label: "О треке",    icon: "info" },
   ];
 }
 

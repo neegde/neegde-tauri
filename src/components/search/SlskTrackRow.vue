@@ -6,6 +6,7 @@ import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import PlayingIndicator from "../shared/PlayingIndicator.vue";
 import { SoulseekTrack } from "../../track/SoulseekTrack.js";
 import { forceReloadTrackCover, forceReloadTrackCoverFromFullFile } from "../../track/forceReloadTrackCover.js";
+import { showTrackInfo } from "../../composables/useTrackInfo.js";
 
 /**
  * Row for a SoulSeek Track entity. Reads Track directly; cover info is
@@ -73,6 +74,8 @@ const SLSK_CTX_ACTIONS = computed(() => {
     { id: "divider" },
     { id: "like",     label: "В избранное", icon: "heart"    },
     { id: "playlist", label: "В плейлист",  icon: "playlist" },
+    { id: "divider" },
+    { id: "info",     label: "О треке",     icon: "info"     },
   ];
 });
 
@@ -91,6 +94,7 @@ function onCtxAction(id) {
     forceReloadTrackCoverFromFullFile(props.track);
     return;
   }
+  if (id === "info")     { showTrackInfo(props.track.id); return; }
   if (id === "source")   emit("open-source", props.track);
   if (id === "play")     emit("play",     props.track);
   if (id === "download") emit("download", props.track);

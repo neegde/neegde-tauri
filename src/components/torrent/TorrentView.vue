@@ -30,6 +30,7 @@ import { parseBtihFromMagnet } from "../../lib/magnet.js";
 import { rtTrackId } from "../../player/trackForQueue.js";
 import { reloadTorrentRowCoverArt } from "../../torrent/reloadTorrentRowCoverArt.js";
 import { loadTorrentFullEmbeddedCoverArt } from "../../torrent/loadTorrentFullEmbeddedCoverArt.js";
+import { showTrackInfo } from "../../composables/useTrackInfo.js";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
@@ -134,6 +135,8 @@ const torrentCtxActions = computed(() => {
     { id: "like", label: "В избранное", icon: "heart" },
     { id: "queue", label: "В очередь", icon: "queue" },
     { id: "playlist", label: "В плейлист", icon: "playlist" },
+    { id: "divider" },
+    { id: "info", label: "О треке", icon: "info" },
   ];
 });
 
@@ -182,6 +185,16 @@ function onCtxAction(id) {
           };
         }
       })();
+    }
+    return;
+  }
+  if (id === "info") {
+    const origIdx = ctxOrigIdx.value;
+    if (origIdx != null) {
+      const topicId = props.torrent?.__topicId ?? props.torrent?.id ?? null;
+      const btih = parseBtihFromMagnet(props.magnet ?? "");
+      const tid = rtTrackId(topicId, btih, origIdx);
+      if (tid) showTrackInfo(tid);
     }
     return;
   }

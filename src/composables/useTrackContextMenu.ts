@@ -19,6 +19,7 @@ import {
 } from "../track/forceReloadTrackCover.js";
 import { sourceContextLabel, canDownload } from "../track/labels.js";
 import { fullFileEmbeddedCoverAvailableForTrack } from "../torrent/embeddedCover.js";
+import { showTrackInfo } from "./useTrackInfo.js";
 
 export interface CtxActionDef {
   id: string;
@@ -76,6 +77,10 @@ export function useTrackContextMenu(opts: UseTrackContextMenuOptions): UseTrackC
       forceReloadTrackCoverFromFullFile(t);
       return;
     }
+    if (id === "info") {
+      showTrackInfo(t.id);
+      return;
+    }
     opts.onAction(id, t);
   }
 
@@ -102,5 +107,7 @@ export function libraryTrackActions(track: Track): CtxActionDef[] {
     { id: "download", label: "Скачать", icon: "download", disabled: !canDownload(track) },
     { id: "divider" },
     { id: "source", label: sourceContextLabel(track), icon: "source" },
+    { id: "divider" },
+    { id: "info", label: "О треке", icon: "info" },
   ];
 }

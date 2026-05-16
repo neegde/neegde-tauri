@@ -1,0 +1,118 @@
+  <Teleport to="body">
+    <Transition name="track-info">
+      <div
+        v-if="open"
+        class="ti-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ti-title"
+        @click.self="close"
+      >
+        <div class="ti-panel" @click.stop>
+
+          <!-- Header -->
+          <div class="ti-head">
+            <svg class="ti-head-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <h2 id="ti-title" class="ti-head-title">О треке</h2>
+            <button type="button" class="ti-close" @click="close" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="ti-body">
+
+            <!-- No entry -->
+            <div v-if="!entry" class="ti-empty">
+              <p>Трек ещё не зарегистрирован — воспроизведите его или дождитесь появления в результатах поиска.</p>
+            </div>
+
+            <template v-else>
+
+              <!-- Identity -->
+              <div class="ti-section">
+                <div class="ti-track-name">{{ track.title }}</div>
+                <div class="ti-track-sub">
+                  <span v-if="track.artist" class="ti-track-artist">{{ track.artist }}</span>
+                  <span v-if="track.artist && track.albumTitle" class="ti-sep">·</span>
+                  <span v-if="track.albumTitle" class="ti-track-album">{{ track.albumTitle }}</span>
+                </div>
+                <div class="ti-track-chips">
+                  <span v-if="track.format" class="ti-chip">{{ track.format }}</span>
+                  <span v-if="track.size" class="ti-chip ti-chip--dim">{{ fmtSize(track.size) }}</span>
+                  <span v-if="track.duration" class="ti-chip ti-chip--dim">{{ fmtDuration(track.duration) }}</span>
+                  <span v-if="track.bitrate" class="ti-chip ti-chip--dim">{{ track.bitrate }} kbps</span>
+                </div>
+                <div v-if="sourceDisplay" class="ti-source">
+                  <span class="ti-source-kind">{{ sourceDisplay.kind }}</span>
+                  <span v-if="sourceDisplay.peer" class="ti-source-peer">{{ sourceDisplay.peer }}</span>
+                  <span v-if="sourceDisplay.path" class="ti-source-path">{{ sourceDisplay.path }}</span>
+                </div>
+              </div>
+
+              <div class="ti-divider" />
+
+              <!-- History -->
+              <div class="ti-section">
+                <div class="ti-section-label">История</div>
+                <div class="ti-kv">
+                  <span class="ti-kv-key">Впервые</span>
+                  <span class="ti-kv-val">{{ fmtDate(meta.firstSeenAt) }}</span>
+                </div>
+                <div v-if="meta.lastSeenAt !== meta.firstSeenAt" class="ti-kv">
+                  <span class="ti-kv-key">Последний раз</span>
+                  <span class="ti-kv-val">{{ fmtDate(meta.lastSeenAt) }}</span>
+                </div>
+                <div class="ti-kv">
+                  <span class="ti-kv-key">Появлялся</span>
+                  <span class="ti-kv-val">{{ meta.seenCount }} раз</span>
+                </div>
+                <div v-if="meta.contexts.length" class="ti-kv">
+                  <span class="ti-kv-key">Контексты</span>
+                  <span class="ti-kv-val">{{ meta.contexts.join(" · ") }}</span>
+                </div>
+                <div v-if="meta.lastSearchQuery" class="ti-kv">
+                  <span class="ti-kv-key">Запрос</span>
+                  <span class="ti-kv-val">{{ meta.lastSearchQuery }}</span>
+                </div>
+              </div>
+
+              <div class="ti-divider" />
+
+              <!-- Cache -->
+              <div class="ti-section">
+                <div class="ti-section-label">
+                  Кэш
+                  <span class="ti-section-sub">· {{ fmtDate(cache.capturedAt) }}</span>
+                </div>
+                <div v-for="row in cacheRows" :key="row.label" class="ti-cache-row">
+                  <span class="ti-dot" :class="`ti-dot--${row.state}`" aria-hidden="true" />
+                  <span class="ti-cache-label">{{ row.label }}</span>
+                  <span v-if="row.hint" class="ti-cache-hint">{{ row.hint }}</span>
+                  <span class="ti-cache-badge" :class="`ti-cache-badge--${row.state}`">{{ stateLabel(row.state) }}</span>
+                </div>
+              </div>
+
+              <template v-if="keyRows.length">
+                <div class="ti-divider" />
+                <div class="ti-section ti-section--keys">
+                  <div class="ti-section-label">Ключи кэша</div>
+                  <div v-for="row in keyRows" :key="row.label" class="ti-key-row">
+                    <span class="ti-key-label">{{ row.label }}</span>
+                    <span class="ti-key-val">{{ row.value }}</span>
+                  </div>
+                </div>
+              </template>
+
+            </template>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>

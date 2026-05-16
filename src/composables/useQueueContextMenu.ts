@@ -17,6 +17,7 @@ import {
   forceReloadTrackCoverFromFullFile,
 } from "../track/forceReloadTrackCover.js";
 import { fullFileEmbeddedCoverAvailableForTrack } from "../torrent/embeddedCover.js";
+import { showTrackInfo } from "./useTrackInfo.js";
 
 export interface UseQueueContextMenuOptions {
   playbackQueue: Ref<Track[]> | ComputedRef<Track[]>;
@@ -62,6 +63,8 @@ export function useQueueContextMenu(ctx: UseQueueContextMenuOptions) {
       { id: "download", label: "Скачать",   icon: "download", disabled: !canDownload },
       { id: "divider" },
       { id: "playlist", label: "В плейлист", icon: "playlist" },
+      { id: "divider" },
+      { id: "info", label: "О треке", icon: "info" },
     ];
   });
 
@@ -76,6 +79,10 @@ export function useQueueContextMenu(ctx: UseQueueContextMenuOptions) {
     }
     if (id === "reload-cover-full-file") {
       forceReloadTrackCoverFromFullFile(t);
+      return;
+    }
+    if (id === "info") {
+      showTrackInfo(t.id);
       return;
     }
     if (id === "playlist") ctx.onAddToPlaylist(t);
