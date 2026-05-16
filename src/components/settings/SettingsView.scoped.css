@@ -1147,3 +1147,15 @@
 .ach-btn--danger:hover {
   background: color-mix(in srgb, #c44 12%, transparent);
 }
+
+
+/* ── Factory reset card ──────────────────────────────────────────────────── */
+.settings-card--factory-reset {
+  border-color: color-mix(in srgb, #c44 30%, var(--border));
+}
+.settings-card-icon--danger {
+  color: color-mix(in srgb, #e66 80%, var(--text));
+}
+.settings-card-name--danger {
+  color: color-mix(in srgb, #e66 80%, var(--text));
+}

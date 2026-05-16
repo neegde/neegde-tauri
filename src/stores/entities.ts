@@ -20,6 +20,7 @@ import type { Album } from "../album/Album.js";
 import type { AlbumData } from "../album/types.js";
 import { buildAlbum } from "../album/factory.js";
 import { mergePersistedTrackFields, putTrack } from "../persistence/trackCache.js";
+import { recordGeneralList } from "../persistence/generalList.js";
 
 // Re-export AlbumData so existing consumers don't have to chase a new path.
 export type { AlbumData } from "../album/types.js";
@@ -88,7 +89,10 @@ export function registerEntity(entity: Track | TrackData | Album | AlbumData | n
   const norm = normalize(withMergedPersisted(entity));
   if (!norm?.id) return;
   _byId.value.set(norm.id, norm);
-  if (norm.type === "track") putTrack(norm);
+  if (norm.type === "track") {
+    putTrack(norm);
+    recordGeneralList((norm as Track).toJSON(), "registered");
+  }
   bump();
 }
 
@@ -108,7 +112,10 @@ export function registerEntities(entities: Array<Track | TrackData | Album | Alb
     if (norm.type === "track") tracksForCache.push(norm);
     out.push(norm);
   }
-  for (const t of tracksForCache) putTrack(t);
+  for (const t of tracksForCache) {
+    putTrack(t);
+    recordGeneralList(t.toJSON(), "registered");
+  }
   bump();
   return out;
 }

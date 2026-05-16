@@ -483,6 +483,32 @@
           </div>
         </div>
       </div>
+      <div class="settings-card settings-card--factory-reset">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app settings-card-icon--danger">
+            <SystemIcon name="trash" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name settings-card-name--danger">Сброс до заводских настроек</div>
+            <div class="settings-card-status">Удалить всё и перезапустить приложение</div>
+          </div>
+        </div>
+        <div class="settings-card-body">
+          <p class="settings-card-desc cache-quick-desc">
+            Удаляет все данные: лайки, очередь, плейлисты, сессии, кэши на диске и в памяти.
+            Приложение перезапустится как после первой установки.
+          </p>
+          <button
+            type="button"
+            class="ach-btn ach-btn--danger cache-quick-btn"
+            :disabled="factoryResetBusy"
+            @click="confirmFactoryReset"
+          >
+            <span v-if="factoryResetBusy" class="spinner" />
+            <template v-else>Сбросить всё и перезапустить</template>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ── Параметры для задротов / Щитпост ─────────────────────────────── -->

@@ -957,6 +957,21 @@ async function confirmResetAchievements() {
   emit("achievements-reset");
 }
 
+const factoryResetBusy = ref(false);
+
+async function confirmFactoryReset() {
+  const ok = await ask(
+    "Удалятся все данные приложения: лайки, очередь, плейлисты, кэши, сессии RuTracker и SoulSeek. Приложение перезапустится как новое. Отменить нельзя. Продолжить?",
+    { title: "Сброс до заводских настроек", kind: "warning" },
+  );
+  if (!ok) return;
+  factoryResetBusy.value = true;
+  localStorage.clear();
+  await invoke("factory_reset").catch(() => {});
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
+}
+
 </script>
 
 <template src="./SettingsView.html"></template>

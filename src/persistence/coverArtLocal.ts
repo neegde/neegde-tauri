@@ -193,3 +193,35 @@ export function loadPersistedDeezerTrackCanonicals(): Array<[string, DeezerCanon
 export function clearPersistedDeezerTrackCanonical(): void {
   removeManifestAndPrefix(DZ_CANON_MANIFEST, DZ_CANON_PREFIX);
 }
+
+/**
+ * Returns true when the LRU slot for logicalKey holds a non-empty payload.
+ *
+ * @param manifestKey - The manifest localStorage key for this LRU.
+ * @param prefix - The per-slot key prefix.
+ * @param logicalKey - The logical key to probe (must match exactly).
+ */
+function probeStorageLruHit(manifestKey: string, prefix: string, logicalKey: string): boolean {
+  const slotId = fnv1aSlotId(logicalKey);
+  const raw = localStorage.getItem(prefix + slotId);
+  if (!raw) return false;
+  const i = raw.indexOf(SEP);
+  if (i <= 0) return false;
+  if (raw.slice(0, i) !== logicalKey) return false;
+  return raw.slice(i + SEP.length).length > 0;
+}
+
+/** True when a RuTracker cover data URL is stored for the given logical key. */
+export function probeRutrackerCoverLru(logicalKey: string): boolean {
+  return probeStorageLruHit(RT_MANIFEST, RT_PREFIX, logicalKey);
+}
+
+/** True when a Deezer track canonical entry is stored for the given logical key. */
+export function probeDeezerCanonicalLru(logicalKey: string): boolean {
+  return probeStorageLruHit(DZ_CANON_MANIFEST, DZ_CANON_PREFIX, logicalKey);
+}
+
+/** True when a Deezer album art URL is stored for the given logical key. */
+export function probeDeezerAlbumArtLru(logicalKey: string): boolean {
+  return probeStorageLruHit(DZ_ALBUM_MANIFEST, DZ_ALBUM_PREFIX, logicalKey);
+}

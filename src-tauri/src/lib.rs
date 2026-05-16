@@ -2,6 +2,7 @@ mod vozduxan_ffi;
 mod vozduxan_stream;
 mod cache_commands;
 mod cache_settings;
+mod general_list;
 mod cover_art;
 mod deezer;
 mod discord_presence;
@@ -382,6 +383,10 @@ pub fn run() {
             resolver::resolve_query,
             deezer::deezer_search,
             set_close_to_tray,
+            // ── General List (debug registry) ─────────────────────────────────
+            general_list::general_list_write,
+            general_list::general_list_path,
+            general_list::factory_reset,
             // ── SoulSeek ───────────────────────────────────────────────────────
             soulseek::soulseek_login,
             soulseek::soulseek_logout,
