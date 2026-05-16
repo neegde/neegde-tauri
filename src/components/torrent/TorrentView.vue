@@ -314,7 +314,11 @@ function trackLikeId(torrent, f) {
 }
 
 function albumLikeId(torrent, dirPath) {
-  return `album:${torrent.source}:${torrent.id}:${dirPath || "root"}`;
+  if (torrent?.source === "soulseek") {
+    return `album:soulseek:${torrent.id}:${dirPath || "root"}`;
+  }
+  const topicId = torrent?.__topicId ?? torrent?.id ?? "";
+  return `rt:album:${topicId}:${encodeURIComponent(dirPath ?? "")}`;
 }
 
 function torrentLikeId(torrent) {
@@ -401,7 +405,7 @@ function makePlaylistTrack(torrent, magnet, f) {
 }
 
 function makeAlbumLike(torrent, magnet, album, displayName) {
-  const dirPath = album.dirPath || "root";
+  const dirPath = album.dirPath ?? "";
   return {
     id: albumLikeId(torrent, dirPath),
     type: "album",
