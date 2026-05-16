@@ -120,3 +120,7 @@ pub fn app_debug_path(app: &AppHandle) -> Result<PathBuf, String> {
 pub fn general_list_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(base(app)?.join("general-list.json"))
 }
+
+pub fn likes_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(base(app)?.join("likes.json"))
+}

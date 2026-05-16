@@ -4,6 +4,7 @@ mod vozduxan_stream;
 mod cache_commands;
 mod cache_settings;
 mod general_list;
+mod likes;
 mod cover_art;
 mod deezer;
 mod discord_presence;
@@ -384,6 +385,9 @@ pub fn run() {
             general_list::general_list_write,
             general_list::general_list_path,
             general_list::factory_reset,
+            // ── Likes ──────────────────────────────────────────────────────────
+            likes::likes_write,
+            likes::likes_path,
             // ── SoulSeek ───────────────────────────────────────────────────────
             soulseek::soulseek_login,
             soulseek::soulseek_logout,
