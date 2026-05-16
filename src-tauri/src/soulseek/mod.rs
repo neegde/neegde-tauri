@@ -14,9 +14,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager};
-
-const SLSK_COVER_CACHE_DIR: &str = "slsk_cover_cache";
+use tauri::AppHandle;
 
 fn slsk_cover_disk_cache_key(username: &str, filepath: &str) -> String {
     let norm = filepath.replace('\\', "/");
@@ -28,11 +26,7 @@ fn slsk_cover_disk_cache_file(app: &AppHandle, cache_key: &str) -> Result<PathBu
     let mut hasher = Md5::new();
     hasher.update(cache_key.as_bytes());
     let hex_name = format!("{:x}", hasher.finalize());
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    Ok(base.join(SLSK_COVER_CACHE_DIR).join(format!("{hex_name}.json")))
+    Ok(crate::app_paths::slsk_covers_dir(app)?.join(format!("{hex_name}.json")))
 }
 
 fn slsk_cover_disk_try_read(app: &AppHandle, username: &str, filepath: &str) -> Option<SlskCoverPreview> {
@@ -393,7 +387,7 @@ pub fn soulseek_release_stream(
 ///
 /// Returns:
 ///     MIME type and base64 payload suitable for a `data:` URL in the webview.
-///     Serves from `app_data/slsk_cover_cache` when present so restarts skip P2P.
+///     Serves from `soulseek/covers/` when present so restarts skip P2P.
 #[tauri::command]
 pub async fn soulseek_cover_preview(
     app: AppHandle,
@@ -422,11 +416,7 @@ pub async fn soulseek_cover_preview(
 /// Wipes on-disk SoulSeek cover previews (used with in-memory clear from settings).
 #[tauri::command]
 pub fn slsk_cover_disk_cache_clear(app: AppHandle) -> Result<(), String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?
-        .join(SLSK_COVER_CACHE_DIR);
+    let dir = crate::app_paths::slsk_covers_dir(&app)?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
@@ -689,10 +679,10 @@ pub fn soulseek_save_credentials(
     username: String,
     password: String,
 ) -> Result<(), String> {
-    use tauri::Manager;
-    let path = app.path().app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("slsk_creds.json");
+    let path = crate::app_paths::slsk_creds_path(&app).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let json = serde_json::to_string(&SlskCredentials { username, password })
         .map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())
@@ -700,8 +690,7 @@ pub fn soulseek_save_credentials(
 
 #[tauri::command]
 pub fn soulseek_load_credentials(app: tauri::AppHandle) -> Option<(String, String)> {
-    use tauri::Manager;
-    let path = app.path().app_data_dir().ok()?.join("slsk_creds.json");
+    let path = crate::app_paths::slsk_creds_path(&app).ok()?;
     let data = std::fs::read_to_string(&path).ok()?;
     let creds: SlskCredentials = serde_json::from_str(&data).ok()?;
     Some((creds.username, creds.password))
@@ -710,12 +699,7 @@ pub fn soulseek_load_credentials(app: tauri::AppHandle) -> Option<(String, Strin
 /// Deletes saved SoulSeek credentials (after explicit logout from settings).
 #[tauri::command]
 pub fn soulseek_clear_saved_credentials(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("slsk_creds.json");
+    let path = crate::app_paths::slsk_creds_path(&app).map_err(|e| e.to_string())?;
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }

@@ -248,18 +248,18 @@ pub struct RutrackerInner {
 
 impl RutrackerState {
     pub fn new(app: &tauri::AppHandle) -> Self {
-        let base_dir: Option<PathBuf> = app.path().app_data_dir().ok();
-        if let Some(ref d) = base_dir {
+        let rt_dir: Option<PathBuf> = crate::app_paths::rt_dir(app).ok();
+        if let Some(ref d) = rt_dir {
             let _ = std::fs::create_dir_all(d);
         }
-        let session_path: Option<PathBuf> = base_dir.as_ref().map(|d| d.join("rt_session.json"));
-        let meta_path: Option<PathBuf> = base_dir.as_ref().map(|d| d.join("rt_meta.json"));
-        let cover_cache_dir: Option<PathBuf> = base_dir.as_ref().map(|d| {
-            let p = d.join("rt_cover_cache");
+        let session_path: Option<PathBuf> = rt_dir.as_ref().map(|d| d.join("session.json"));
+        let meta_path: Option<PathBuf> = rt_dir.as_ref().map(|d| d.join("meta.json"));
+        let cover_cache_dir: Option<PathBuf> = rt_dir.as_ref().map(|d| {
+            let p = d.join("covers");
             let _ = std::fs::create_dir_all(&p);
             p
         });
-        let proxy_path: Option<PathBuf> = base_dir.as_ref().map(|d| d.join("rt_http_proxy.txt"));
+        let proxy_path: Option<PathBuf> = rt_dir.as_ref().map(|d| d.join("proxy.txt"));
 
         let saved = load_cookie_store(&session_path);
         let cookie_store = Arc::new(CookieStoreMutex::new(saved));
@@ -1243,7 +1243,7 @@ pub async fn rutracker_login_via_webview(
             // creates an isolated environment where browser args are applied at
             // init time, before any shared state is locked.
             if let Some(proxy) = load_http_proxy_url(&state.proxy_path) {
-                if let Ok(data_dir) = app.path().app_data_dir().map(|d| d.join("rt_login_webview")) {
+                if let Ok(data_dir) = crate::app_paths::rt_webview_dir(&app) {
                     b = b
                         .data_directory(data_dir)
                         .additional_browser_args(&format!("--proxy-server={}", proxy));

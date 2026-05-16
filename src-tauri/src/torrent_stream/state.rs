@@ -22,7 +22,8 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::MissedTickBehavior;
 
-use crate::cache_settings::{cache_settings_path, UserCacheSettings};
+use crate::app_paths;
+use crate::cache_settings::UserCacheSettings;
 
 use super::debug_log::AppDebugLog;
 use super::stream_cache::{directory_size_bytes, StreamCache};
@@ -293,7 +294,7 @@ impl TorrentStreamState {
         settings: UserCacheSettings,
     ) -> Result<(), String> {
         settings.validate()?;
-        let path = cache_settings_path(&self.inner.app)?;
+        let path = app_paths::cache_settings_path(&self.inner.app)?;
         settings.save_to_disk(&path)?;
         *self.inner.cache_settings.write().await = settings;
         self.reclaim_stream_cache_best_effort().await;
@@ -302,7 +303,7 @@ impl TorrentStreamState {
 
     /// Loads `cache_settings.json` or keeps defaults when missing or invalid.
     pub async fn load_cache_settings_from_disk(&self) -> Result<(), String> {
-        let path = cache_settings_path(&self.inner.app)?;
+        let path = app_paths::cache_settings_path(&self.inner.app)?;
         let mut s = UserCacheSettings::load_from_disk(&path);
         if s.validate().is_err() {
             s = UserCacheSettings::default();
@@ -1196,12 +1197,8 @@ impl TorrentStreamState {
 impl TorrentStreamInner {
     /// Returns the filesystem directory used for the streaming librqbit session.
     pub(super) fn stream_torrents_base(&self) -> Result<PathBuf, String> {
-        Ok(self
-            .app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Не удалось получить app_data_dir: {e}"))?
-            .join(super::torrent_streams_dir_label()))
+        app_paths::bt_torrent_dir(&self.app)
+            .map_err(|e| format!("Не удалось получить bt_torrent_dir: {e}"))
     }
 
     /// Returns path to persisted metadata cache file for torrent.
@@ -1246,12 +1243,8 @@ impl TorrentStreamInner {
             return Ok(existing.clone());
         }
 
-        let base_dir = self
-            .app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Не удалось получить app_data_dir: {e}"))?
-            .join(super::torrent_streams_dir_label());
+        let base_dir = app_paths::bt_torrent_dir(&self.app)
+            .map_err(|e| format!("Не удалось получить bt_torrent_dir: {e}"))?;
         let session_dir_log = base_dir.to_string_lossy().to_string();
         std::fs::create_dir_all(&base_dir)
             .map_err(|e| format!("Не удалось создать каталог стриминга: {e}"))?;

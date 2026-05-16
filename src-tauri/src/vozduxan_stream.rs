@@ -153,16 +153,8 @@ impl VozduxanStreamState {
 impl VozduxanStreamState {
     pub fn new(app: &AppHandle, debug_log: Arc<AppDebugLog>) -> Self {
         let storage_path = {
-            let dir_label = if cfg!(debug_assertions) {
-                "vozduxan_streams_dev"
-            } else {
-                "vozduxan_streams"
-            };
-            let path = app
-                .path()
-                .app_data_dir()
-                .expect("no app_data_dir")
-                .join(dir_label);
+            let path = crate::app_paths::bt_vozduxan_dir(app)
+                .expect("no app_data_dir");
             std::fs::create_dir_all(&path).ok();
             path
         };

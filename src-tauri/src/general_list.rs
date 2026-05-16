@@ -1,16 +1,14 @@
-use tauri::Manager;
 use std::io;
+use tauri::Manager;
 
 /// Writes the General List JSON snapshot to `{app_data_dir}/general-list.json`.
 #[tauri::command]
 pub async fn general_list_write(app: tauri::AppHandle, json: String) -> Result<(), String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("create_dir_all {}: {e}", dir.display()))?;
-    let path = dir.join("general-list.json");
+    let path = crate::app_paths::general_list_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
+    }
     std::fs::write(&path, json)
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(())
@@ -19,11 +17,7 @@ pub async fn general_list_write(app: tauri::AppHandle, json: String) -> Result<(
 /// Returns the absolute path where the General List file is written.
 #[tauri::command]
 pub async fn general_list_path(app: tauri::AppHandle) -> Result<String, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    Ok(dir.join("general-list.json").display().to_string())
+    Ok(crate::app_paths::general_list_path(&app)?.display().to_string())
 }
 
 /// Deletes every file and sub-directory inside `app_data_dir`, leaving the

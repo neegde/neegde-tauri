@@ -1,3 +1,4 @@
+mod app_paths;
 mod vozduxan_ffi;
 mod vozduxan_stream;
 mod cache_commands;
@@ -93,11 +94,7 @@ async fn dev_dump_raw_search(
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .take(40)
         .collect();
-    let base_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    let dir = base_dir.join("dev_dumps").join(format!("{ts}_{slug}"));
+    let dir = app_paths::dev_dumps_dir(&app)?.join(format!("{ts}_{slug}"));
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
 
     // ── RuTracker ────────────────────────────────────────────────────────────

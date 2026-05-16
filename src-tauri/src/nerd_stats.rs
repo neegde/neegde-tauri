@@ -2,8 +2,7 @@ use serde::Serialize;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::Manager;
 
-use crate::torrent_image::torrent_images_dir_label;
-use crate::torrent_stream::torrent_streams_dir_label;
+use crate::app_paths;
 use crate::torrent_stream::{directory_size_bytes, TorrentStreamState};
 
 const DEFER_WRITES_MB: u32 = 32;
@@ -37,11 +36,19 @@ pub async fn get_nerd_diagnostics(
 
     let app_data_path = app_data_dir.to_string_lossy().into_owned();
 
-    let stream_label = torrent_streams_dir_label();
-    let cover_label = torrent_images_dir_label();
+    let stream_dir = app_paths::bt_torrent_dir(&app)
+        .map_err(|e| format!("bt_torrent_dir: {e}"))?;
+    let cover_dir = app_paths::bt_covers_dir(&app)
+        .map_err(|e| format!("bt_covers_dir: {e}"))?;
 
-    let stream_dir = app_data_dir.join(stream_label);
-    let cover_dir = app_data_dir.join(cover_label);
+    let stream_cache_dir_label = stream_dir
+        .strip_prefix(&app_data_dir)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| stream_dir.display().to_string());
+    let cover_cache_dir_label = cover_dir
+        .strip_prefix(&app_data_dir)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| cover_dir.display().to_string());
 
     let stream_cache_bytes = directory_size_bytes(&stream_dir);
     let cover_torrent_cache_bytes = directory_size_bytes(&cover_dir);
@@ -63,8 +70,8 @@ pub async fn get_nerd_diagnostics(
         stream_cache_ttl_secs: ttl_secs,
         defer_writes_mb: DEFER_WRITES_MB,
         streaming_torrent_count,
-        stream_cache_dir_label: stream_label.to_string(),
-        cover_cache_dir_label: cover_label.to_string(),
+        stream_cache_dir_label,
+        cover_cache_dir_label,
     })
 }
 

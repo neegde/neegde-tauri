@@ -89,18 +89,6 @@ pub fn extract_embedded_cover_data_url_from_audio_path(path: &std::path::Path) -
     embedded_cover_data_url_from_path(path)
 }
 
-/// Subfolder under app data for the cover-art librqbit session (debug vs release).
-pub fn torrent_images_dir_label() -> &'static str {
-    if cfg!(debug_assertions) {
-        "torrent_images_dev"
-    } else {
-        "torrent_images"
-    }
-}
-
-fn torrent_images_dir_name() -> &'static str {
-    torrent_images_dir_label()
-}
 /// In-memory cache for successful data URLs (avoids repeat BT work and IPC payload).
 const CACHE_MAX_ENTRIES: usize = 128;
 
@@ -239,19 +227,11 @@ pub struct TorrentImageState {
 
 impl TorrentImageState {
     pub fn new(app: &tauri::AppHandle, debug_log: Arc<AppDebugLog>) -> Self {
-        let base_dir = app.path().app_data_dir().ok().map(|d| {
-            let p = d.join(torrent_images_dir_name());
+        let base_dir = crate::app_paths::bt_covers_dir(app).ok().map(|p| {
             let _ = std::fs::create_dir_all(&p);
             p
         });
-        let vozduxan_storage = app.path().app_data_dir().ok().map(|d| {
-            let label = if cfg!(debug_assertions) {
-                "vozduxan_streams_dev"
-            } else {
-                "vozduxan_streams"
-            };
-            d.join(label)
-        });
+        let vozduxan_storage = crate::app_paths::bt_vozduxan_dir(app).ok();
         Self {
             session: Arc::new(Mutex::new(None)),
             base_dir,
