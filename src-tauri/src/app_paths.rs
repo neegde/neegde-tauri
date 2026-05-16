@@ -3,8 +3,10 @@
 //! Every path the app reads from or writes to should go through this module
 //! so the directory structure is defined in one place.
 //!
+//! Data lives next to the executable (portable layout):
+//!
 //! ```text
-//! {app_data_dir}/
+//! {exe_dir}/
 //!   rutracker/
 //!     session.json          cookie jar
 //!     meta.json             username / avatar / mirror
@@ -27,12 +29,14 @@
 //! ```
 
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
-fn base(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))
+fn base(_app: &AppHandle) -> Result<PathBuf, String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("current_exe: {e}"))?;
+    exe.parent()
+        .ok_or_else(|| "executable has no parent directory".to_string())
+        .map(|p| p.to_path_buf())
 }
 
 // ── RuTracker ─────────────────────────────────────────────────────────────────
