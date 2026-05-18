@@ -11,6 +11,26 @@
 
 import { resolveTrackNames, type TrackNameInput } from "../track/nameResolver.js";
 
+const FORMAT_PRIORITY: Record<string, number> = {
+  FLAC: 1.0, APE: 0.95, WAV: 0.9, ALAC: 0.85, DSD: 0.8,
+  MP3: 0.7, OGG: 0.6, OPUS: 0.55, AAC: 0.5, M4A: 0.5,
+};
+
+/** Returns a 0..1 quality score for a format+bitrate pair. Used as tie-breaker. */
+export function formatQualityScore(
+  format: string | null | undefined,
+  bitrate: number | null | undefined,
+): number {
+  const f = (format ?? "").toUpperCase();
+  const base = FORMAT_PRIORITY[f] ?? 0.4;
+  if (f === "MP3" && bitrate) {
+    if (bitrate >= 320) return 0.85;
+    if (bitrate >= 256) return 0.77;
+    if (bitrate >= 192) return 0.72;
+  }
+  return base;
+}
+
 /**
  * Normalize a string for fuzzy comparison.
  * Handles Russian ё→е, strips track number prefixes and audio extensions.
@@ -83,22 +103,35 @@ export interface BestMatch<T> {
  * Find the best matching track from a list.
  * Returns null if no track clears the minimum score threshold.
  *
- * @param minScore - Combined score threshold (default 0.50).
- *                   Title similarity must also be ≥ 0.30 independently.
+ * @param minScore  - Combined score threshold (default 0.50).
+ *                    Title similarity must also be ≥ 0.30 independently.
+ * @param qualityOf - Optional secondary sort key (0..1). When two candidates
+ *                    score within 0.02 of each other, the one with higher quality
+ *                    wins (e.g. FLAC over MP3, more seeders over fewer).
  */
 export function findBestMatch<T extends TrackNameInput>(
   tracks: T[],
   targetArtist: string,
   targetTitle: string,
   minScore = 0.50,
+  qualityOf?: (t: T) => number,
 ): BestMatch<T> | null {
   let best: BestMatch<T> | null = null;
 
   for (const track of tracks) {
     const { score, artistSim, titleSim } = scoreMatch(track, targetArtist, targetTitle);
-    // Require some title overlap — a high artist sim alone is not enough
     if (titleSim < 0.30) continue;
-    if (score > (best?.score ?? minScore - 0.001)) {
+    if (score < minScore) continue;
+
+    if (!best) {
+      best = { track, score, artistSim, titleSim };
+      continue;
+    }
+
+    const delta = score - best.score;
+    if (delta > 0.02) {
+      best = { track, score, artistSim, titleSim };
+    } else if (Math.abs(delta) <= 0.02 && qualityOf && qualityOf(track) > qualityOf(best.track)) {
       best = { track, score, artistSim, titleSim };
     }
   }

@@ -21,7 +21,7 @@ import { detectAlbums } from "../lib/utils.js";
 import { buildTrack } from "../track/factory.js";
 import { registerEntity } from "../stores/entities.js";
 import { isTrackLiked, toggleLikeTrack } from "../stores/library.js";
-import { findBestMatch } from "./matchTrack.js";
+import { findBestMatch, formatQualityScore } from "./matchTrack.js";
 import type { ParsedTrack } from "./parseFile.js";
 import type { TrackData, TrackSource } from "../track/types.js";
 
@@ -67,12 +67,23 @@ let _slskLastSearchAt = 0;
 /** Whether a reconnect attempt is currently in progress (avoids pile-ups). */
 let _slskReconnecting = false;
 
+/**
+ * Set to true after the first failed reconnect so remaining tracks skip SLSK
+ * immediately rather than each waiting 60 s for a session that won't come.
+ * Reset to false at the start of every runImport() call.
+ */
+let _slskUnavailable = false;
+
 function acquireSlskSearchSlot(): Promise<() => void> {
   let release!: () => void;
   const acquired = new Promise<void>((r) => { release = r; });
-  // Chain onto the tail: we only run once the previous slot finishes
-  _slskSearchTail = _slskSearchTail.then(() => acquired);
-  return _slskSearchTail.then(() => release);
+  // Capture prev BEFORE reassigning — the caller must proceed when the
+  // *previous* holder finishes, not after acquired resolves (which would
+  // create a circular wait: we only get release after acquired resolves,
+  // but acquired only resolves when we call release).
+  const prev = _slskSearchTail;
+  _slskSearchTail = prev.then(() => acquired);
+  return prev.then(() => release);
 }
 
 /**
@@ -414,7 +425,7 @@ async function searchSoulseek(
   title: string,
   signal: AbortSignal,
 ): Promise<TrackData[]> {
-  if (signal.aborted) return [];
+  if (signal.aborted || _slskUnavailable) return [];
 
   const query = `${artist} ${title}`;
 
@@ -422,7 +433,7 @@ async function searchSoulseek(
   const releaseSlot = await acquireSlskSearchSlot();
 
   try {
-    if (signal.aborted) return [];
+    if (signal.aborted || _slskUnavailable) return [];
 
     // Enforce minimum gap between searches
     const sinceLastMs = Date.now() - _slskLastSearchAt;
@@ -435,7 +446,10 @@ async function searchSoulseek(
     let connected = await soulseekStatus().then((s) => s.connected).catch(() => false);
     if (!connected) {
       connected = await waitForSlskSession(signal);
-      if (!connected || signal.aborted) return [];
+      if (!connected || signal.aborted) {
+        _slskUnavailable = true;
+        return [];
+      }
     }
 
     _slskLastSearchAt = Date.now();
@@ -459,6 +473,20 @@ async function searchSoulseek(
   }
 }
 
+// ── Quality scoring (tie-breakers for findBestMatch) ───────────────────────
+
+function rtQuality(t: TrackData): number {
+  const fmtScore = formatQualityScore(t.format, null);
+  const raw = (t.sources[0] as { raw?: { topicRow?: { seeders?: unknown } } } | undefined)
+    ?.raw?.topicRow;
+  const seeders = Math.min(Number(raw?.seeders ?? 0) / 80, 1);
+  return fmtScore * 0.85 + seeders * 0.15;
+}
+
+function slskQuality(t: TrackData): number {
+  return formatQualityScore(t.format, t.bitrate);
+}
+
 // ── Per-track processing ────────────────────────────────────────────────────
 
 async function processTrack(entry: ImportEntry, signal: AbortSignal): Promise<void> {
@@ -473,8 +501,8 @@ async function processTrack(entry: ImportEntry, signal: AbortSignal): Promise<vo
 
     if (signal.aborted) return;
 
-    const rtBest  = findBestMatch(rtTracks,   entry.artist, entry.title);
-    const slskBest = findBestMatch(slskTracks, entry.artist, entry.title);
+    const rtBest  = findBestMatch(rtTracks,   entry.artist, entry.title, 0.50, rtQuality);
+    const slskBest = findBestMatch(slskTracks, entry.artist, entry.title, 0.50, slskQuality);
 
     // RuTracker preferred; fall back to SoulSeek
     const picked = rtBest ?? slskBest;
@@ -526,6 +554,12 @@ export async function runImport(
   onProgress: (state: ImportState) => void,
   signal: AbortSignal,
 ): Promise<ImportState> {
+  // Reset module-level SLSK state so a new import starts clean.
+  _slskUnavailable = false;
+  _slskSearchTail = Promise.resolve();
+  _slskLastSearchAt = 0;
+  _slskReconnecting = false;
+
   const entries: ImportEntry[] = parsedTracks.map((t) => ({
     ...t,
     status: "pending" as EntryStatus,

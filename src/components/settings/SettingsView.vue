@@ -33,6 +33,8 @@ import { clearSlskCoverCache } from "../../soulseek/api.js";
 import { clearDiscordPresence } from "../../discordPresence.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import AchievementsModal from "./AchievementsModal.vue";
+import ImportLikesPanel from "./ImportLikesPanel.vue";
+import ImportProgressModal from "./ImportProgressModal.vue";
 import SystemIcon from "../shared/SystemIcon.vue";
 import {
   fetchLatestGithubRelease,
@@ -958,6 +960,38 @@ async function confirmResetAchievements() {
 }
 
 const factoryResetBusy = ref(false);
+
+// ── Import ────────────────────────────────────────────────────────────────────
+const importRunning = ref(false);
+const importModalOpen = ref(false);
+const importState = ref(null);
+let _importAbort = null;
+
+async function handleStartImport(parsedTracks) {
+  if (importRunning.value) return;
+  _importAbort = new AbortController();
+  importRunning.value = true;
+  importModalOpen.value = true;
+  importState.value = null;
+  try {
+    const { runImport } = await import("../../import/runImport.js");
+    await runImport(
+      parsedTracks,
+      (state) => { importState.value = state; },
+      _importAbort.signal,
+    );
+  } finally {
+    importRunning.value = false;
+  }
+}
+
+function handleImportCancel() {
+  _importAbort?.abort();
+}
+
+function handleImportClose() {
+  importModalOpen.value = false;
+}
 
 async function confirmFactoryReset() {
   const ok = await ask(
