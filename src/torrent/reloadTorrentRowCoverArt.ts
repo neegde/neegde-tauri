@@ -49,7 +49,7 @@ export async function reloadTorrentRowCoverArt(
   }
   for (const al of albums) {
     const cf = al.coverFile;
-    if (!cf || !magnet) continue;
+    if (!cf) continue;
     if (!al.audioFiles.some((f) => f.origIdx === origIdx)) continue;
     invalidateTorrentImage(magnet, cf.origIdx);
     addCoverReloadStep(runId, `Torrent: нашёл файл обложки #${cf.origIdx} рядом с треком`, "success");

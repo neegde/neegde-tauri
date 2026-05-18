@@ -8,7 +8,7 @@ import {
   getAlbum,
   type AlbumData,
 } from "../../src/stores/entities.js";
-import { clearTrackCache, hasTrack, putTrack } from "../../src/persistence/trackCache.js";
+import { clearTrackCache, putTrack } from "../../src/persistence/trackCache.js";
 import { buildTrack } from "../../src/track/factory.js";
 import { SoulseekTrack } from "../../src/track/SoulseekTrack.js";
 import type { TrackData } from "../../src/track/types.js";
