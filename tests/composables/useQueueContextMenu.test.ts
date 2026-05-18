@@ -51,7 +51,7 @@ describe("useQueueContextMenu", () => {
     });
     // download disabled, playlist entry still present
     const ids = queueCtxActions.value.map((a) => a.id);
-    expect(ids).toEqual(["reload-cover", "reload-cover-full-file", "divider", "download", "divider", "playlist"]);
+    expect(ids).toEqual(["reload-cover", "reload-cover-full-file", "divider", "download", "divider", "playlist", "divider", "info"]);
   });
 
   it("onQueueCtxAction 'playlist' delegates", () => {

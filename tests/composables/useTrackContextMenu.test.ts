@@ -138,7 +138,7 @@ describe("libraryTrackActions preset (LikesView + PlaylistView)", () => {
   it("preset contains exactly: cover actions / divider / queue / playlist / download / divider / source", () => {
     const actions = libraryTrackActions(slsk());
     expect(actions.map((a) => a.id)).toEqual([
-      "reload-cover", "reload-cover-full-file", "divider", "queue", "playlist", "download", "divider", "source",
+      "reload-cover", "reload-cover-full-file", "divider", "queue", "playlist", "download", "divider", "source", "divider", "info",
     ]);
   });
 });
