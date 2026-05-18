@@ -1,10 +1,10 @@
 <Teleport to="body">
   <div class="imp-backdrop" @click.self="handleClose">
-    <div class="imp-modal" role="dialog" aria-modal="true" aria-label="Импорт лайков">
+    <div class="imp-modal" role="dialog" aria-modal="true" aria-label="Импорт треков">
 
       <!-- Header -->
       <div class="imp-header">
-        <span class="imp-title">Импорт лайков</span>
+        <span class="imp-title">Импорт треков</span>
         <button
           type="button"
           class="imp-close-btn"
@@ -96,7 +96,7 @@
         <div class="imp-footer-note">
           <template v-if="running">Не закрывайте приложение во время импорта</template>
           <template v-else-if="state && state.status === 'done'">
-            Готово · {{ state.matched }} из {{ state.total }} добавлено в «Мне нравится»
+            Готово · {{ state.matched }} из {{ state.total }} добавлено в {{ state.destinationLabel }}
           </template>
           <template v-else-if="state && state.status === 'cancelled'">
             Отменено · {{ state.matched }} треков добавлено

@@ -962,21 +962,28 @@ async function confirmResetAchievements() {
 const factoryResetBusy = ref(false);
 
 // ── Import ────────────────────────────────────────────────────────────────────
+const importPanelRef = ref(null);
 const importRunning = ref(false);
+
+function openImportModal() {
+  importPanelRef.value?.openModal?.();
+}
 const importModalOpen = ref(false);
 const importState = ref(null);
 let _importAbort = null;
 
-async function handleStartImport(parsedTracks) {
+async function handleStartImport({ tracks, destination }) {
   if (importRunning.value) return;
   _importAbort = new AbortController();
   importRunning.value = true;
   importModalOpen.value = true;
   importState.value = null;
   try {
-    const { runImport } = await import("../../import/runImport.js");
+    const { runImport, resolveImportDestination } = await import("../../import/runImport.js");
+    const resolved = resolveImportDestination(destination);
     await runImport(
-      parsedTracks,
+      tracks,
+      resolved,
       (state) => { importState.value = state; },
       _importAbort.signal,
     );

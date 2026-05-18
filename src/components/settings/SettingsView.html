@@ -330,11 +330,20 @@
             </svg>
           </div>
           <div class="settings-card-info">
-            <div class="settings-card-name">Импорт лайков</div>
-            <div class="settings-card-status">Из текстового файла «Исполнитель — Название»</div>
+            <div class="settings-card-name">Импорт треков</div>
+            <div class="settings-card-status">Из файла в лайки или плейлист</div>
           </div>
+          <button
+            type="button"
+            class="ach-btn ach-btn--primary import-open-btn"
+            :disabled="importRunning"
+            @click="openImportModal"
+          >
+            {{ importRunning ? "Импорт…" : "Из файла…" }}
+          </button>
         </div>
         <ImportLikesPanel
+          ref="importPanelRef"
           :import-running="importRunning"
           @start-import="handleStartImport"
         />

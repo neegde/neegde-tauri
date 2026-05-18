@@ -1,6 +1,6 @@
 /**
  * Import pipeline: search each track on RuTracker + SoulSeek, pick the best
- * match, add to likes.
+ * match, add to likes or a playlist.
  *
  * Reliability features:
  *   - RT session expiry → poll for re-login, retry once per track.
@@ -20,7 +20,13 @@ import { soulseekSearch, soulseekStatus, soulseekLogin, soulseekLoadCredentials 
 import { detectAlbums } from "../lib/utils.js";
 import { buildTrack } from "../track/factory.js";
 import { registerEntity } from "../stores/entities.js";
-import { isTrackLiked, toggleLikeTrack } from "../stores/library.js";
+import {
+  addTrackToPlaylist,
+  createPlaylist,
+  getPlaylist,
+  isTrackLiked,
+  toggleLikeTrack,
+} from "../stores/library.js";
 import { findBestMatch, formatQualityScore } from "./matchTrack.js";
 import type { ParsedTrack } from "./parseFile.js";
 import type { TrackData, TrackSource } from "../track/types.js";
@@ -162,14 +168,42 @@ export interface ImportEntry {
 
 export type ImportStatus = "idle" | "running" | "done" | "cancelled";
 
+/** Where matched tracks are saved. */
+export type ImportDestination =
+  | { kind: "likes" }
+  | { kind: "playlist"; playlistId: string };
+
 export interface ImportState {
   status: ImportStatus;
   total: number;
   done: number;
   matched: number;
   unmatched: number;
+  /** Human-readable destination for progress UI (e.g. «Мне нравится»). */
+  destinationLabel: string;
   /** Shallow copy — safe to spread/assign to reactive ref. */
   entries: ImportEntry[];
+}
+
+/**
+ * Resolve destination to a concrete playlist id when needed.
+ * Creates a new playlist for `playlist-new` before import starts.
+ */
+export function resolveImportDestination(
+  destination: ImportDestination | { kind: "playlist-new"; title: string },
+): ImportDestination {
+  if (destination.kind === "playlist-new") {
+    const title = destination.title.trim() || "Импорт";
+    const pl = createPlaylist(title);
+    return { kind: "playlist", playlistId: pl.id };
+  }
+  return destination;
+}
+
+export function importDestinationLabel(destination: ImportDestination): string {
+  if (destination.kind === "likes") return "«Мне нравится»";
+  const pl = getPlaylist(destination.playlistId);
+  return pl ? `плейлист «${pl.title}»` : "плейлист";
 }
 
 // ── SLSK request ID counter ─────────────────────────────────────────────────
@@ -489,7 +523,11 @@ function slskQuality(t: TrackData): number {
 
 // ── Per-track processing ────────────────────────────────────────────────────
 
-async function processTrack(entry: ImportEntry, signal: AbortSignal): Promise<void> {
+async function processTrack(
+  entry: ImportEntry,
+  signal: AbortSignal,
+  destination: ImportDestination,
+): Promise<void> {
   entry.status = "searching";
 
   try {
@@ -522,10 +560,11 @@ async function processTrack(entry: ImportEntry, signal: AbortSignal): Promise<vo
     entry.matchScore  = picked.score;
     entry.trackId     = track.id;
 
-    // Avoid toggling off a track the user already liked manually
-    if (!isTrackLiked(track.id)) {
-      registerEntity(track);
-      toggleLikeTrack(track);
+    registerEntity(track);
+    if (destination.kind === "likes") {
+      if (!isTrackLiked(track.id)) toggleLikeTrack(track);
+    } else {
+      addTrackToPlaylist(destination.playlistId, track);
     }
 
     entry.status = "matched";
@@ -551,6 +590,7 @@ async function processTrack(entry: ImportEntry, signal: AbortSignal): Promise<vo
  */
 export async function runImport(
   parsedTracks: ParsedTrack[],
+  destination: ImportDestination,
   onProgress: (state: ImportState) => void,
   signal: AbortSignal,
 ): Promise<ImportState> {
@@ -565,12 +605,15 @@ export async function runImport(
     status: "pending" as EntryStatus,
   }));
 
+  const destinationLabel = importDestinationLabel(destination);
+
   const state: ImportState = {
     status: "running",
     total: entries.length,
     done: 0,
     matched: 0,
     unmatched: 0,
+    destinationLabel,
     entries,
   };
 
@@ -585,7 +628,7 @@ export async function runImport(
       if (idx >= entries.length || signal.aborted) return;
 
       const entry = entries[idx]!;
-      await processTrack(entry, signal);
+      await processTrack(entry, signal, destination);
 
       state.done++;
       if (entry.status === "matched")                    state.matched++;
