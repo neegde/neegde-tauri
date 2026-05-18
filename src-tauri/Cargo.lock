@@ -3063,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "neegde"
-version = "0.1.9"
+version = "0.1.9.1"
 dependencies = [
  "argon2",
  "base64 0.22.1",
