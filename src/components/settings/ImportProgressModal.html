@@ -1,0 +1,125 @@
+<Teleport to="body">
+  <div class="imp-backdrop" @click.self="handleClose">
+    <div class="imp-modal" role="dialog" aria-modal="true" aria-label="Импорт треков">
+
+      <!-- Header -->
+      <div class="imp-header">
+        <span class="imp-title">Импорт треков</span>
+        <button
+          type="button"
+          class="imp-close-btn"
+          :disabled="!canClose"
+          :title="running ? 'Дождитесь завершения или отмените' : 'Закрыть'"
+          @click="handleClose"
+        >
+          <SystemIcon name="close" :size="14" />
+        </button>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="imp-progress-track">
+        <div
+          class="imp-progress-fill"
+          :class="{ 'imp-progress-fill--done': state && state.status === 'done' }"
+          :style="{ width: progressPct + '%' }"
+        />
+      </div>
+
+      <!-- Stats -->
+      <div v-if="state" class="imp-stats">
+        <span class="imp-stat-matched">{{ state.matched }} найдено</span>
+        <span class="imp-stat-sep">·</span>
+        <span class="imp-stat-unmatched">{{ state.unmatched }} не найдено</span>
+        <span class="imp-stat-sep">·</span>
+        <span class="imp-stat-count">{{ state.done }} / {{ state.total }}</span>
+      </div>
+      <div v-else class="imp-stats">
+        <span class="imp-stat-count">Запускаем…</span>
+      </div>
+
+      <!-- Track list -->
+      <div class="imp-list">
+        <template v-if="state">
+          <div
+            v-for="entry in state.entries"
+            :key="entry.lineNum"
+            class="imp-row"
+            :class="`imp-row--${entry.status}`"
+          >
+            <!-- Status icon -->
+            <div class="imp-row-icon" aria-hidden="true">
+              <span v-if="entry.status === 'pending'" class="imp-icon-pending" />
+              <span v-else-if="entry.status === 'searching'" class="imp-icon-spin" />
+              <svg v-else-if="entry.status === 'matched'"
+                width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <svg v-else-if="entry.status === 'unmatched'"
+                width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              <svg v-else-if="entry.status === 'error'"
+                width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </div>
+
+            <!-- Text -->
+            <div class="imp-row-body">
+              <div class="imp-row-query">{{ entry.artist }} — {{ entry.title }}</div>
+              <div v-if="entry.status === 'matched' && entry.matchTitle" class="imp-row-match">
+                <span class="imp-source-badge" :class="`imp-source-badge--${entry.matchSource}`">
+                  {{ entry.matchSource === 'rutracker' ? 'RT' : 'SLSK' }}
+                </span>
+                <span class="imp-row-match-text">
+                  {{ entry.matchArtist || entry.artist }} — {{ entry.matchTitle }}
+                </span>
+                <span class="imp-row-score">{{ Math.round((entry.matchScore ?? 0) * 100) }}%</span>
+              </div>
+              <div v-else-if="entry.status === 'error' && entry.error" class="imp-row-error">
+                {{ entry.error }}
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Footer -->
+      <div class="imp-footer">
+        <div class="imp-footer-note">
+          <template v-if="running">Не закрывайте приложение во время импорта</template>
+          <template v-else-if="state && state.status === 'done'">
+            Готово · {{ state.matched }} из {{ state.total }} добавлено в {{ state.destinationLabel }}
+          </template>
+          <template v-else-if="state && state.status === 'cancelled'">
+            Отменено · {{ state.matched }} треков добавлено
+          </template>
+        </div>
+        <button
+          v-if="running"
+          type="button"
+          class="imp-action-btn imp-action-btn--cancel"
+          @click="emit('cancel')"
+        >
+          Отмена
+        </button>
+        <button
+          v-else
+          type="button"
+          class="imp-action-btn imp-action-btn--close"
+          @click="handleClose"
+        >
+          Закрыть
+        </button>
+      </div>
+
+    </div>
+  </div>
+</Teleport>

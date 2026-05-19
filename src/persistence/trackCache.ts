@@ -107,6 +107,34 @@ export class TrackCache {
     } catch { /* quota / disabled storage — ignore */ }
   }
 
+  /**
+   * Merges persisted enrichment (`coverUrl`, `albumTitle`) into incoming
+   * search-provider rows so a repeat search does not wipe Deezer metadata
+   * that was saved on the previous session.
+   *
+   * @param data - Fresh `TrackData` from a provider (often missing `coverUrl`).
+   * @returns Same reference when nothing to merge, else a shallow-cloned row.
+   */
+  mergePersistedFields(data: TrackData): TrackData {
+    const prev = this._data.get(data.id);
+    if (!prev) return data;
+    let changed = false;
+    const out: TrackData = { ...data };
+    const prevCover = prev.coverUrl ?? null;
+    const prevAlbum = prev.albumTitle ?? null;
+    const missCover = out.coverUrl == null || out.coverUrl === "";
+    const missAlbum = out.albumTitle == null || out.albumTitle === "";
+    if (missCover && prevCover) {
+      out.coverUrl = prevCover;
+      changed = true;
+    }
+    if (missAlbum && prevAlbum) {
+      out.albumTitle = prevAlbum;
+      changed = true;
+    }
+    return changed ? out : data;
+  }
+
   /** Hydrate a `Track` instance from cache, or `null` when id unknown / malformed. */
   hydrate(id: string): Track | null {
     const data = this._data.get(id);
@@ -190,3 +218,6 @@ export function clearTrackCache(): void { trackCache.clear(); }
 export function flushTrackCache(): void { trackCache.flush(); }
 export function hydrateTrack(id: string): Track | null { return trackCache.hydrate(id); }
 export function loadTrackCache(): void { trackCache.load(); }
+export function mergePersistedTrackFields(data: TrackData): TrackData {
+  return trackCache.mergePersistedFields(data);
+}

@@ -97,4 +97,20 @@ describe("CoverLightbox", () => {
     // No close event should fire from clicking inside the frame.
     expect(w.emitted("update:open")).toBeFalsy();
   });
+
+  it("keeps overlay image when src becomes empty while still open", async () => {
+    const w = mount(CoverLightbox, {
+      props: { open: true, src: "data:image/png;base64,AAA", alt: "cover" },
+      attachTo: document.body,
+    });
+    const img0 = document.body.querySelector(".cover-lb-img") as HTMLImageElement;
+    expect(img0.src).toContain("data:image/png");
+    await w.setProps({ src: "" });
+    await w.vm.$nextTick();
+    expect(document.body.querySelector(".cover-lb-overlay")).not.toBe(null);
+    const img1 = document.body.querySelector(".cover-lb-img") as HTMLImageElement;
+    expect(img1.src).toContain("data:image/png");
+    w.unmount();
+    document.body.innerHTML = "";
+  });
 });

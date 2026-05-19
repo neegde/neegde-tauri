@@ -7,4 +7,3 @@
 //! empty result.
 
 pub mod brave;
-pub mod lrclib;

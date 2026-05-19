@@ -1,7 +1,10 @@
+mod app_paths;
 mod vozduxan_ffi;
 mod vozduxan_stream;
 mod cache_commands;
 mod cache_settings;
+mod general_list;
+mod likes;
 mod cover_art;
 mod deezer;
 mod discord_presence;
@@ -92,11 +95,7 @@ async fn dev_dump_raw_search(
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .take(40)
         .collect();
-    let base_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    let dir = base_dir.join("dev_dumps").join(format!("{ts}_{slug}"));
+    let dir = app_paths::dev_dumps_dir(&app)?.join(format!("{ts}_{slug}"));
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
 
     // ── RuTracker ────────────────────────────────────────────────────────────
@@ -361,6 +360,8 @@ pub fn run() {
             torrent_stream::export::torrent_export_files,
             torrent_stream::export::torrent_export_cancel,
             torrent_image::torrent_fetch_image,
+            torrent_image::torrent_embedded_cover,
+            torrent_image::torrent_embedded_cover_full_file,
             fetch_album_cover,
             dev_dump_raw_search,
             nerd_stats::get_nerd_diagnostics,
@@ -380,6 +381,13 @@ pub fn run() {
             resolver::resolve_query,
             deezer::deezer_search,
             set_close_to_tray,
+            // ── General List (debug registry) ─────────────────────────────────
+            general_list::general_list_write,
+            general_list::general_list_path,
+            general_list::factory_reset,
+            // ── Likes ──────────────────────────────────────────────────────────
+            likes::likes_write,
+            likes::likes_path,
             // ── SoulSeek ───────────────────────────────────────────────────────
             soulseek::soulseek_login,
             soulseek::soulseek_logout,
@@ -388,12 +396,15 @@ pub fn run() {
             soulseek::soulseek_search,
             soulseek::soulseek_prepare_stream,
             soulseek::soulseek_cover_preview,
+            soulseek::slsk_cover_disk_cache_clear,
+            soulseek::slsk_cover_disk_cache_remove,
             soulseek::soulseek_release_stream,
             soulseek::soulseek_save_credentials,
             soulseek::soulseek_load_credentials,
             soulseek::soulseek_clear_saved_credentials,
             soulseek::soulseek_export_file,
             soulseek::soulseek_export_cancel,
+            soulseek::soulseek_embedded_cover_full_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -33,6 +33,8 @@ import { clearSlskCoverCache } from "../../soulseek/api.js";
 import { clearDiscordPresence } from "../../discordPresence.js";
 import EqualizerPanel from "./EqualizerPanel.vue";
 import AchievementsModal from "./AchievementsModal.vue";
+import ImportLikesPanel from "./ImportLikesPanel.vue";
+import ImportProgressModal from "./ImportProgressModal.vue";
 import SystemIcon from "../shared/SystemIcon.vue";
 import {
   fetchLatestGithubRelease,
@@ -955,6 +957,60 @@ async function confirmResetAchievements() {
   );
   if (!ok) return;
   emit("achievements-reset");
+}
+
+const factoryResetBusy = ref(false);
+
+// ── Import ────────────────────────────────────────────────────────────────────
+const importPanelRef = ref(null);
+const importRunning = ref(false);
+
+function openImportModal() {
+  importPanelRef.value?.openModal?.();
+}
+const importModalOpen = ref(false);
+const importState = ref(null);
+let _importAbort = null;
+
+async function handleStartImport({ tracks, destination }) {
+  if (importRunning.value) return;
+  _importAbort = new AbortController();
+  importRunning.value = true;
+  importModalOpen.value = true;
+  importState.value = null;
+  try {
+    const { runImport, resolveImportDestination } = await import("../../import/runImport.js");
+    const resolved = resolveImportDestination(destination);
+    await runImport(
+      tracks,
+      resolved,
+      (state) => { importState.value = state; },
+      _importAbort.signal,
+    );
+  } finally {
+    importRunning.value = false;
+  }
+}
+
+function handleImportCancel() {
+  _importAbort?.abort();
+}
+
+function handleImportClose() {
+  importModalOpen.value = false;
+}
+
+async function confirmFactoryReset() {
+  const ok = await ask(
+    "Удалятся все данные приложения: лайки, очередь, плейлисты, кэши, сессии RuTracker и SoulSeek. Приложение перезапустится как новое. Отменить нельзя. Продолжить?",
+    { title: "Сброс до заводских настроек", kind: "warning" },
+  );
+  if (!ok) return;
+  factoryResetBusy.value = true;
+  localStorage.clear();
+  await invoke("factory_reset").catch(() => {});
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
 }
 
 </script>

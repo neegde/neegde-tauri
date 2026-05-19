@@ -7,6 +7,7 @@ vi.mock("../../src/appDebugWindow.js", () => ({
   closeAppDebugWindow: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn() }));
+vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn().mockResolvedValue(undefined) }));
 
 import SettingsView from "../../src/components/settings/SettingsView.vue";
 

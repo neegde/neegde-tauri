@@ -68,6 +68,15 @@ describe("useTrackContextMenu", () => {
     expect(api.ctxActions.value).toEqual(actions);
   });
 
+  it("onCtxAction 'reload-cover' refreshes cover without delegating to onAction", () => {
+    const onAction = vi.fn();
+    const api = useTrackContextMenu({ actionsFor: () => [{ id: "x" }], onAction });
+    const t = slsk("cov");
+    api.openTrackCtx(new MouseEvent("contextmenu"), t);
+    api.onCtxAction("reload-cover");
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
   it("onCtxAction invokes handler with the current track", () => {
     const onAction = vi.fn();
     const api = useTrackContextMenu({ actionsFor: () => [], onAction });
@@ -120,10 +129,16 @@ describe("libraryTrackActions preset (LikesView + PlaylistView)", () => {
     expect(source?.label).toContain("Torrent");
   });
 
-  it("preset contains exactly: queue / playlist / download / divider / source", () => {
+  it("soulseek track → full-file embed action enabled when size and peer are set", () => {
+    const actions = libraryTrackActions(slsk());
+    const full = actions.find((a) => a.id === "reload-cover-full-file");
+    expect(full?.disabled).toBe(false);
+  });
+
+  it("preset contains exactly: cover actions / divider / queue / playlist / download / divider / source", () => {
     const actions = libraryTrackActions(slsk());
     expect(actions.map((a) => a.id)).toEqual([
-      "queue", "playlist", "download", "divider", "source",
+      "reload-cover", "reload-cover-full-file", "divider", "queue", "playlist", "download", "divider", "source", "divider", "info",
     ]);
   });
 });

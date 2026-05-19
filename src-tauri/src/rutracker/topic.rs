@@ -19,30 +19,25 @@ pub async fn get_torrent_details(
     let dl_url = format!("{}/forum/dl.php?t={}", base, topic_id);
 
     // ── 1+2. Topic page and .torrent file in parallel ─────────────────────────
-    let (topic_result, torrent_result) = tokio::join!(
-        async {
-            client
-                .get(&topic_url)
-                .send()
-                .await
-                .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?
-                .bytes()
-                .await
-                .map_err(|e| format!("Ошибка чтения страницы: {}", e))
-        },
-        async {
-            client
-                .get(&dl_url)
-                .send()
-                .await
-                .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?
-                .bytes()
-                .await
-                .map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))
-        }
+    // Use two-phase join: fire both sends concurrently, then check responses.
+    // This preserves full concurrency while allowing per-response session checks.
+    let (topic_send, torrent_send) = tokio::join!(
+        client.get(&topic_url).send(),
+        client.get(&dl_url).send(),
     );
-    let topic_bytes = topic_result?;
-    let torrent_bytes = torrent_result?;
+    let topic_resp = topic_send.map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?;
+    let torrent_resp = torrent_send.map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?;
+
+    if topic_resp.url().path().contains("login") || torrent_resp.url().path().contains("login") {
+        return Err("Сессия устарела — войдите снова.".into());
+    }
+
+    let (topic_bytes_r, torrent_bytes_r) = tokio::join!(
+        topic_resp.bytes(),
+        torrent_resp.bytes(),
+    );
+    let topic_bytes = topic_bytes_r.map_err(|e| format!("Ошибка чтения страницы: {}", e))?;
+    let torrent_bytes = torrent_bytes_r.map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))?;
     let (topic_html, _, _) = WINDOWS_1251.decode(&topic_bytes);
 
     // ── 3. Parse ──────────────────────────────────────────────────────────────
@@ -52,7 +47,8 @@ pub async fn get_torrent_details(
     let files = parse_torrent_bytes(&torrent_bytes)?;
 
     let cover_data_url = match cover_img_url {
-        Some(url) => fetch_image_data_url(client, &url).await,
+        // Topic details must still succeed if the cover host is flaky.
+        Some(url) => fetch_image_data_url(client, &url).await.ok(),
         None => None,
     };
 
@@ -74,11 +70,15 @@ pub async fn download_torrent_file_bytes(
     topic_id: &str,
 ) -> Result<Vec<u8>, String> {
     let dl_url = format!("{}/forum/dl.php?t={}", base, topic_id);
-    let torrent_bytes = client
+    let resp = client
         .get(&dl_url)
         .send()
         .await
-        .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?
+        .map_err(|e| format!("Ошибка загрузки торрент-файла: {}", e))?;
+    if resp.url().path().contains("login") {
+        return Err("Сессия устарела — войдите снова.".into());
+    }
+    let torrent_bytes = resp
         .bytes()
         .await
         .map_err(|e| format!("Ошибка чтения торрент-файла: {}", e))?;
@@ -92,20 +92,27 @@ pub async fn get_cover_data_url(
     topic_id: &str,
 ) -> Result<Option<String>, String> {
     let topic_url = format!("{}/forum/viewtopic.php?t={}", base, topic_id);
-    let topic_bytes = client
+    let resp = client
         .get(&topic_url)
         .send()
         .await
-        .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?
+        .map_err(|e| format!("Ошибка загрузки страницы раздачи: {}", e))?;
+    if resp.url().path().contains("login") {
+        return Err("Сессия устарела — войдите снова.".into());
+    }
+    let topic_bytes = resp
         .bytes()
         .await
         .map_err(|e| format!("Ошибка чтения страницы: {}", e))?;
     let (topic_html, _, _) = WINDOWS_1251.decode(&topic_bytes);
     let (cover_img_url, _, _) = parse_topic_page(topic_html.as_ref(), base);
-    Ok(match cover_img_url {
-        Some(url) => fetch_image_data_url(client, &url).await,
-        None => None,
-    })
+    match cover_img_url {
+        // No `<img>` in the first post — a stable "no cover" outcome.
+        None => Ok(None),
+        // Image URL present but download failed — propagate `Err` so the
+        // frontend does not negative-cache a transient failure as `null`.
+        Some(url) => Ok(Some(fetch_image_data_url(client, &url).await?)),
+    }
 }
 
 // ── Topic page parsing ────────────────────────────────────────────────────────
@@ -304,11 +311,21 @@ fn resolve_url(raw: &str, base: &str) -> String {
 // ── Image fetch ───────────────────────────────────────────────────────────────
 
 /// Fetch `url` and return as `data:<mime>;base64,<b64>`.
-/// Returns None on failure or if the image exceeds the size cap.
-async fn fetch_image_data_url(client: &Client, url: &str) -> Option<String> {
+///
+/// Returns `Err` on transport / HTTP failure so callers can distinguish a
+/// transient outage from a topic that genuinely has no inline cover.
+async fn fetch_image_data_url(client: &Client, url: &str) -> Result<String, String> {
     const MAX_BYTES: usize = 3 * 1024 * 1024; // 3 MB
 
-    let resp = client.get(url).send().await.ok()?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Обложка: ошибка запроса: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Обложка: HTTP {}", resp.status()));
+    }
 
     let mime = resp
         .headers()
@@ -318,13 +335,20 @@ async fn fetch_image_data_url(client: &Client, url: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "image/jpeg".to_string());
 
-    let bytes = resp.bytes().await.ok()?;
-    if bytes.is_empty() || bytes.len() > MAX_BYTES {
-        return None;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Обложка: ошибка чтения тела: {}", e))?;
+
+    if bytes.is_empty() {
+        return Err("Обложка: пустой ответ".into());
+    }
+    if bytes.len() > MAX_BYTES {
+        return Err(format!("Обложка: слишком большой файл ({} байт)", bytes.len()));
     }
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Some(format!("data:{};base64,{}", mime, b64))
+    Ok(format!("data:{};base64,{}", mime, b64))
 }
 
 // ── Post-body structured fields (year / genre / codec / …) ───────────────────

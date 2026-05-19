@@ -8,7 +8,7 @@ import { computed, watch, onUnmounted } from "vue";
  *   open    — v-model boolean
  *   x, y    — screen coordinates (clientX / clientY)
  *   actions — array of { id, label, icon?, disabled? }
- *             icon: 'play' | 'download' | 'heart' | 'queue' | 'copy' | 'playlist' | 'source'
+ *             icon: 'play' | 'download' | 'heart' | 'queue' | 'copy' | 'playlist' | 'source' | 'cover'
  *
  * Emits:
  *   update:open — to close (v-model)
@@ -25,7 +25,7 @@ const props = defineProps({
 const emit = defineEmits(["update:open", "action"]);
 
 const MENU_W = 220;
-const MENU_H = 200;
+const MENU_H = 280;
 
 const style = computed(() => {
   const pad  = 8;

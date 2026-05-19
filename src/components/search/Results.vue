@@ -58,6 +58,8 @@ const emit = defineEmits([
 
 const INITIAL_BATCH = 40;
 const BATCH_INCREMENT = 30;
+/** First N visible SoulSeek rows may auto-guess folder covers; lower rows rely on enrich + scroll-in. */
+const AUTO_SLSK_PEER_COVER_FIRST_ROWS = 16;
 
 // ── Split entities into Albums / Tracks for the two tabs ─────────────────────
 
@@ -327,7 +329,7 @@ function applyFilenameMetadata(tracks) {
 
 function scheduleCoverFetches() {
   clearCoverTimer();
-  setCoverTimer(setTimeout(runCoverFetches, 1500));
+  setCoverTimer(setTimeout(runCoverFetches, 400));
 }
 
 function albumFromFolder(folder) {

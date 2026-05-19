@@ -12,7 +12,42 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use tauri::AppHandle;
+
+fn slsk_cover_disk_cache_key(username: &str, filepath: &str) -> String {
+    let norm = filepath.replace('\\', "/");
+    format!("{username}\n{norm}")
+}
+
+fn slsk_cover_disk_cache_file(app: &AppHandle, cache_key: &str) -> Result<PathBuf, String> {
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(cache_key.as_bytes());
+    let hex_name = format!("{:x}", hasher.finalize());
+    Ok(crate::app_paths::slsk_covers_dir(app)?.join(format!("{hex_name}.json")))
+}
+
+fn slsk_cover_disk_try_read(app: &AppHandle, username: &str, filepath: &str) -> Option<SlskCoverPreview> {
+    let key = slsk_cover_disk_cache_key(username, filepath);
+    let path = slsk_cover_disk_cache_file(app, &key).ok()?;
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+fn slsk_cover_disk_write_best_effort(app: &AppHandle, username: &str, filepath: &str, preview: &SlskCoverPreview) {
+    let key = slsk_cover_disk_cache_key(username, filepath);
+    let Ok(path) = slsk_cover_disk_cache_file(app, &key) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(bytes) = serde_json::to_string(preview) {
+        let _ = std::fs::write(path, bytes);
+    }
+}
 
 // ── Public types (serialised to frontend) ────────────────────────────────────
 
@@ -67,7 +102,7 @@ pub struct SlskStreamReady {
 }
 
 /// Cover preview for UI: first bytes of an image file from a peer.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SlskCoverPreview {
     pub mime: String,
     pub base64: String,
@@ -352,22 +387,47 @@ pub fn soulseek_release_stream(
 ///
 /// Returns:
 ///     MIME type and base64 payload suitable for a `data:` URL in the webview.
+///     Serves from `soulseek/covers/` when present so restarts skip P2P.
 #[tauri::command]
 pub async fn soulseek_cover_preview(
+    app: AppHandle,
     state: tauri::State<'_, SoulSeekState>,
     username: String,
     filepath: String,
     filesize: u64,
 ) -> Result<SlskCoverPreview, String> {
+    if let Some(hit) = slsk_cover_disk_try_read(&app, &username, &filepath) {
+        return Ok(hit);
+    }
     let session = state.get_session()?;
     const MAX: u64 = 512 * 1024;
     let mime = cover_mime_from_path(&filepath);
-    let bytes = transfer::download_cover_preview(session, username, filepath, filesize, MAX).await?;
+    let bytes =
+        transfer::download_cover_preview(session, username.clone(), filepath.clone(), filesize, MAX).await?;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    Ok(SlskCoverPreview {
+    let preview = SlskCoverPreview {
         mime,
         base64: STANDARD.encode(&bytes),
-    })
+    };
+    slsk_cover_disk_write_best_effort(&app, &username, &filepath, &preview);
+    Ok(preview)
+}
+
+/// Wipes on-disk SoulSeek cover previews (used with in-memory clear from settings).
+#[tauri::command]
+pub fn slsk_cover_disk_cache_clear(app: AppHandle) -> Result<(), String> {
+    let dir = crate::app_paths::slsk_covers_dir(&app)?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Removes one cached preview so the next UI fetch hits the peer again.
+#[tauri::command]
+pub fn slsk_cover_disk_cache_remove(app: AppHandle, username: String, filepath: String) -> Result<(), String> {
+    let key = slsk_cover_disk_cache_key(&username, &filepath);
+    let path = slsk_cover_disk_cache_file(&app, &key)?;
+    let _ = std::fs::remove_file(path);
+    Ok(())
 }
 
 /// Download a SoulSeek file to disk with progress events.
@@ -514,6 +574,97 @@ pub fn soulseek_export_cancel(state: tauri::State<'_, SoulSeekState>) -> Result<
     Ok(())
 }
 
+const MAX_SLSK_FULL_EMBED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const SLSK_EMBED_FULL_DOWNLOAD_MAX_WAIT: Duration = Duration::from_secs(600);
+
+/**
+ * Downloads a SoulSeek audio file to a temp path, scans the whole file for embedded
+ * artwork (ID3 / FLAC picture / MP4 metadata), then deletes the temp file.
+ *
+ * Args:
+ *     username: Peer username.
+ *     filepath: Full share path on the peer.
+ *     filesize: Declared size in bytes (handshake).
+ *
+ * Returns:
+ *     `data:` URL when a picture is found, `None` when tags contain no artwork,
+ *     or an error when download or parsing fails.
+ */
+#[tauri::command]
+pub async fn soulseek_embedded_cover_full_file(
+    state: tauri::State<'_, SoulSeekState>,
+    username: String,
+    filepath: String,
+    filesize: u64,
+) -> Result<Option<String>, String> {
+    if filesize == 0 {
+        return Err("Файл имеет размер 0".to_string());
+    }
+    if filesize > MAX_SLSK_FULL_EMBED_BYTES {
+        return Err(format!(
+            "Файл слишком большой для чтения метатегов (>{MAX_SLSK_FULL_EMBED_BYTES} B)"
+        ));
+    }
+
+    let session = state.get_session()?;
+    let token = next_token();
+    let handle = transfer::download_and_stream(
+        Arc::clone(&session),
+        username,
+        filepath,
+        filesize,
+        token,
+    )
+    .await?;
+
+    let total = handle.total_size;
+    let downloaded = Arc::clone(&handle.downloaded);
+    let complete = Arc::clone(&handle.complete);
+
+    let wait_start = Instant::now();
+    loop {
+        if wait_start.elapsed() > SLSK_EMBED_FULL_DOWNLOAD_MAX_WAIT {
+            handle.http_abort.abort();
+            handle.download_abort.abort();
+            let _ = std::fs::remove_file(&handle.temp_path);
+            return Err(
+                "Таймаут загрузки файла с SoulSeek для чтения обложки (пир не отвечает).".to_string(),
+            );
+        }
+        let dl = downloaded.load(Ordering::Acquire);
+        let done = complete.load(Ordering::Acquire);
+        if done || (total > 0 && dl >= total) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    handle.http_abort.abort();
+
+    let dl_final = downloaded.load(Ordering::Acquire);
+    if total > 0 && dl_final < total * 90 / 100 {
+        handle.download_abort.abort();
+        let _ = std::fs::remove_file(&handle.temp_path);
+        return Err(format!(
+            "Загрузка прервана пиром: получено {} из {}",
+            slsk_fmt_bytes(dl_final),
+            slsk_fmt_bytes(total)
+        ));
+    }
+
+    let temp_path = handle.temp_path.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        crate::torrent_image::extract_embedded_cover_data_url_from_audio_path(&temp_path)
+    })
+    .await
+    .map_err(|e| format!("parse task: {e}"))?;
+
+    handle.download_abort.abort();
+    let _ = std::fs::remove_file(&handle.temp_path);
+
+    Ok(out)
+}
+
 // ── Credential persistence ────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
@@ -528,10 +679,10 @@ pub fn soulseek_save_credentials(
     username: String,
     password: String,
 ) -> Result<(), String> {
-    use tauri::Manager;
-    let path = app.path().app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("slsk_creds.json");
+    let path = crate::app_paths::slsk_creds_path(&app).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let json = serde_json::to_string(&SlskCredentials { username, password })
         .map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())
@@ -539,8 +690,7 @@ pub fn soulseek_save_credentials(
 
 #[tauri::command]
 pub fn soulseek_load_credentials(app: tauri::AppHandle) -> Option<(String, String)> {
-    use tauri::Manager;
-    let path = app.path().app_data_dir().ok()?.join("slsk_creds.json");
+    let path = crate::app_paths::slsk_creds_path(&app).ok()?;
     let data = std::fs::read_to_string(&path).ok()?;
     let creds: SlskCredentials = serde_json::from_str(&data).ok()?;
     Some((creds.username, creds.password))
@@ -549,12 +699,7 @@ pub fn soulseek_load_credentials(app: tauri::AppHandle) -> Option<(String, Strin
 /// Deletes saved SoulSeek credentials (after explicit logout from settings).
 #[tauri::command]
 pub fn soulseek_clear_saved_credentials(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("slsk_creds.json");
+    let path = crate::app_paths::slsk_creds_path(&app).map_err(|e| e.to_string())?;
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }

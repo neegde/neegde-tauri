@@ -28,6 +28,9 @@ import TrackContextMenu from "../shared/TrackContextMenu.vue";
 import { torrentFileB64ForTrack } from "../../torrent/api.js";
 import { parseBtihFromMagnet } from "../../lib/magnet.js";
 import { rtTrackId } from "../../player/trackForQueue.js";
+import { reloadTorrentRowCoverArt } from "../../torrent/reloadTorrentRowCoverArt.js";
+import { loadTorrentFullEmbeddedCoverArt } from "../../torrent/loadTorrentFullEmbeddedCoverArt.js";
+import { showTrackInfo } from "../../composables/useTrackInfo.js";
 
 /** Warm in-memory cover cache + BT `only_files` union before cards scroll into view. */
 const PREFETCH_ALBUM_COVERS = 12;
@@ -62,6 +65,32 @@ const emit = defineEmits([
   "open-torrent-source",
 ]);
 
+const albums = computed(() => detectAlbums(props.files));
+
+/** `data:` cover from embedded audio tags, keyed by album `dirPath` (`_` = root). */
+const embeddedCoverByAlbumDir = ref(/** @type {Record<string, string>} */ ({}));
+
+watch(
+  () => [props.magnet, props.torrent?.id],
+  () => {
+    embeddedCoverByAlbumDir.value = {};
+  },
+);
+
+/**
+ * @param {number} origIdx
+ * @returns {string}
+ */
+function albumDirKeyForOrigIdx(origIdx) {
+  const list = albums.value;
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (!a.audioFiles.some((f) => f.origIdx === origIdx)) continue;
+    return a.dirPath && String(a.dirPath).length > 0 ? String(a.dirPath) : "_";
+  }
+  return "_";
+}
+
 const ctxOpen = ref(false);
 const ctxX = ref(0);
 const ctxY = ref(0);
@@ -88,7 +117,16 @@ const torrentCtxActions = computed(() => {
     props.torrent?.source === "soulseek"
       ? "Источник (SoulSeek)"
       : "Источник (Torrent)";
+  const canReadFullEmbeddedCover = !!props.magnet && props.torrent?.source !== "soulseek";
   return [
+    { id: "reload-cover", label: "Загрузить обложку", icon: "cover" },
+    {
+      id: "reload-cover-full-file",
+      label: "Обложка из полного файла",
+      icon: "cover",
+      disabled: !canReadFullEmbeddedCover,
+    },
+    { id: "divider" },
     { id: "source", label: srcLabel, icon: "source" },
     { id: "divider" },
     { id: "play", label: "Слушать", icon: "play" },
@@ -97,10 +135,69 @@ const torrentCtxActions = computed(() => {
     { id: "like", label: "В избранное", icon: "heart" },
     { id: "queue", label: "В очередь", icon: "queue" },
     { id: "playlist", label: "В плейлист", icon: "playlist" },
+    { id: "divider" },
+    { id: "info", label: "О треке", icon: "info" },
   ];
 });
 
 function onCtxAction(id) {
+  if (id === "reload-cover") {
+    const origIdx = ctxOrigIdx.value;
+    if (origIdx != null) {
+      const f = (props.files ?? []).find((x) => x.origIdx === origIdx);
+      void (async () => {
+        const res = await reloadTorrentRowCoverArt({
+          torrentSource: props.torrent?.source ?? "rutracker",
+          torrentId: props.torrent?.id,
+          magnet: props.magnet ?? "",
+          origIdx,
+          trackName: f ? trackDisplayBasename(f.path) : undefined,
+          albums: albums.value,
+        });
+        if (res.embeddedDataUrl) {
+          const key = albumDirKeyForOrigIdx(origIdx);
+          embeddedCoverByAlbumDir.value = {
+            ...embeddedCoverByAlbumDir.value,
+            [key]: res.embeddedDataUrl,
+          };
+        }
+      })();
+    }
+    return;
+  }
+  if (id === "reload-cover-full-file") {
+    const origIdx = ctxOrigIdx.value;
+    if (origIdx != null) {
+      const f = (props.files ?? []).find((x) => x.origIdx === origIdx);
+      void (async () => {
+        const res = await loadTorrentFullEmbeddedCoverArt({
+          torrentSource: props.torrent?.source ?? "rutracker",
+          torrentId: props.torrent?.id,
+          magnet: props.magnet ?? "",
+          origIdx,
+          trackName: f ? trackDisplayBasename(f.path) : undefined,
+        });
+        if (res.embeddedDataUrl) {
+          const key = albumDirKeyForOrigIdx(origIdx);
+          embeddedCoverByAlbumDir.value = {
+            ...embeddedCoverByAlbumDir.value,
+            [key]: res.embeddedDataUrl,
+          };
+        }
+      })();
+    }
+    return;
+  }
+  if (id === "info") {
+    const origIdx = ctxOrigIdx.value;
+    if (origIdx != null) {
+      const topicId = props.torrent?.__topicId ?? props.torrent?.id ?? null;
+      const btih = parseBtihFromMagnet(props.magnet ?? "");
+      const tid = rtTrackId(topicId, btih, origIdx);
+      if (tid) showTrackInfo(tid);
+    }
+    return;
+  }
   if (id === "source") {
     emit("open-torrent-source", ctxOrigIdx.value);
     return;
@@ -132,7 +229,6 @@ function openAlbumFromGallery(wrap) {
 }
 
 // ── Albums ───────────────────────────────────────────────────────────────────
-const albums = computed(() => detectAlbums(props.files));
 
 const displayAlbums = computed(() => {
   const list = albums.value;
@@ -218,7 +314,11 @@ function trackLikeId(torrent, f) {
 }
 
 function albumLikeId(torrent, dirPath) {
-  return `album:${torrent.source}:${torrent.id}:${dirPath || "root"}`;
+  if (torrent?.source === "soulseek") {
+    return `album:soulseek:${torrent.id}:${dirPath || "root"}`;
+  }
+  const topicId = torrent?.__topicId ?? torrent?.id ?? "";
+  return `rt:album:${topicId}:${encodeURIComponent(dirPath ?? "")}`;
 }
 
 function torrentLikeId(torrent) {
@@ -305,7 +405,7 @@ function makePlaylistTrack(torrent, magnet, f) {
 }
 
 function makeAlbumLike(torrent, magnet, album, displayName) {
-  const dirPath = album.dirPath || "root";
+  const dirPath = album.dirPath ?? "";
   return {
     id: albumLikeId(torrent, dirPath),
     type: "album",

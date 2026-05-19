@@ -1,6 +1,6 @@
 [package]
 name = "neegde"
-version = "0.1.9"
+version = "0.1.10"
 description = "нигде."
 authors = []
 edition = "2021"
@@ -47,6 +47,7 @@ rand = "0.8"
 hex = "0.4"
 # HTML title parsing for web-scrape resolver sources (Brave, DDG, Mojeek).
 regex = "1"
+lofty = "0.22"
 
 [profile.release]
 panic = "abort"

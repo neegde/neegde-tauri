@@ -10,15 +10,6 @@ pub use debug_api::apply_app_debug_from_disk;
 
 pub use stream_cache::{directory_size_bytes, purge_session_torrents};
 
-/// Subfolder under app data for the streaming librqbit session (debug vs release).
-pub fn torrent_streams_dir_label() -> &'static str {
-    if cfg!(debug_assertions) {
-        "torrent_streams_dev"
-    } else {
-        "torrent_streams"
-    }
-}
-
 /// Minimum (initial) prebuffer target — fast start at any connection speed.
 /// 32 KB is enough to unblock Web Audio on most connections; speed is sampled
 /// at 25% (8 KB) so adaptive upsizing happens early on fast links.

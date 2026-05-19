@@ -64,4 +64,27 @@ export function getSlskCoverDataUrl(
 export function clearSlskCoverCache(): void {
   cache.clear();
   filesizeByKey.clear();
+  void Promise.resolve(invoke("slsk_cover_disk_cache_clear")).then(
+    () => {},
+    () => {},
+  );
+}
+
+/** Clears negative-TTL misses only (successful data URLs kept). */
+export function clearSlskCoverNegatives(): void {
+  cache.clearNegatives();
+}
+
+/** Clears one peer filepath's cover so the next read hits the network again. */
+export function invalidateSlskCover(username: unknown, filepath: unknown): void {
+  const key = slskCoverKey(username, filepath);
+  cache.invalidate(key);
+  filesizeByKey.delete(key);
+  const nl = key.indexOf("\n");
+  const u = nl === -1 ? key : key.slice(0, nl);
+  const fp = nl === -1 ? "" : key.slice(nl + 1);
+  void Promise.resolve(invoke("slsk_cover_disk_cache_remove", { username: u, filepath: fp })).then(
+    () => {},
+    () => {},
+  );
 }

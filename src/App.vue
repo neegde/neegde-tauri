@@ -139,8 +139,10 @@ import { loadRecentHistory, addToRecentHistory, removeFromRecentHistory } from "
 import { loadSearchHistory, removeFromSearchHistory } from "./lib/searchHistory.js";
 import PlaylistView from "./components/playlist/PlaylistView.vue";
 import AchievementToast from "./components/shell/AchievementToast.vue";
+import CoverReloadToast from "./components/shell/CoverReloadToast.vue";
 import UpdateDialog from "./components/shell/UpdateDialog.vue";
 import SystemIcon from "./components/shared/SystemIcon.vue";
+import TrackInfoDialog from "./components/shared/TrackInfoDialog.vue";
 
 // Queue + repeat/shuffle are owned by `stores/queue`. Auto-persist is handled
 // inside the store. App.vue reads derived values and delegates mutations.

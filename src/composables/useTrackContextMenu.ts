@@ -13,11 +13,18 @@
 
 import { ref, shallowRef, computed, type Ref, type ShallowRef, type ComputedRef } from "vue";
 import type { Track } from "../track/Track.js";
+import {
+  forceReloadTrackCover,
+  forceReloadTrackCoverFromFullFile,
+} from "../track/forceReloadTrackCover.js";
 import { sourceContextLabel, canDownload } from "../track/labels.js";
+import { fullFileEmbeddedCoverAvailableForTrack } from "../torrent/embeddedCover.js";
+import { showTrackInfo } from "./useTrackInfo.js";
 
 export interface CtxActionDef {
   id: string;
   label?: string;
+  /** Known icons include `cover` (reload artwork). */
   icon?: string;
   disabled?: boolean;
 }
@@ -62,6 +69,18 @@ export function useTrackContextMenu(opts: UseTrackContextMenuOptions): UseTrackC
   function onCtxAction(id: string): void {
     const t = ctxTrack.value;
     if (!t) return;
+    if (id === "reload-cover") {
+      forceReloadTrackCover(t);
+      return;
+    }
+    if (id === "reload-cover-full-file") {
+      forceReloadTrackCoverFromFullFile(t);
+      return;
+    }
+    if (id === "info") {
+      showTrackInfo(t.id);
+      return;
+    }
     opts.onAction(id, t);
   }
 
@@ -73,11 +92,22 @@ export function useTrackContextMenu(opts: UseTrackContextMenuOptions): UseTrackC
  * "queue / playlist / download / source" action set.
  */
 export function libraryTrackActions(track: Track): CtxActionDef[] {
+  const canReadFullEmbeddedCover = fullFileEmbeddedCoverAvailableForTrack(track);
   return [
+    { id: "reload-cover", label: "Загрузить обложку", icon: "cover" },
+    {
+      id: "reload-cover-full-file",
+      label: "Обложка из полного файла",
+      icon: "cover",
+      disabled: !canReadFullEmbeddedCover,
+    },
+    { id: "divider" },
     { id: "queue", label: "В очередь", icon: "queue" },
     { id: "playlist", label: "В плейлист", icon: "playlist" },
     { id: "download", label: "Скачать", icon: "download", disabled: !canDownload(track) },
     { id: "divider" },
     { id: "source", label: sourceContextLabel(track), icon: "source" },
+    { id: "divider" },
+    { id: "info", label: "О треке", icon: "info" },
   ];
 }

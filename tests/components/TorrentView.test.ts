@@ -257,7 +257,7 @@ describe("TorrentView — smoke", () => {
       props: {
         torrent: rtTorrent, files, loading: false, magnet: "m", cover: null,
         nowPlayingIdx: -1, playerPlaying: false,
-        likes: { "album:rutracker:42:Album": { id: "x", type: "album" } },
+        likes: { "rt:album:42:Album": { id: "x", type: "album" } },
       },
       attachTo: document.body,
     });

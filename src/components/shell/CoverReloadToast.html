@@ -1,0 +1,46 @@
+  <Teleport to="body">
+    <Transition name="cover-reload-toast">
+      <div v-if="state.open" class="cover-reload-toast" role="status" aria-live="polite">
+        <div class="cover-reload-toast__inner">
+          <div :class="['cover-reload-toast__icon', state.done && state.ok ? 'is-ok' : '', state.done && state.ok === false ? 'is-fail' : '']" aria-hidden="true">
+            <svg v-if="!state.done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            <svg v-else-if="state.ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 8v5" />
+              <path d="M12 17h.01" />
+              <circle cx="12" cy="12" r="9" />
+            </svg>
+          </div>
+
+          <div class="cover-reload-toast__body">
+            <div class="cover-reload-toast__kicker">Поиск обложки</div>
+            <div class="cover-reload-toast__title">{{ state.title }}</div>
+            <p class="cover-reload-toast__summary">{{ state.summary }}</p>
+
+            <ol v-if="state.steps.length" class="cover-reload-toast__steps">
+              <li
+                v-for="step in state.steps.slice(-5)"
+                :key="step.id"
+                :class="['cover-reload-toast__step', `is-${step.state}`]"
+              >
+                <span class="cover-reload-toast__step-marker">{{ stepMarker(step.state) }}</span>
+                <span class="cover-reload-toast__step-text">{{ step.text }}</span>
+              </li>
+            </ol>
+          </div>
+
+          <button type="button" class="cover-reload-toast__close" title="Закрыть" @click="dismissCoverReload">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>

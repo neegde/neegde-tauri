@@ -54,7 +54,7 @@ export abstract class Album {
   abstract coverUrl(): string | null;
 
   /** Kick a lazy cover fetch. Noop when already cached / in flight. */
-  abstract startCoverFetch(signal?: AbortSignal): void;
+  abstract startCoverFetch(signal?: AbortSignal, opts?: unknown): void;
 
   // ── Serialization ─────────────────────────────────────────────────────────
 

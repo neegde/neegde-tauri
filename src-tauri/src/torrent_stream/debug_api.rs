@@ -6,7 +6,7 @@ use tauri::State;
 use super::debug_log::DebugLine;
 use super::state::TorrentStreamState;
 
-const SETTINGS_FILE: &str = "app_debug.json";
+/// Legacy file name kept for one-time migration reads.
 const LEGACY_SETTINGS_FILE: &str = "streaming_debug.json";
 
 #[derive(Default, Serialize, Deserialize)]
@@ -15,11 +15,7 @@ struct AppDebugFile {
 }
 
 fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?
-        .join(SETTINGS_FILE))
+    crate::app_paths::app_debug_path(app)
 }
 
 fn legacy_settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {

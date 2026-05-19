@@ -39,9 +39,13 @@ src/                              Vue 3 frontend (TS)
     debug/AppDebugConsole.vue     Ring-buffer view (orphan UI — see below)
   composables/                    useAppDebug, usePrefetch, useStreamReadiness, …
   stores/                         Queue, likes, playlists, entities (persisted)
+  persistence/
+    generalList.ts                Debug track registry — records every seen track
+    generalListCacheProbe.ts      Pure cache probe helpers (no circular deps)
 
 src-tauri/
   build.rs                        Builds vozduxan via cmake
+  src/app_paths.rs                Canonical data-dir layout — all paths go through here
   src/lib.rs                      Tauri setup, managed state, invoke_handler list
   src/vozduxan_ffi.rs             Raw unsafe C bindings to vozduxan
   src/vozduxan_stream.rs          Safe Rust wrapper + streaming Tauri commands
@@ -52,14 +56,31 @@ src-tauri/
   src/resolver/                   Query intent resolver (see below)
     mod.rs                        orchestrator, ranking, canonical pick
     sources/brave.rs              Brave Search + Argon2id PoW challenge solver
-    sources/lrclib.rs             LRCLIB lyrics catalog (currently unwired)
     norm.rs / types.rs            normalization + public DTOs
   src/soulseek/                   Full SoulSeek stack (login, search, stream)
   src/rutracker/                  Rutracker HTTP/session/cover
-  src/torrent_image.rs            Cover-art via transient librqbit fetches
+  src/torrent_image.rs            Cover-art via transient librqbit fetches (bt/covers/)
   src/cache_commands.rs           User-facing cache settings / purge
+  src/general_list.rs             general_list_write / general_list_path / factory_reset
   src/nerd_stats.rs               Diagnostics panel data
 ```
+
+## Data directory layout
+
+All paths are centralised in `src-tauri/src/app_paths.rs`.
+
+```
+{app_data_dir}/
+  rutracker/session.json, meta.json, proxy.txt, covers/, webview/
+  soulseek/creds.json, covers/
+  bt/torrent/, bt/covers/, bt/vozduxan/   (debug builds: dev/bt/…)
+  cache_settings.json
+  app_debug.json
+  general-list.json                       debug track registry (every seen track)
+  dev/dumps/                              dev-only search dump snapshots
+```
+
+Never hardcode a path string in a Rust module — add a helper to `app_paths.rs` instead.
 
 ## Streaming architecture
 
@@ -128,10 +149,10 @@ Two-stage search pipeline:
    pipeline.
 
 The resolver's fast tier is **Brave Search only** (site-restricted to
-`genius.com`). iTunes and LRCLIB were dropped (iTunes surfaced wrong tracks by
-global popularity; LRCLIB was network-blocked for the user and always timed
-out). Brave returns 429 + a JSON Argon2id PoW challenge when suspicious —
-`sources/brave.rs` solves it locally and retries.
+`genius.com`). iTunes and LRCLIB were dropped and their source files removed
+(iTunes surfaced wrong tracks by global popularity; LRCLIB was network-blocked
+for the user and always timed out). Brave returns 429 + a JSON Argon2id PoW
+challenge when suspicious — `sources/brave.rs` solves it locally and retries.
 
 Ranking is done in `resolver/mod.rs::match_score` and its callers. Known weak
 spot: lyric-snippet queries where multiple candidates tie on 1.0 and stable

@@ -3,7 +3,7 @@
 
     <section class="album-hero" aria-label="Альбом">
       <div class="album-hero-cover">
-        <TrackCover :entity="album" :size="220" />
+        <TrackCover :entity="album" fill enlargeable :alt="album.title || 'Обложка альбома'" />
       </div>
       <div class="album-hero-text">
         <span class="album-hero-kicker">Альбом</span>

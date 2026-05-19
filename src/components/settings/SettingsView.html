@@ -317,6 +317,39 @@
       </div>
     </div>
 
+    <!-- ── Библиотека ───────────────────────────────────────────── -->
+    <div class="settings-section">
+      <div class="settings-section-label">Библиотека</div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name">Импорт треков</div>
+            <div class="settings-card-status">Из файла в лайки или плейлист</div>
+          </div>
+          <button
+            type="button"
+            class="ach-btn ach-btn--primary import-open-btn"
+            :disabled="importRunning"
+            @click="openImportModal"
+          >
+            {{ importRunning ? "Импорт…" : "Из файла…" }}
+          </button>
+        </div>
+        <ImportLikesPanel
+          ref="importPanelRef"
+          :import-running="importRunning"
+          @start-import="handleStartImport"
+        />
+      </div>
+    </div>
+
     <!-- ── Внешний вид ────────────────────────────────────────── -->
     <div class="settings-section">
       <div class="settings-section-label">Внешний вид</div>
@@ -481,6 +514,32 @@
               Очистить кэш обложек (торренты)
             </button>
           </div>
+        </div>
+      </div>
+      <div class="settings-card settings-card--factory-reset">
+        <div class="settings-card-header">
+          <div class="settings-card-icon settings-card-icon--app settings-card-icon--danger">
+            <SystemIcon name="trash" :size="22" />
+          </div>
+          <div class="settings-card-info">
+            <div class="settings-card-name settings-card-name--danger">Сброс до заводских настроек</div>
+            <div class="settings-card-status">Удалить всё и перезапустить приложение</div>
+          </div>
+        </div>
+        <div class="settings-card-body">
+          <p class="settings-card-desc cache-quick-desc">
+            Удаляет все данные: лайки, очередь, плейлисты, сессии, кэши на диске и в памяти.
+            Приложение перезапустится как после первой установки.
+          </p>
+          <button
+            type="button"
+            class="ach-btn ach-btn--danger cache-quick-btn"
+            :disabled="factoryResetBusy"
+            @click="confirmFactoryReset"
+          >
+            <span v-if="factoryResetBusy" class="spinner" />
+            <template v-else>Сбросить всё и перезапустить</template>
+          </button>
         </div>
       </div>
     </div>
@@ -1077,5 +1136,13 @@
         </div>
       </div>
     </div>
+
+    <ImportProgressModal
+      v-if="importModalOpen"
+      :state="importState"
+      :running="importRunning"
+      @cancel="handleImportCancel"
+      @close="handleImportClose"
+    />
 
   </div>

@@ -23,6 +23,57 @@ function aggregateFormat(tracks: Array<{ format?: string | null }>): string | nu
   return null;
 }
 
+/**
+ * Strips noise common in RuTracker folder names so catalog lookups stand a
+ * chance of matching:
+ *   "2005 - Река крови"          -> "Река крови"
+ *   "2006 - Сквозное (EP)"       -> "Сквозное"
+ *   "2008 - Гантеля"             -> "Гантеля"
+ *   "Имя альбома (Инструментал)" -> "Имя альбома"
+ */
+export function cleanAlbumNameForCatalog(name: string): string {
+  let s = name.trim();
+  // Leading year (or year in [] / ()) with separator.
+  s = s.replace(/^\s*[\[(]?\s*(?:19|20)\d{2}\s*[\])]?\s*[-–—.]?\s*/, "");
+  // Trailing parenthetical qualifier (EP / Инструментал / переизданная версия / Deluxe …).
+  for (let i = 0; i < 3; i++) {
+    const next = s.replace(/\s*[\[(][^()\[\]]{1,60}[\])]\s*$/u, "");
+    if (next === s) break;
+    s = next;
+  }
+  return s.trim();
+}
+
+/**
+ * For a multi-disc release the leaf folder is `CD1` / `CD2 (Инструментал)` /
+ * `Disc 2` etc. Climb one level to find the actual album name.
+ *
+ * @param dirPath - Full path inside the torrent, e.g. `Кровосток/2008 - Гантеля/CD1`.
+ * @param fallback - Sub-album `name` from `detectAlbums`, used when path is shallow.
+ * @returns Best guess for the release title before cleaning.
+ */
+export function leafAlbumName(dirPath: string, fallback: string): string {
+  const parts = dirPath.split("/").filter(Boolean);
+  if (parts.length === 0) return fallback;
+  const leaf = parts[parts.length - 1] ?? fallback;
+  if (/^(cd|disc|disk|диск|часть|part)\s*\d+/i.test(leaf) && parts.length >= 2) {
+    return parts[parts.length - 2] ?? leaf;
+  }
+  return leaf;
+}
+
+/**
+ * Multi-album RuTracker topics often follow `<Artist>/<Year - Album>/...`. When
+ * post-meta has no `Исполнитель:` line we lift the artist from the first path
+ * segment.
+ */
+export function fallbackArtistFromPath(dirPath: string): string | null {
+  const parts = dirPath.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  const first = parts[0]!.trim();
+  return first.length >= 2 ? first : null;
+}
+
 interface TopicRow {
   id: string | number;
   name?: string;
@@ -46,6 +97,11 @@ async function enrichTopic(topicRow: TopicRow, ctx: SearchProviderCtx): Promise<
 
   const albums = detectAlbums(flatFiles);
   if (albums.length === 0) return [];
+
+  const multiAlbumTopic = albums.length > 1;
+  const topicCoverUrl = multiAlbumTopic
+    ? null
+    : ((details as { cover_data_url?: string | null }).cover_data_url ?? null);
 
   const entities: PipelineEntity[] = [];
   for (const alb of albums) {
@@ -84,13 +140,22 @@ async function enrichTopic(topicRow: TopicRow, ctx: SearchProviderCtx): Promise<
 
     if (albumTracks.length === 0) continue;
 
+    const detailsArtist = (details as { artist?: string | null }).artist ?? null;
+    const coverArtist =
+      detailsArtist && detailsArtist.length >= 2
+        ? detailsArtist
+        : fallbackArtistFromPath(alb.dirPath);
+    const coverAlbumTitle = multiAlbumTopic
+      ? cleanAlbumNameForCatalog(leafAlbumName(alb.dirPath, alb.name || ""))
+      : cleanAlbumNameForCatalog(alb.name || "");
+
     const album = {
       type: "album",
       id: albumId,
       title: alb.name || "",
-      artist: (details as { artist?: string | null }).artist ?? null,
+      artist: coverArtist ?? null,
       year: null,
-      coverUrl: (details as { cover_data_url?: string | null }).cover_data_url ?? null,
+      coverUrl: topicCoverUrl,
       format: aggregateFormat(albumTracks as Array<{ format?: string | null }>),
       bitrate: null,
       size: albumTracks.reduce((s, t) => s + ((t.size as number | null) ?? 0), 0) || null,
@@ -101,7 +166,14 @@ async function enrichTopic(topicRow: TopicRow, ctx: SearchProviderCtx): Promise<
       sources: [{
         kind: "rutracker",
         refs: { topicId: String(topicRow.id), rootPath: alb.dirPath },
-        raw: { topicRow, details, albumDir: alb },
+        raw: {
+          topicRow,
+          details,
+          albumDir: alb,
+          multiAlbumTopic,
+          coverArtist: coverArtist ?? null,
+          coverAlbumTitle: coverAlbumTitle || null,
+        },
       }],
       score: 0,
       mergedFrom: 1,

@@ -73,7 +73,7 @@ export class RutrackerTrack extends Track {
     return getCoverReactive(String(topicId));
   }
 
-  override startCoverFetch(_signal?: AbortSignal): void {
+  override startCoverFetch(_signal?: AbortSignal, _opts?: unknown): void {
     const topicId = this.refs.topicId;
     if (!topicId) return;
     const peek = peekRutrackerCover(String(topicId));

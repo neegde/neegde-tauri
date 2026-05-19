@@ -12,6 +12,12 @@
 
 import { ref, computed, type Ref, type ComputedRef } from "vue";
 import type { Track } from "../track/Track.js";
+import {
+  forceReloadTrackCover,
+  forceReloadTrackCoverFromFullFile,
+} from "../track/forceReloadTrackCover.js";
+import { fullFileEmbeddedCoverAvailableForTrack } from "../torrent/embeddedCover.js";
+import { showTrackInfo } from "./useTrackInfo.js";
 
 export interface UseQueueContextMenuOptions {
   playbackQueue: Ref<Track[]> | ComputedRef<Track[]>;
@@ -44,10 +50,21 @@ export function useQueueContextMenu(ctx: UseQueueContextMenuOptions) {
     const idx = queueCtxIdx.value;
     const t = idx != null ? ctx.playbackQueue.value?.[idx] : null;
     const canDownload = !!t && typeof t.hasPlaybackIdentity === "function" && t.hasPlaybackIdentity();
+    const canReadFullEmbeddedCover = !!t && fullFileEmbeddedCoverAvailableForTrack(t);
     return [
+      { id: "reload-cover", label: "Загрузить обложку", icon: "cover" },
+      {
+        id: "reload-cover-full-file",
+        label: "Обложка из полного файла",
+        icon: "cover",
+        disabled: !canReadFullEmbeddedCover,
+      },
+      { id: "divider" },
       { id: "download", label: "Скачать",   icon: "download", disabled: !canDownload },
       { id: "divider" },
       { id: "playlist", label: "В плейлист", icon: "playlist" },
+      { id: "divider" },
+      { id: "info", label: "О треке", icon: "info" },
     ];
   });
 
@@ -56,6 +73,18 @@ export function useQueueContextMenu(ctx: UseQueueContextMenuOptions) {
     if (idx == null) return;
     const t = ctx.playbackQueue.value?.[idx];
     if (!t) return;
+    if (id === "reload-cover") {
+      forceReloadTrackCover(t);
+      return;
+    }
+    if (id === "reload-cover-full-file") {
+      forceReloadTrackCoverFromFullFile(t);
+      return;
+    }
+    if (id === "info") {
+      showTrackInfo(t.id);
+      return;
+    }
     if (id === "playlist") ctx.onAddToPlaylist(t);
     if (id === "download") {
       if (typeof t.hasPlaybackIdentity === "function" && !t.hasPlaybackIdentity()) return;

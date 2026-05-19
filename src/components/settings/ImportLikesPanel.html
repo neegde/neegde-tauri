@@ -1,0 +1,171 @@
+<input
+  ref="fileInputRef"
+  type="file"
+  accept=".txt,text/plain"
+  hidden
+  @change="handleFileSelect"
+/>
+
+<Teleport to="body">
+  <div
+    v-if="modalOpen"
+    class="import-modal-overlay"
+    role="presentation"
+    @click.self="closeModal"
+  >
+    <div
+      class="import-modal-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-modal-title"
+      @click.stop
+    >
+      <div class="import-modal-head">
+        <h2 id="import-modal-title" class="import-modal-title">Импорт треков</h2>
+        <button type="button" class="import-modal-x" title="Закрыть" @click="closeModal">
+          <SystemIcon name="close" :size="18" />
+        </button>
+      </div>
+
+      <p class="import-modal-hint">
+        Найденные треки будут добавлены {{ destinationPreview }}.
+      </p>
+
+      <div class="import-modal-section">
+        <div class="import-field-label">Куда сохранить</div>
+        <div class="import-seg" role="tablist" aria-label="Куда сохранить">
+          <button
+            type="button"
+            class="import-seg-btn"
+            :class="{ active: destKind === 'likes' }"
+            role="tab"
+            :aria-selected="destKind === 'likes'"
+            @click="destKind = 'likes'"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+            Лайки
+          </button>
+          <button
+            type="button"
+            class="import-seg-btn"
+            :class="{ active: destKind === 'playlist' }"
+            role="tab"
+            :aria-selected="destKind === 'playlist'"
+            @click="destKind = 'playlist'"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            Плейлист
+          </button>
+        </div>
+
+        <Transition name="import-slide">
+          <div v-if="destKind === 'playlist'" class="import-playlist-panel">
+            <div v-if="hasPlaylists" class="import-seg import-seg--sub" role="tablist" aria-label="Плейлист">
+              <button
+                type="button"
+                class="import-seg-btn import-seg-btn--compact"
+                :class="{ active: playlistMode === 'existing' }"
+                @click="playlistMode = 'existing'"
+              >
+                Существующий
+              </button>
+              <button
+                type="button"
+                class="import-seg-btn import-seg-btn--compact"
+                :class="{ active: playlistMode === 'new' }"
+                @click="playlistMode = 'new'"
+              >
+                Новый
+              </button>
+            </div>
+
+            <div
+              v-if="playlistMode === 'existing' && hasPlaylists"
+              class="import-pl-list"
+              role="listbox"
+              aria-label="Выбор плейлиста"
+            >
+              <button
+                v-for="pl in playlistOptions"
+                :key="pl.id"
+                type="button"
+                class="import-pl-item"
+                :class="{ 'import-pl-item--active': selectedPlaylistId === pl.id }"
+                role="option"
+                :aria-selected="selectedPlaylistId === pl.id"
+                @click="selectedPlaylistId = pl.id"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                  <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+                </svg>
+                <span class="import-pl-item-title">{{ pl.title }}</span>
+                <SystemIcon
+                  v-if="selectedPlaylistId === pl.id"
+                  name="check"
+                  :size="14"
+                  class="import-pl-item-check"
+                />
+              </button>
+            </div>
+
+            <input
+              v-else
+              v-model="newPlaylistTitle"
+              type="text"
+              class="import-text-input"
+              placeholder="Название плейлиста"
+              maxlength="120"
+            />
+          </div>
+        </Transition>
+      </div>
+
+      <div class="import-modal-section">
+        <div class="import-field-label">Файл</div>
+        <button
+          type="button"
+          class="import-file-zone"
+          :class="{ 'import-file-zone--has-file': fileName }"
+          @click="triggerPick"
+        >
+          <span class="import-file-zone-icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </span>
+          <span class="import-file-zone-text">
+            <span v-if="fileName" class="import-file-zone-name">{{ fileName }}</span>
+            <span v-else class="import-file-zone-placeholder">Нажмите, чтобы выбрать .txt</span>
+            <span v-if="trackCount > 0" class="import-file-zone-meta">
+              {{ trackCount }} {{ trackCountLabel(trackCount) }}
+            </span>
+          </span>
+          <span v-if="fileName" class="import-file-zone-change">Сменить</span>
+        </button>
+        <p v-if="parseError" class="import-parse-error">{{ parseError }}</p>
+      </div>
+
+      <div class="import-modal-footer">
+        <button type="button" class="import-modal-cancel" @click="closeModal">
+          Отмена
+        </button>
+        <button
+          type="button"
+          class="settings-action-btn settings-action-btn--primary import-modal-start"
+          :disabled="!canStart"
+          @click="handleStart"
+        >
+          Начать импорт
+        </button>
+      </div>
+    </div>
+  </div>
+</Teleport>

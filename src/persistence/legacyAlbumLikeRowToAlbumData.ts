@@ -87,7 +87,7 @@ export function legacyAlbumLikeRowToAlbumData(row: LegacyAlbumLikeInput): AlbumD
         kind: "rutracker",
         refs: {
           topicId: String(p.torrentId),
-          rootPath: p.dirPath === "root" ? undefined : p.dirPath,
+          rootPath: (!p.dirPath || p.dirPath === "root") ? undefined : p.dirPath,
         },
         raw: { details: { magnet: magnet || undefined } },
       },

@@ -26,7 +26,7 @@ export class SoulseekAlbum extends Album {
     return getSlskCoverReactive(ref.slsk_username, ref.slsk_filepath);
   }
 
-  override startCoverFetch(_signal?: AbortSignal): void {
+  override startCoverFetch(_signal?: AbortSignal, _opts?: unknown): void {
     if (this.data.coverUrl) return;
     const ref = this.coverRef();
     if (!ref?.slsk_username || !ref?.slsk_filepath) {

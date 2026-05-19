@@ -1,8 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
-use tauri::Manager;
 
 /// Default upper bound for the streaming cache folder (bytes).
 pub const DEFAULT_STREAM_CACHE_MAX_BYTES: u64 = 500 * 1024 * 1024;
@@ -82,11 +80,3 @@ impl UserCacheSettings {
     }
 }
 
-/// Returns the path to `cache_settings.json` under app data.
-pub fn cache_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?
-        .join("cache_settings.json"))
-}

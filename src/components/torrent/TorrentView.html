@@ -17,7 +17,7 @@
             :magnet="magnet"
             :cover-file="singleAlbumWrap.raw.coverFile"
             :label="albumHeroTitle"
-            :cover="cover"
+            :cover="embeddedCoverByAlbumDir[singleAlbumWrap.raw.dirPath || '_'] || cover"
             :torrent-id="torrent?.id"
             :source="torrent?.source"
           />
@@ -280,8 +280,7 @@
               :magnet="magnet"
               :cover-file="wrap.raw.coverFile"
               :label="wrap.displayName"
-              :cover="cover"
-              :enlargeable="false"
+              :cover="embeddedCoverByAlbumDir[wrap.raw.dirPath || '_'] || cover"
               :torrent-id="torrent?.id"
               :source="torrent?.source"
             />
@@ -398,8 +397,7 @@
               :magnet="magnet"
               :cover-file="wrap.raw.coverFile"
               :label="wrap.displayName"
-              :cover="cover"
-              :enlargeable="false"
+              :cover="embeddedCoverByAlbumDir[wrap.raw.dirPath || '_'] || cover"
               :torrent-id="torrent?.id"
               :source="torrent?.source"
             />

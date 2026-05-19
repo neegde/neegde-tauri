@@ -71,5 +71,6 @@ describe("slsk coverCache — getOrFetch with invoke", () => {
     rememberSlskCover("u", "f.jpg", "data:X");
     clearSlskCoverCache();
     expect(peekSlskCover("u", "f.jpg")).toBeUndefined();
+    expect(mockInvoke).toHaveBeenCalledWith("slsk_cover_disk_cache_clear");
   });
 });

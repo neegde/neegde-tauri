@@ -35,6 +35,18 @@ describe("makeCoverCache basics", () => {
     expect(c.peek("k")).toBe(null);         // null = negative cache still active
   });
 
+  it("onPositivePersist fires when a positive URL is stored", () => {
+    const seen: Array<[string, string]> = [];
+    const c = makeCoverCache({
+      fetch: async () => null,
+      onPositivePersist: (key, dataUrl) => {
+        seen.push([key, dataUrl]);
+      },
+    });
+    c.remember("a", "data:Z");
+    expect(seen).toEqual([["a", "data:Z"]]);
+  });
+
   it("negative TTL expires and next peek is a miss", () => {
     vi.useFakeTimers();
     const c = makeCoverCache({ fetch: async () => null, negativeTtlMs: 1000 });
@@ -125,12 +137,21 @@ describe("makeCoverCache getOrFetch", () => {
     expect(c.peek("k")).toBe("new");
   });
 
-  it("writes negative on fetch throw, without nuking a prior positive", async () => {
-    const c = makeCoverCache({ fetch: async () => { throw new Error("boom"); }, negativeTtlMs: 1000 });
+  it("fetch throw does not negative-cache — allows retry after transient failure", async () => {
+    let n = 0;
+    const fetchFn = vi.fn(async () => {
+      n += 1;
+      if (n === 1) throw new Error("boom");
+      return "data:ok";
+    });
+    const c = makeCoverCache({ fetch: fetchFn, negativeTtlMs: 60_000 });
     c.remember("k", "prior");
-    await c.getOrFetch("keyB");               // throws → negative
-    expect(c.peek("keyB")).toBe(null);
-    expect(c.peek("k")).toBe("prior");        // unrelated positive untouched
+    expect(await c.getOrFetch("keyB")).toBe(null);
+    expect(c.peek("keyB")).toBeUndefined();
+    expect(await c.getOrFetch("keyB")).toBe("data:ok");
+    expect(c.peek("keyB")).toBe("data:ok");
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(c.peek("k")).toBe("prior");
   });
 
   it("concurrency gate serialises fetches beyond maxConcurrent", async () => {
@@ -160,6 +181,16 @@ describe("makeCoverCache getOrFetch", () => {
 
 // ── clear ──────────────────────────────────────────────────────────────────
 
+describe("makeCoverCache clearNegatives", () => {
+  it("clears negative TTL so peek becomes a miss again", () => {
+    const c = makeCoverCache({ fetch: async () => null, negativeTtlMs: 60_000 });
+    c.remember("k", null);
+    expect(c.peek("k")).toBe(null);
+    c.clearNegatives();
+    expect(c.peek("k")).toBeUndefined();
+  });
+});
+
 describe("makeCoverCache clear", () => {
   it("wipes everything — positives, negatives, pending", () => {
     const c = makeCoverCache({ fetch: async () => null });
@@ -170,5 +201,41 @@ describe("makeCoverCache clear", () => {
     c.clear();
     expect(c.peek("pos")).toBeUndefined();
     expect(c.peek("neg")).toBeUndefined();
+  });
+});
+
+describe("makeCoverCache invalidate", () => {
+  it("clears positive + negative so peek is a miss", () => {
+    const c = makeCoverCache({ fetch: async () => null });
+    c.remember("k", "data:X");
+    c.invalidate("k");
+    expect(c.peek("k")).toBeUndefined();
+  });
+
+  it("discards stale in-flight result after invalidate", async () => {
+    let finish: (v: string) => void = () => {};
+    const fetchFn = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const c = makeCoverCache({ fetch: fetchFn });
+    const p = c.getOrFetch("k");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchFn).toHaveBeenCalled();
+    c.invalidate("k");
+    finish("stale");
+    expect(await p).toBe(null);
+    expect(c.peek("k")).toBeUndefined();
+  });
+
+  it("after invalidate a new getOrFetch repopulates", async () => {
+    const c = makeCoverCache({ fetch: async () => "fresh" });
+    c.remember("k", "old");
+    c.invalidate("k");
+    expect(await c.getOrFetch("k")).toBe("fresh");
+    expect(c.peek("k")).toBe("fresh");
   });
 });

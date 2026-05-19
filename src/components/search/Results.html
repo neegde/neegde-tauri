@@ -107,12 +107,13 @@
 
         <div v-if="trackEntitiesFiltered.length" class="slsk-tracklist">
           <SlskTrackRow
-            v-for="track in visibleTracks"
+            v-for="(track, rowIdx) in visibleTracks"
             :key="track.id"
             :track="track"
             :enriched="slskMeta.get(track.id) ?? null"
             :now-playing="nowPlayingId === track.id"
             :player-playing="playerPlaying"
+            :auto-peer-cover="rowIdx < AUTO_SLSK_PEER_COVER_FIRST_ROWS"
             @play="emit('play-slsk-track', { track: $event, queue: trackEntitiesFiltered })"
             @download="emit('download-slsk-track', $event)"
             @like="emit('like-slsk-track', $event)"

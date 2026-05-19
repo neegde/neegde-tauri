@@ -1,7 +1,7 @@
   <Teleport to="body">
     <Transition name="cover-lb">
       <div
-        v-if="open && src"
+        v-if="open && lockedSrc"
         class="cover-lb-overlay"
         role="dialog"
         aria-modal="true"
@@ -13,7 +13,7 @@
         </button>
         <div class="cover-lb-frame" :class="{ 'cover-lb-frame--large': large }" @click.stop>
           <img
-            :src="src"
+            :src="lockedSrc"
             :alt="alt"
             class="cover-lb-img"
             :class="{ 'cover-lb-img--large': large }"

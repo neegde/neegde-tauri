@@ -10,6 +10,7 @@ vi.mock("../../src/soulseek/coverCache.js", () => ({
 vi.mock("../../src/stores/entities.js", () => ({
   getAlbum: vi.fn(() => null),
   entitiesVersion: { value: 0 },
+  bumpEntitiesVersion: vi.fn(),
 }));
 
 import { invoke } from "@tauri-apps/api/core";
@@ -157,6 +158,28 @@ describe("SoulseekTrack.coverUrl + startCoverFetch", () => {
     (d.sources[0] as { raw: { cover: null } }).raw = { cover: null };
     buildTrack(d).startCoverFetch();
     expect(fetchMock).toHaveBeenCalledWith("alice", "music/folder.jpg", 0);
+  });
+
+  it("startCoverFetch peerGuess off skips folder guess without ref", () => {
+    const d = slsk();
+    (d.sources[0] as { raw: { cover: null } }).raw = { cover: null };
+    buildTrack(d).startCoverFetch(undefined, { peerGuess: "off" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("startCoverFetch exhaustive probes front.jpg after auto names miss", async () => {
+    const d = slsk();
+    (d.sources[0] as { raw: { cover: null } }).raw = { cover: null };
+    let n = 0;
+    fetchMock.mockImplementation(() => {
+      n += 1;
+      if (n <= 2) return Promise.resolve(null);
+      return Promise.resolve("data:hit");
+    });
+    (buildTrack(d) as SoulseekTrack).startCoverFetch(undefined, { peerGuess: "exhaustive" });
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("alice", "music/front.jpg", 0);
+    });
   });
 });
 

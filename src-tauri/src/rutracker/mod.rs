@@ -7,7 +7,7 @@ use lru::LruCache;
 use reqwest::{header, Client, ClientBuilder, Proxy, Url};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Deserialize, Serialize};
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Write};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -109,14 +109,35 @@ fn load_cookie_store(path: &Option<PathBuf>) -> CookieStore {
 
 #[allow(deprecated)]
 fn save_cookie_store(path: &Option<PathBuf>, store: &Arc<CookieStoreMutex>) {
-    if let Some(p) = path {
-        if let Ok(file) = std::fs::File::create(p) {
-            let mut writer = BufWriter::new(file);
-            if let Ok(locked) = store.lock() {
-                // Persist session cookies too — see `load_cookie_store` note.
-                let _ = locked.save_incl_expired_and_nonpersistent_json(&mut writer);
-            }
+    let Some(p) = path else { return };
+    // Write to a sibling `.tmp` file first, then atomic-rename.
+    // This prevents a partial write (crash mid-save) from corrupting the
+    // session file: the rename is atomic on POSIX and near-atomic on Windows.
+    let mut tmp = p.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp_path = PathBuf::from(tmp);
+
+    let saved = (|| -> bool {
+        let file = match std::fs::File::create(&tmp_path) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let mut writer = BufWriter::new(file);
+        let locked = match store.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        // Persist session cookies too — see `load_cookie_store` note.
+        if locked.save_incl_expired_and_nonpersistent_json(&mut writer).is_err() {
+            return false;
         }
+        writer.flush().is_ok()
+    })();
+
+    if saved {
+        let _ = std::fs::rename(&tmp_path, p);
+    } else {
+        let _ = std::fs::remove_file(&tmp_path);
     }
 }
 
@@ -221,22 +242,24 @@ pub struct RutrackerInner {
     pub logged_in: bool,
     pub username: Option<String>,
     pub avatar_url: Option<String>,
+    /// Mirror used at login — cached here so `auth_base` never touches disk.
+    pub login_mirror: Option<String>,
 }
 
 impl RutrackerState {
     pub fn new(app: &tauri::AppHandle) -> Self {
-        let base_dir: Option<PathBuf> = app.path().app_data_dir().ok();
-        if let Some(ref d) = base_dir {
+        let rt_dir: Option<PathBuf> = crate::app_paths::rt_dir(app).ok();
+        if let Some(ref d) = rt_dir {
             let _ = std::fs::create_dir_all(d);
         }
-        let session_path: Option<PathBuf> = base_dir.as_ref().map(|d| d.join("rt_session.json"));
-        let meta_path: Option<PathBuf> = base_dir.as_ref().map(|d| d.join("rt_meta.json"));
-        let cover_cache_dir: Option<PathBuf> = base_dir.as_ref().map(|d| {
-            let p = d.join("rt_cover_cache");
+        let session_path: Option<PathBuf> = rt_dir.as_ref().map(|d| d.join("session.json"));
+        let meta_path: Option<PathBuf> = rt_dir.as_ref().map(|d| d.join("meta.json"));
+        let cover_cache_dir: Option<PathBuf> = rt_dir.as_ref().map(|d| {
+            let p = d.join("covers");
             let _ = std::fs::create_dir_all(&p);
             p
         });
-        let proxy_path: Option<PathBuf> = base_dir.as_ref().map(|d| d.join("rt_http_proxy.txt"));
+        let proxy_path: Option<PathBuf> = rt_dir.as_ref().map(|d| d.join("proxy.txt"));
 
         let saved = load_cookie_store(&session_path);
         let cookie_store = Arc::new(CookieStoreMutex::new(saved));
@@ -257,6 +280,7 @@ impl RutrackerState {
                 logged_in: false,
                 username: None,
                 avatar_url: None,
+                login_mirror: None,
             }),
             session_path,
             meta_path,
@@ -312,10 +336,40 @@ impl RutrackerState {
     fn wipe(&self) {
         if let Some(p) = &self.session_path {
             let _ = std::fs::remove_file(p);
+            // Remove stale .tmp file too if a previous save was interrupted.
+            let mut tmp = p.as_os_str().to_owned();
+            tmp.push(".tmp");
+            let _ = std::fs::remove_file(PathBuf::from(tmp));
         }
         if let Some(p) = &self.meta_path {
             let _ = std::fs::remove_file(p);
         }
+    }
+
+    /// Called when we detect a stale/expired session from HTTP response bodies.
+    /// Wipes disk state, clears in-memory cookies, and resets the auth flag.
+    fn clear_session(&self) {
+        self.wipe();
+        if let Ok(mut store) = self.cookie_store.lock() {
+            store.clear();
+        }
+        if let Ok(mut g) = self.inner.lock() {
+            g.logged_in = false;
+            g.login_mirror = None;
+            g.username = None;
+            g.avatar_url = None;
+        }
+    }
+
+    /// Pass-through helper: if `result` is the "session expired" error,
+    /// clears session state so subsequent commands fail-fast without probing.
+    pub(crate) fn detect_stale<T>(&self, result: Result<T, String>) -> Result<T, String> {
+        if let Err(ref e) = result {
+            if e.contains("Сессия устарела") {
+                self.clear_session();
+            }
+        }
+        result
     }
 }
 
@@ -599,6 +653,7 @@ pub async fn rutracker_login(
         inner.logged_in = true;
         inner.username = Some(username.clone());
         inner.avatar_url = avatar_data_url.clone();
+        inner.login_mirror = Some(base.clone());
 
         return Ok(LoginResult {
             success: true,
@@ -642,10 +697,17 @@ pub async fn rutracker_login(
 #[tauri::command]
 pub async fn rutracker_logout(state: tauri::State<'_, RutrackerState>) -> Result<(), String> {
     state.wipe();
+    // Clear in-memory cookies so a re-login starts with a clean jar.
+    // Without this, stale phpBB session cookies linger and can confuse a
+    // subsequent login attempt (server sees old session, skips fresh cookie init).
+    if let Ok(mut store) = state.cookie_store.lock() {
+        store.clear();
+    }
     let mut inner = state.inner.lock().map_err(|_| "lock error".to_string())?;
     inner.logged_in = false;
     inner.username = None;
     inner.avatar_url = None;
+    inner.login_mirror = None;
     Ok(())
 }
 
@@ -697,6 +759,7 @@ pub async fn rutracker_restore_session(
             inner.logged_in = true;
             inner.username = meta.username.clone();
             inner.avatar_url = meta.avatar_data_url.clone();
+            inner.login_mirror = meta.login_mirror.clone();
             return Ok(LoginStatus {
                 logged_in: true,
                 username: meta.username,
@@ -704,7 +767,7 @@ pub async fn rutracker_restore_session(
             });
         }
         Ok(resp) if resp.url().path().contains("login") => {
-            state.wipe();
+            state.clear_session();
             return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
         }
         Ok(_) => {}
@@ -724,6 +787,7 @@ pub async fn rutracker_restore_session(
             inner.logged_in = true;
             inner.username = meta.username.clone();
             inner.avatar_url = meta.avatar_data_url.clone();
+            inner.login_mirror = meta.login_mirror.clone();
             return Ok(LoginStatus {
                 logged_in: true,
                 username: meta.username,
@@ -731,7 +795,7 @@ pub async fn rutracker_restore_session(
             });
         }
         Ok(resp) if resp.url().path().contains("login") => {
-            state.wipe();
+            state.clear_session();
             return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
         }
         Ok(resp) => {
@@ -746,7 +810,7 @@ pub async fn rutracker_restore_session(
                 cow.into_owned()
             };
             if html_track.contains(r#"name="login_username""#) {
-                state.wipe();
+                state.clear_session();
                 return Ok(LoginStatus { logged_in: false, username: None, avatar_url: None });
             }
         }
@@ -757,6 +821,7 @@ pub async fn rutracker_restore_session(
     inner.logged_in = true;
     inner.username = meta.username.clone();
     inner.avatar_url = meta.avatar_data_url.clone();
+    inner.login_mirror = meta.login_mirror.clone();
 
     Ok(LoginStatus {
         logged_in: true,
@@ -1106,6 +1171,7 @@ async fn finalize_webview_login(
         inner.logged_in = true;
         inner.username = username.clone();
         inner.avatar_url = avatar_data_url.clone();
+        inner.login_mirror = Some(base.to_string());
     }
 
     Ok(LoginResult {
@@ -1177,7 +1243,7 @@ pub async fn rutracker_login_via_webview(
             // creates an isolated environment where browser args are applied at
             // init time, before any shared state is locked.
             if let Some(proxy) = load_http_proxy_url(&state.proxy_path) {
-                if let Ok(data_dir) = app.path().app_data_dir().map(|d| d.join("rt_login_webview")) {
+                if let Ok(data_dir) = crate::app_paths::rt_webview_dir(&app) {
                     b = b
                         .data_directory(data_dir)
                         .additional_browser_args(&format!("--proxy-server={}", proxy));
@@ -1240,9 +1306,12 @@ pub(crate) fn auth_base_for_dev(state: &RutrackerState, from_ui: &str) -> String
 
 fn auth_base(state: &RutrackerState, from_ui: &str) -> String {
     let from_ui_norm = from_ui.trim().trim_end_matches('/').to_string();
-    let meta = load_meta(&state.meta_path);
-    meta.login_mirror
-        .as_ref()
+    // Read from in-memory inner (set at login/restore) — avoids a disk round-trip
+    // on every search/cover/details call and keeps cookie-domain consistent.
+    state.inner
+        .lock()
+        .ok()
+        .and_then(|g| g.login_mirror.clone())
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or(from_ui_norm)
@@ -1263,7 +1332,7 @@ pub async fn rutracker_search(
     }
     let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
-    search::search_music(&client, &base, &query).await
+    state.detect_stale(search::search_music(&client, &base, &query).await)
 }
 
 /// First-post cover as a base64 data URL (lightweight — no .torrent download).
@@ -1299,7 +1368,9 @@ pub async fn rutracker_get_cover(
 
     let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
-    let result = topic::get_cover_data_url(&client, &base, &topic_id).await?;
+    let result = state.detect_stale(
+        topic::get_cover_data_url(&client, &base, &topic_id).await
+    )?;
 
     if let Some(ref data_url) = result {
         state.write_cover(&topic_id, data_url);
@@ -1324,7 +1395,9 @@ pub async fn rutracker_get_torrent_details(
     }
     let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
-    let details = topic::get_torrent_details(&client, &base, &topic_id).await?;
+    let details = state.detect_stale(
+        topic::get_torrent_details(&client, &base, &topic_id).await
+    )?;
     // Persist cover to disk so grid loads are instant on next visit.
     if let Some(ref data_url) = details.cover_data_url {
         state.write_cover(&details.id, data_url);
@@ -1347,7 +1420,9 @@ pub async fn rutracker_topic_has_playable_audio(
     }
     let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
-    topic::topic_has_playable_audio(&client, &base, &topic_id).await
+    state.detect_stale(
+        topic::topic_has_playable_audio(&client, &base, &topic_id).await
+    )
 }
 
 /// Download `.torrent` for a topic (for streaming without magnet metadata resolution).
@@ -1365,7 +1440,9 @@ pub async fn rutracker_download_torrent_file_b64(
     }
     let base = auth_base(&state, &mirror);
     let client = state.http_client()?;
-    let raw = topic::download_torrent_file_bytes(&client, &base, &topic_id).await?;
+    let raw = state.detect_stale(
+        topic::download_torrent_file_bytes(&client, &base, &topic_id).await
+    )?;
     Ok(base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         &raw,

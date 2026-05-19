@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+
 /**
  * Persisted liked tracks / albums.
  *
@@ -42,7 +44,9 @@ export function loadLikesSnapshot(): LikesSnapshot {
 
 export function saveLikesSnapshot(s: LikesSnapshot): void {
   try {
-    localStorage.setItem(LIKES_STORAGE_KEY, JSON.stringify(s));
+    const json = JSON.stringify(s);
+    localStorage.setItem(LIKES_STORAGE_KEY, json);
+    void (invoke("likes_write", { json }) as Promise<void>).catch(() => {});
   } catch {
     /* ignore */
   }

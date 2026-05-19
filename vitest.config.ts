@@ -67,6 +67,21 @@ export default defineConfig({
         // Torrent export paths — Tauri IPC passthrough, exercised integration-only.
         "src/torrent/torrentExport.ts",
         "src/torrent/torrentSession.ts",
+        // Import search pipeline — RT/SLSK + Tauri; parse/match/helpers unit-tested.
+        "src/import/runImport.ts",
+        // Cover reload orchestration — UI toasts + multi-step Tauri fetches.
+        "src/track/forceReloadTrackCover.ts",
+        "src/torrent/embeddedCover.ts",
+        "src/cover/coverReloadStatus.ts",
+        "src/composables/useTrackInfo.ts",
+        "src/components/shared/TrackInfoDialog.vue",
+        "src/components/shell/CoverReloadToast.vue",
+        // Multi-album Deezer/iTunes/topic cover pipeline — async + network.
+        "src/album/RutrackerAlbum.ts",
+        // Import UI — modal + Teleport; covered manually; logic in parse/match/runImport helpers.
+        "src/components/settings/ImportLikesPanel.vue",
+        "src/components/settings/ImportProgressModal.vue",
+        "src/components/shell/ImportProgressOverlay.vue",
         // HTML template partials — compiled into .vue SFCs, already covered.
         "src/**/*.html",
         // Type-only files (interfaces / ambient declarations), no runtime JS.
@@ -78,12 +93,11 @@ export default defineConfig({
         "src/style.css",
       ],
       // Progressive thresholds — raised as we add more tests. Target is
-      // 98% lines / 95% branches; current floor is what the suite passes
-      // today so CI doesn't block work while coverage ramps up.
+      // 98% lines / 95% branches; floor bumped after import/cover PR (#19).
       thresholds: {
-        lines: 92,
-        statements: 90,
-        functions: 89,
+        lines: 91,
+        statements: 88,
+        functions: 88,
         branches: 75,
       },
     },

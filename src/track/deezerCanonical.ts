@@ -11,11 +11,13 @@
  * Flow:
  *   1. `enrichTrackNames(track)` queries Deezer with the resolver's guess.
  *   2. If we get a hit whose normalized title matches ours, stamp the
- *      canonical `{artist, title, albumTitle}` onto `track.data` and call
+ *      canonical `{artist, title, albumTitle, coverUrl}` onto `track.data`
+ *      (Deezer album art HTTPS URL when present) and call
  *      `bumpEntitiesVersion()` so Vue re-renders every row pointing at
  *      the track.
  *   3. Results are cached by `artist|title` so a repeated query skips
- *      the network.
+ *      the network. Successful rows (including misses) are persisted in
+ *      localStorage LRU so a cold app start reuses them.
  *
  * Deezer quotes 50 req/s as the public-API ceiling. The rate-limited
  * queue is configured well below that so bursts from a 60-track search
@@ -24,17 +26,29 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { RateLimitedFetchQueue } from "../lib/RateLimitedFetchQueue.js";
-import { bumpEntitiesVersion } from "../stores/entities.js";
+import { bumpEntitiesVersion, getTrack } from "../stores/entities.js";
 import { putTrack } from "../persistence/trackCache.js";
 import type { Track } from "./Track.js";
 import { nameConfidence } from "./factory.js";
 import { appDebugLog } from "../appDebugLog.js";
+import {
+  clearPersistedDeezerAlbumArt,
+  loadPersistedDeezerAlbumArt,
+  loadPersistedDeezerTrackCanonicals,
+  persistDeezerAlbumArt,
+  persistDeezerTrackCanonical,
+} from "../persistence/coverArtLocal.js";
+import {
+  pickBestDeezerAlbumCoverUrl,
+  preferHighResDeezerCoverUrl,
+  type DeezerAlbumCoverFields,
+} from "../lib/deezerCoverUrl.js";
 
 interface DeezerTrack {
   title?: string;
   title_short?: string;
   artist?: { name?: string };
-  album?: { title?: string; cover_medium?: string | null; cover_big?: string | null };
+  album?: ({ title?: string } & DeezerAlbumCoverFields) | undefined;
 }
 
 interface DeezerResponse {
@@ -47,6 +61,10 @@ const cache = new Map<string, { artist: string; title: string; album: string; co
 /** In-flight lookups — dedupes concurrent requests for the same query. */
 const pending = new Map<string, Promise<unknown>>();
 
+for (const [k, v] of loadPersistedDeezerTrackCanonicals()) {
+  if (!cache.has(k)) cache.set(k, v);
+}
+
 /**
  * Rate-limited queue over the `deezer_search` Tauri command. We proxy
  * through Rust because WKWebView returns a generic "Load failed" for
@@ -54,6 +72,16 @@ const pending = new Map<string, Promise<unknown>>();
  */
 const queue = new RateLimitedFetchQueue<{ query: string; limit: number }, string>({
   intervalMs: 60, // well under Deezer's 50/s public quota
+  executor: async ({ query, limit }) => invoke<string>("deezer_search", { query, limit }),
+});
+
+/**
+ * Separate queue for album-art lookups. A search for a popular artist enqueues
+ * hundreds of per-track canonical lookups; sharing one queue would force the
+ * handful of album cards to wait behind ~20–30 s of track requests.
+ */
+const albumArtQueue = new RateLimitedFetchQueue<{ query: string; limit: number }, string>({
+  intervalMs: 80,
   executor: async ({ query, limit }) => invoke<string>("deezer_search", { query, limit }),
 });
 
@@ -121,24 +149,128 @@ async function fetchCanonical(artist: string, title: string): Promise<{ artist: 
     artist: hitArtist,
     title: hitTitle,
     album: hit.album?.title ?? "",
-    coverUrl: hit.album?.cover_medium ?? hit.album?.cover_big ?? null,
+    coverUrl: preferHighResDeezerCoverUrl(pickBestDeezerAlbumCoverUrl(hit.album)),
   };
 }
 
+const albumArtCache = new Map<string, string | null>();
+const albumArtPending = new Map<string, Promise<string | null>>();
+
+function cacheKeyAlbumArt(artist: string, album: string): string {
+  return `deezer-album-art|${normalize(artist)}|${normalize(album)}`;
+}
+
+for (const [k, v] of loadPersistedDeezerAlbumArt()) {
+  if (!albumArtCache.has(k)) albumArtCache.set(k, v);
+}
+
 /**
- * Kick off a Deezer lookup for a track whose resolver confidence is
- * `medium` / `low`. Noop for `high`-confidence tracks (we trust the
- * file system over the catalog there) and for tracks where we don't
- * have enough to query with (empty artist + empty title).
+ * Resolves album artwork URL via Deezer search for virtual RuTracker folder
+ * albums (one topic split into many cards). Separate cache from per-track
+ * canonical lookups.
  *
- * On a hit, mutates `track.data.{artist, title, albumTitle}` in place
- * and bumps the entities version so every Vue consumer re-renders.
+ * @param artist - Performer from the topic post (may be empty).
+ * @param album - Virtual album title (usually the folder / release label).
+ * @returns HTTPS cover URL or null when no confident catalog match.
+ */
+export async function fetchDeezerAlbumCoverArt(artist: string, album: string): Promise<string | null> {
+  const a = artist.trim();
+  const alb = album.trim();
+  if (alb.length < 2) return null;
+  const key = cacheKeyAlbumArt(a || "_", alb);
+  if (albumArtCache.has(key)) return albumArtCache.get(key) ?? null;
+  const inflight = albumArtPending.get(key);
+  if (inflight) return inflight;
+
+  const p = fetchDeezerAlbumCoverArtInner(a, alb).then((r) => {
+    albumArtCache.set(key, r);
+    persistDeezerAlbumArt(key, r);
+    albumArtPending.delete(key);
+    return r;
+  });
+  albumArtPending.set(key, p);
+  return p;
+}
+
+async function fetchDeezerAlbumCoverArtInner(artist: string, album: string): Promise<string | null> {
+  const query = artist ? `${artist} ${album}` : album;
+  void appDebugLog("deezer", `album art query="${query}"`).catch(() => {});
+  let bodyText: string;
+  try {
+    bodyText = await albumArtQueue.enqueue({ query, limit: 8 });
+  } catch (e) {
+    void appDebugLog("deezer", `album art fetch error: ${String(e)}`).catch(() => {});
+    return null;
+  }
+  let json: DeezerResponse;
+  try {
+    json = JSON.parse(bodyText) as DeezerResponse;
+  } catch {
+    return null;
+  }
+  const wantAlbum = normalize(album);
+  const rows = json.data ?? [];
+  if (!rows.length) {
+    void appDebugLog("deezer", `album art no rows for album="${album}"`).catch(() => {});
+    return null;
+  }
+  for (const hit of rows) {
+    const hitArtist = hit.artist?.name ?? "";
+    const hitAlbumTitle = hit.album?.title ?? "";
+    if (!hitAlbumTitle) continue;
+    const hitAlbumN = normalize(hitAlbumTitle);
+    if (!wantAlbum || !hitAlbumN) continue;
+    if (!wantAlbum.includes(hitAlbumN) && !hitAlbumN.includes(wantAlbum)) continue;
+    if (artist) {
+      const x = normalize(artist);
+      const y = normalize(hitArtist);
+      if (x.length >= 2 && y.length >= 2 && !x.includes(y) && !y.includes(x)) continue;
+    }
+    const u = preferHighResDeezerCoverUrl(pickBestDeezerAlbumCoverUrl(hit.album));
+    if (u) {
+      void appDebugLog("deezer", `album art hit: "${album}" → "${hitAlbumTitle}"`).catch(() => {});
+      return u;
+    }
+  }
+  void appDebugLog("deezer", `album art no hit for album="${album}"`).catch(() => {});
+  return null;
+}
+
+/** Clears album-art lookup cache (unit tests). */
+export function resetDeezerAlbumArtCache(): void {
+  albumArtCache.clear();
+  albumArtPending.clear();
+  clearPersistedDeezerAlbumArt();
+}
+
+/**
+ * Kick off a Deezer lookup for a track.
+ *
+ * Behaviour by resolver confidence:
+ *   - `medium` / `low` → full canonical rewrite: artist, title, album, cover.
+ *   - `high` → cover-only enrichment. Filename names are trusted, but the
+ *     SoulSeek peer often refuses to share album art (Upload denied / early
+ *     eof / cannot resolve address). When that happens the row would stay
+ *     blank — Deezer is a free fallback for the thumbnail.
+ *   - unknown → skip entirely.
+ *
+ * Noop when the track already has an `albumTitle` AND `coverUrl` in
+ * cover-only mode, or when there is nothing to query with.
+ *
+ * On a hit, mutates `track.data` in place (cover-only fills only missing
+ * fields) and bumps the entities version so every Vue consumer re-renders.
  */
 export function enrichTrackNames(track: Track): void {
   const conf = nameConfidence.get(track.id);
-  if (conf !== "medium" && conf !== "low") {
+  if (conf !== "medium" && conf !== "low" && conf !== "high") {
     void appDebugLog("deezer", `skip ${track.id} conf=${conf ?? "?"}`).catch(() => {});
     return;
+  }
+  const coverOnly = conf === "high";
+
+  if (coverOnly) {
+    const cur = track.toJSON() as { coverUrl?: string | null; albumTitle?: string | null };
+    if (cur.coverUrl && cur.albumTitle) return;
   }
 
   const artist = (track.artist ?? "").trim();
@@ -149,38 +281,63 @@ export function enrichTrackNames(track: Track): void {
   const key = cacheKey(artist, title);
   if (cache.has(key)) {
     const cached = cache.get(key);
-    if (cached) applyCanonical(track, cached);
+    if (cached) applyCanonical(track, cached, coverOnly);
     return;
   }
   const inflight = pending.get(key);
   if (inflight) {
     void inflight.then(() => {
       const c = cache.get(key);
-      if (c) applyCanonical(track, c);
+      if (c) applyCanonical(track, c, coverOnly);
     });
     return;
   }
 
   const p = fetchCanonical(artist || title, title).then((result) => {
     cache.set(key, result);
+    persistDeezerTrackCanonical(key, result);
     pending.delete(key);
-    if (result) applyCanonical(track, result);
+    if (result) applyCanonical(track, result, coverOnly);
   });
   pending.set(key, p);
 }
 
-function applyCanonical(track: Track, c: { artist: string; title: string; album: string; coverUrl: string | null }): void {
-  // `track.data` is marked `protected readonly` in TypeScript, but the
+function applyCanonical(
+  track: Track,
+  c: { artist: string; title: string; album: string; coverUrl: string | null },
+  coverOnly = false,
+): void {
+  // Streaming search calls `registerEntities` on every batch; the same id
+  // may refer to a newer `Track` instance than the one captured when
+  // `enrichTrackNames` ran. Always stamp the registry copy so coverUrl /
+  // canonical names land on what the UI actually renders.
+  const live = getTrack(track.id);
+  const target = live ?? track;
+  // `target.data` is marked `protected readonly` in TypeScript, but the
   // runtime object is a plain POJO reachable through `toJSON()`. We write
-  // through that reference so the class getters (`track.artist`, etc) pick
+  // through that reference so the class getters (`target.artist`, etc) pick
   // up the new values immediately without any wrapper re-instantiation.
-  const data = track.toJSON();
-  data.artist = c.artist;
-  data.title = c.title;
-  if (c.album) data.albumTitle = c.album;
-  // Canonical names are authoritative — bump the tier so a repeat call
-  // (e.g. if the track lands back in a search result set) doesn't re-query.
-  nameConfidence.set(track.id, "high");
+  const data = target.toJSON();
+  let mutated = false;
+  if (coverOnly) {
+    if (c.coverUrl && !data.coverUrl) {
+      data.coverUrl = c.coverUrl;
+      mutated = true;
+    }
+    if (c.album && !data.albumTitle) {
+      data.albumTitle = c.album;
+      mutated = true;
+    }
+    if (!mutated) return;
+  } else {
+    data.artist = c.artist;
+    data.title = c.title;
+    if (c.album) data.albumTitle = c.album;
+    if (c.coverUrl) data.coverUrl = c.coverUrl;
+    // Canonical names are authoritative — bump the tier so a repeat call
+    // (e.g. if the track lands back in a search result set) doesn't re-query.
+    nameConfidence.set(target.id, "high");
+  }
   // Push the mutated TrackData back through the persistence cache so
   // likes / playlists / queue pick up the canonical names after a restart.
   // We pass a shallow clone — the cache's `put` bails out when prev ===

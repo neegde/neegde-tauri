@@ -803,26 +803,28 @@ async fn download_loop(
     downloaded: Arc<AtomicU64>,
     complete: Arc<AtomicBool>,
 ) {
-    let tp = temp_path.clone();
-    // Create the file
-    let result = tokio::task::spawn_blocking(move || std::fs::File::create(&tp)).await;
-    let file = match result {
-        Ok(Ok(f)) => f,
-        _ => { complete.store(true, Ordering::Release); return; }
+    use tokio::io::AsyncWriteExt as _;
+
+    let mut file = match tokio::fs::File::create(&temp_path).await {
+        Ok(f) => f,
+        Err(_) => {
+            complete.store(true, Ordering::Release);
+            return;
+        }
     };
-    let file = Arc::new(std::sync::Mutex::new(file));
 
     let mut buf = vec![0u8; HTTP_CHUNK];
     loop {
         match rh.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                let chunk = buf[..n].to_vec();
-                let f = Arc::clone(&file);
-                tokio::task::spawn_blocking(move || {
-                    use std::io::Write;
-                    if let Ok(mut g) = f.lock() { let _ = g.write_all(&chunk); }
-                }).await.ok();
+                // write_all on tokio::fs::File dispatches through the blocking
+                // thread pool — non-blocking from the executor's perspective, and
+                // the OS write syscall completes before we update `downloaded`,
+                // so the HTTP server never reads a byte offset that isn't on disk.
+                if file.write_all(&buf[..n]).await.is_err() {
+                    break;
+                }
                 downloaded.fetch_add(n as u64, Ordering::Release);
             }
             Err(_) => break,

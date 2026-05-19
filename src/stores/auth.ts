@@ -12,6 +12,7 @@
  */
 
 import { AuthManager } from "../auth/AuthManager.js";
+import { clearSlskCoverNegatives } from "../soulseek/coverCache.js";
 
 export const authManager = new AuthManager();
 
@@ -40,7 +41,11 @@ export const slskLoggingIn  = authManager.soulseek.loggingIn;
 export const slskLoginError = authManager.soulseek.loginError;
 
 export function setSlskConnected(username: string | null | undefined): void {
+  const was = authManager.soulseek.connected.value;
   authManager.soulseek.connect(username);
+  if (!was && authManager.soulseek.connected.value) {
+    clearSlskCoverNegatives();
+  }
 }
 
 export function setSlskDisconnected(): void {
