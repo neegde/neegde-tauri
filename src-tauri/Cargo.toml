@@ -2,7 +2,9 @@
 name = "neegde"
 version = "0.1.10"
 description = "нигде."
-authors = []
+authors = ["neegde contributors"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/neegde/neegde-tauri"
 edition = "2021"
 
 [lib]
