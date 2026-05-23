@@ -510,8 +510,10 @@ fn extract_avatar_from_profile(html: &str, base: &str) -> Option<String> {
 }
 
 fn resolve_url(raw: &str, base: &str) -> String {
-    if raw.starts_with("http") {
+    if raw.starts_with("https://") {
         raw.to_string()
+    } else if raw.starts_with("http://") {
+        format!("https://{}", &raw["http://".len()..])
     } else if raw.starts_with("//") {
         format!("https:{}", raw)
     } else {
@@ -523,8 +525,12 @@ fn resolve_url(raw: &str, base: &str) -> String {
 async fn fetch_avatar(client: &Client, post_login_html: &str, base: &str) -> Option<String> {
     let uid = extract_user_id(post_login_html)?;
     let profile_url = format!("{}/forum/profile.php?mode=viewprofile&u={}", base, uid);
+    let profile_uri = Url::parse(&profile_url).ok()?;
+    if profile_uri.scheme() != "https" {
+        return None;
+    }
 
-    let resp = client.get(&profile_url).send().await.ok()?;
+    let resp = client.get(profile_uri).send().await.ok()?;
     let bytes = resp.bytes().await.ok()?;
     let (html, _, _) = WINDOWS_1251.decode(&bytes);
 
@@ -535,7 +541,12 @@ async fn fetch_avatar(client: &Client, post_login_html: &str, base: &str) -> Opt
 /// Fetch the avatar image through the authenticated Rust client and encode it
 /// as a base64 data: URL so the WebView can display it without session cookies.
 async fn fetch_avatar_data_url(client: &Client, url: &str) -> Option<String> {
-    let resp = client.get(url).send().await.ok()?;
+    let avatar_uri = Url::parse(url).ok()?;
+    if avatar_uri.scheme() != "https" {
+        return None;
+    }
+
+    let resp = client.get(avatar_uri).send().await.ok()?;
     let mime = resp
         .headers()
         .get(header::CONTENT_TYPE)
